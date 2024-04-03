@@ -1,0 +1,43 @@
+
+func main {
+    i = 0
+    while i < 1000000 {
+        java::lang::System.out.println(i)
+        i = i+1
+    }
+}
+
+func f {
+    result = test(2)
+    result.foo("Hello World")
+    io.print(result)
+
+}
+
+func test(x) {
+    if x == 0 {
+        com::example::Foo.instance
+    } else {
+        com::example::Bar.instance
+    }
+}
+
+func bar {
+    result = java::lang::System.out
+    other = com::example::Foo.instance
+    foo(result, "Hello World")
+    foo(result, result)
+    foo(other, "Hello")
+    result = add(1, 2)
+    io.print(result.toString())
+    1 / 2
+}
+
+func foo(x, y) {
+    x.print("Y is:")
+    x.print(y.toString())
+}
+
+func add(a, b) {
+    a * b
+}

@@ -1,0 +1,60 @@
+package com.language.compilation
+
+import com.language.Expression
+import com.language.Function
+import com.language.Module
+import com.language.ModuleChild
+import java.io.IOException
+import java.lang.reflect.Modifier
+import java.util.jar.JarEntry
+import java.util.jar.JarFile
+
+
+class ExtensionClassLoader(
+    jarPath: String,
+) : ClassLoader() {
+
+    private val loadedClasses: MutableMap<String, Class<*>> = mutableMapOf()
+
+    init {
+        loadClassesFromJar(jarPath)
+    }
+
+    private fun loadClassesFromJar(jarFilePath: String) {
+        try {
+            val jarFile = JarFile(jarFilePath)
+            jarFile.stream().forEach { entry: JarEntry ->
+                if (entry.name.endsWith(".class")) {
+                    val className = entry.name.replace("/", ".").removeSuffix(".class")
+
+                    val classBytes: ByteArray = jarFile.getInputStream(entry).readAllBytes()
+                    val clazz = defineClass(className, classBytes, 0, classBytes.size)
+                    loadedClasses[className] = clazz
+                }
+            }
+        } catch (e: IOException) {
+            e.printStackTrace()
+        }
+    }
+
+    fun createModuleTree(): Map<String, Module> = loadedClasses
+        .map { (name, clazz) -> name.replace(".", "::") to clazz.toModule() }
+        .toMap()
+
+
+    override fun loadClass(name: String): Class<*> = loadedClasses[name.replace("::", ".")] ?: parent.loadClass(name.replace("::", "."))
+
+    override fun findClass(name: String): Class<*> = loadedClasses[name.replace("::", ".")]  ?: parent.loadClass(name.replace("::", "."))
+}
+
+private fun Class<*>.toModule(): Module {
+    val children: MutableMap<String, ModuleChild> = mutableMapOf()
+    declaredMethods
+        .filter { Modifier.isStatic(it.modifiers) }
+        .forEach { method ->
+            val function = Function(method.parameters.map { it.name }, Expression.UnknownSymbol("external body"))
+            children[method.name] = function
+        }
+
+    return Module(children)
+}
