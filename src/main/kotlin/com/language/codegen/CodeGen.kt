@@ -4,14 +4,14 @@ import com.language.compilation.*
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
-fun compileProject(lookup: IRModuleLookup): Map<String, ByteArray> {
-    val entries = mutableMapOf<String, ByteArray>()
+fun compileProject(lookup: IRModuleLookup): Map<SignatureString, ByteArray> {
+    val entries = mutableMapOf<SignatureString, ByteArray>()
     lookup.nativeModules.forEach { module ->
         val modPath = module.name
         val (modCode, structCode)  = compileModule(module, lookup)
         entries[modPath] = modCode
         for ((structPath, bytes) in structCode) {
-            entries["$modPath::$structPath"] = bytes
+            entries[modPath + structPath] = bytes
         }
     }
 
@@ -23,8 +23,8 @@ fun compileModule(module: IRModule, lookup: IRModuleLookup):  Pair<ByteArray, Ma
     cw.visit(
         49,
         Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER + Opcodes.ACC_FINAL,
-        module.name.split("::").last(),
-        module.name.replace("::", "/"),
+        module.name.structName,
+        module.name.toJvmNotation(),
         "java/lang/Object",
         null
     )

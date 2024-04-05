@@ -146,7 +146,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: Instruction, variables: V
             val type = instruction.type(variables, lookup)
             mv.visitMethodInsn(
                 Opcodes.INVOKESTATIC,
-                instruction.moduleName.replace("::", "/"),
+                instruction.moduleName.toJvmNotation(),
                 instruction.name,
                 generateJVMFunctionSignature(argTypes, type),
                 false
@@ -160,7 +160,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: Instruction, variables: V
             val type = instruction.type(variables, lookup)
             mv.visitMethodInsn(
                 Opcodes.INVOKESTATIC,
-                instruction.classModuleName.replace("::", "/"),
+                instruction.classModuleName.toJvmNotation(),
                 instruction.name,
                 generateJVMFunctionSignature(argTypes, type),
                 false
@@ -181,7 +181,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: Instruction, variables: V
             val type = instruction.type(variables, lookup)
             mv.visitFieldInsn(
                 Opcodes.GETSTATIC,
-                instruction.parentName.replace("::", "/"),
+                instruction.parentName.toJvmNotation(),
                 instruction.name,
                 type.toJVMDescriptor()
             )
@@ -204,7 +204,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: Instruction, variables: V
         Instruction.Null -> mv.visitInsn(Opcodes.ACONST_NULL)
         Instruction.Pop -> mv.visitInsn(Opcodes.POP)
         is Instruction.ConstructorCall -> {
-            mv.visitTypeInsn(Opcodes.NEW, instruction.className.replace("::", "/"))
+            mv.visitTypeInsn(Opcodes.NEW, instruction.className.toJvmNotation())
             mv.visitInsn(Opcodes.DUP)
             //load args onto stack
             instruction.args.forEach { compileInstruction(mv, it, variables, lookup) }
@@ -212,7 +212,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: Instruction, variables: V
             //call constructor
             mv.visitMethodInsn(
                 Opcodes.INVOKESPECIAL,
-                instruction.className.replace("::", "/"),
+                instruction.className.toJvmNotation(),
                 "<init>",
                 generateJVMFunctionSignature(argTypes, Type.Nothing),
                 false

@@ -8,6 +8,7 @@ func main {
 
     person = Person("Tom", 18)
     print(person.name == "Tom")
+    bar()
 }
 
 struct Person {
@@ -20,8 +21,7 @@ func print(value) java::lang::System.out.println(value)
 func f {
     result = test(2)
     result.foo("Hello World")
-    io.print(result)
-
+    main.print(result)
 }
 
 func test(x) {

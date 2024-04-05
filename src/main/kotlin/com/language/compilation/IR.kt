@@ -151,7 +151,7 @@ sealed class Instruction {
         }
     }
     data class ConstructorCall(
-        val className: String,
+        val className: SignatureString,
         val args: List<Instruction>,
     ) : Instruction() {
         override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
@@ -163,7 +163,7 @@ sealed class Instruction {
     }
 
     data class ModuleCall(
-        val moduleName: String,
+        val moduleName: SignatureString,
         val name: String,
         val args: List<Instruction>,
     ) : Instruction() {
@@ -174,7 +174,7 @@ sealed class Instruction {
         }
     }
     data class StaticCall(
-        val classModuleName: String,
+        val classModuleName: SignatureString,
         val name: String,
         val args: List<Instruction>,
     ) : Instruction() {
@@ -218,7 +218,7 @@ sealed class Instruction {
             return lookup.lookUpFieldType(parentType, name)
         }
     }
-    data class StaticPropertyAccess(val parentName: String, val name: String): Instruction() {
+    data class StaticPropertyAccess(val parentName: SignatureString, val name: String): Instruction() {
         override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
             return lookup.lookUpFieldType(parentName, name)
         }
@@ -260,12 +260,12 @@ sealed interface Type {
     val size: Int
 
     companion object {
-        val String = JvmType("java::lang::String")
-        val Int = JvmType("java::lang::Integer")
-        val Double = JvmType("java::lang::Double")
-        val Bool = JvmType("java::lang::Boolean")
+        val String = JvmType(SignatureString("java::lang::String"))
+        val Int = JvmType(SignatureString("java::lang::Integer"))
+        val Double = JvmType(SignatureString("java::lang::Double"))
+        val Bool = JvmType(SignatureString("java::lang::Boolean"))
     }
-    data class JvmType(val signature: String): Type {
+    data class JvmType(val signature: SignatureString): Type {
         override val size: Int = 1
     }
 
@@ -414,6 +414,31 @@ fun Type.asBoxed() = when(this) {
     else -> this
 }
 
+@JvmInline
+value class SignatureString(val value: String) {
+    init {
+        val pattern = """^[a-zA-Z0-9]+(::[a-zA-Z0-9]+)*$""".toRegex()
+        if (!pattern.matches(value)) error("Invalid Signature string `$value`")
+    }
+
+    companion object {
+        fun fromDotNotation(string: String) = SignatureString(string.replace(".", "::"))
+    }
+
+    val structName
+        get() = value.split("::").last()
+    val modName
+        get() = SignatureString(value.removeSuffix("::$structName"))
+
+    fun toDotNotation() = value.replace("::", ".")
+    fun toJvmNotation() = value.replace("::", "/")
+    val oxideNotation
+        get() = value
+
+    operator fun plus(other: String) = SignatureString("$value::$other")
+    operator fun plus(other: SignatureString) = SignatureString("$value::${other.value}")
+}
+
 data class IRStruct(val fields: Map<String, Type>)
 
-data class IRModule(val name: String, val functions: Map<String, IRFunction>, val structs: Map<String, IRStruct>)
+data class IRModule(val name: SignatureString, val functions: Map<String, IRFunction>, val structs: Map<String, IRStruct>)

@@ -18,7 +18,7 @@ fun main() {
     val runtimeLib = "./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar"
     val extensionClassLoader = ExtensionClassLoader(runtimeLib)
     val modules = extensionClassLoader.createModuleTree()
-    val lookup = BasicModuleLookup(module, "main", modules, ClassLoader.getPlatformClassLoader())
+    val lookup = BasicModuleLookup(module, SignatureString("main"), modules, ClassLoader.getPlatformClassLoader())
 
 
     val result = compile(lookup)
@@ -27,7 +27,7 @@ fun main() {
     println(type)
 
     val project = compileProject(irLookup)
-    createZipFile(project, "out.jar")
+    createZipFile(project.mapKeys { it.key.value }, "out.jar")
     /*
     val execution = ExecutionClassLoader(extensionClassLoader, ClassLoader.getPlatformClassLoader()).apply {
         putClassFile(bytes, "main")

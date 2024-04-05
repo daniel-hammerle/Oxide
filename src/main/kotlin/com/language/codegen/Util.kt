@@ -69,7 +69,7 @@ fun Type.toJVMDescriptor() = when(this) {
     Type.DoubleT -> "D"
     Type.IntT -> "I"
     Type.BoolT -> "Z"
-    is Type.JvmType -> "L${signature.replace("::", "/")};"
+    is Type.JvmType -> "L${signature.toJvmNotation()};"
     Type.Nothing -> "V"
     //null has to be of some type, so we'll just make it object
     Type.Null -> "Ljava/lang/Object;"

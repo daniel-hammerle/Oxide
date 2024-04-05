@@ -8,6 +8,7 @@ sealed interface Token {
     data object Func : KeyWord
     data object Use : KeyWord
     data object Struct : KeyWord
+    data object Self : KeyWord
 
     data class Identifier(val name: String) : Token
 
@@ -44,6 +45,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "while" -> Token.While
         "func" -> Token.Func
         "true" -> Token.True
+        "self" -> Token.Self
         "false" -> Token.False
         "struct" -> Token.Struct
         "use" -> Token.Use

@@ -1,13 +1,14 @@
 package com.language.codegen
 
 import com.language.compilation.IRStruct
+import com.language.compilation.SignatureString
 import com.language.compilation.Type
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
-fun compileStruct(modName: String, structName: String, struct: IRStruct): ByteArray {
+fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct): ByteArray {
     val cw = ClassWriter(0)
-    val structJVMName = modName.replace("::", "/") + "/$structName"
+    val structJVMName = modName.toJvmNotation() + "/$structName"
     cw.visit(
         49,
         Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER + Opcodes.ACC_FINAL,

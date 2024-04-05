@@ -7,8 +7,8 @@ import com.language.Struct
 
 data class BasicModuleLookup(
     val current: Module,
-    override val localName: String,
-    val modules: Map<String, Module>,
+    override val localName: SignatureString,
+    val modules: Map<SignatureString, Module>,
     val externalJars: ClassLoader
 ) : ModuleLookup {
     override fun localGetFunction(name: String): Function? = current.children[name] as? Function
@@ -18,24 +18,24 @@ data class BasicModuleLookup(
 
     override fun localGetSymbol(name: String): ModuleChild? = current.children[name]
 
-    override fun hasModule(name: String): Boolean =
+    override fun hasModule(name: SignatureString): Boolean =
         //if a native module with the name exists
+        name == localName ||
         name in modules ||
                 //if a java class with the name exists
-                runCatching { externalJars.loadClass(name.replace("::", ".")) }.isSuccess
+                runCatching { externalJars.loadClass(name.toDotNotation()) }.isSuccess
 
-    override fun hasStruct(name: String): Boolean {
-        if (current.children[name] is Struct)
+    override fun hasStruct(name: SignatureString): Boolean {
+        if (current.children[name.value] is Struct)
             return true
-        val structName = name.split("::").last()
-        val modName = name.removeSuffix("::$structName")
 
-        val mod = nativeModule(modName) ?: return false
-        return mod.children[structName] is Struct
+
+        val mod = nativeModule(name.modName) ?: return false
+        return mod.children[name.structName] is Struct
     }
 
-    override fun hasLocalStruct(name: String): Boolean = current.children[name] is Struct
+    override fun hasLocalStruct(name: SignatureString): Boolean = current.children[name.value] is Struct
 
-    override fun nativeModule(name: String): Module? = modules[name]
+    override fun nativeModule(name: SignatureString): Module? = modules[name]
 
 }

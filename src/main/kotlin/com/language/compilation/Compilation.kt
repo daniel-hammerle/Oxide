@@ -28,7 +28,7 @@ fun String.parseType(module: ModuleLookup) = when(this) {
     "bool" -> Type.BoolT
     else -> {
         when {
-            module.hasModule(this) -> Type.JvmType(this)
+            module.hasModule(SignatureString(this)) -> Type.JvmType(SignatureString(this))
             else -> error("Invalid type $this")
         }
     }
@@ -95,11 +95,11 @@ fun compileExpression(expression: Expression, module: ModuleLookup): Instruction
             when(val parent = expression.parent) {
                 //static property access
                 is Expression.UnknownSymbol -> {
-                    if (!module.hasModule(parent.name)) {
+                    if (!module.hasModule(SignatureString(parent.name))) {
                         println("[Warning] Unknown Module ${parent.name}")
                     }
 
-                    Instruction.StaticPropertyAccess(parent.name, expression.name)
+                    Instruction.StaticPropertyAccess(SignatureString(parent.name), expression.name)
                 }
                 //dynamic property access
                 else -> {
@@ -124,19 +124,19 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup): Instruction 
             when(val modName = parent.parent) {
                 is Expression.UnknownSymbol -> {
                     //module call (for example, io.print("Hello World"))
-                    if (!module.hasModule(modName.name)) {
+                    if (!module.hasModule(SignatureString(modName.name))) {
                         error("No module with name ${modName.name}")
                     }
-                    when(module.nativeModule(modName.name)) {
+                    when(module.nativeModule(SignatureString(modName.name))) {
                         is Module -> {
                             Instruction.ModuleCall(
-                                moduleName = modName.name,
+                                moduleName = SignatureString(modName.name),
                                 name = parent.name,
                                 args = args,
                             )
                         }
                         else -> Instruction.StaticCall(
-                            classModuleName = modName.name,
+                            classModuleName = SignatureString(modName.name),
                             name = parent.name,
                             args = args,
                         )
@@ -168,15 +168,15 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup): Instruction 
                         args = args,
                     )
                 }
-                module.hasLocalStruct(parent.name) -> {
+                module.hasLocalStruct(SignatureString(parent.name)) -> {
                     Instruction.ConstructorCall(
-                        className = "${module.localName}::${parent.name}",
+                        className = module.localName + parent.name,
                         args = args
                     )
                 }
-                module.hasModule(parent.name) || module.hasStruct(parent.name) -> {
+                module.hasModule(SignatureString(parent.name)) || module.hasStruct(SignatureString(parent.name)) -> {
                     Instruction.ConstructorCall(
-                        className = parent.name,
+                        className = SignatureString(parent.name),
                         args = args
                     )
                 }

@@ -11,12 +11,12 @@ class CodeGenerator {
     private val writer = ClassWriter(0)
 
     fun compileModule(module: IRModule): ByteArray {
-        writer.newClass(module.name.replace("::", "/"))
+        writer.newClass(module.name.toJvmNotation())
         writer.visit(
             49,
             Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER + Opcodes.ACC_FINAL,
-            module.name.split("::").last(),
-            module.name.replace("::", "/"),
+            module.name.structName,
+            module.name.toJvmNotation(),
             "java/lang/Object",
             null
         )
@@ -111,7 +111,7 @@ class CodeGenerator {
                 //call the appropriate method
                 mv.visitMethodInsn(
                     Opcodes.INVOKESTATIC,
-                    instruction.moduleName.replace("::", "/"),
+                    instruction.moduleName.toJvmNotation(),
                     instruction.name,
                     "(${"Ljava/lang/Object;".repeat(instruction.args.size)})Ljava/lang/Object;",
                     false
@@ -133,7 +133,7 @@ class CodeGenerator {
                 )
             }
             is Instruction.StaticPropertyAccess -> {
-                mv.visitLdcInsn(instruction.parentName.replace("::", "/"))
+                mv.visitLdcInsn(instruction.parentName.toJvmNotation())
                 mv.visitLdcInsn(instruction.name)
                 mv.visitMethodInsn(
                     Opcodes.INVOKESTATIC,
@@ -146,7 +146,7 @@ class CodeGenerator {
             is Instruction.MultiInstructions -> instruction.instructions.forEach { compileInstruction(mv, it) }
             is Instruction.StaticCall -> {
                 //load class name onto stack
-                mv.visitLdcInsn(instruction.classModuleName.replace("::", "."))
+                mv.visitLdcInsn(instruction.classModuleName.toJvmNotation())
                 //load method name onto stack
                 mv.visitLdcInsn(instruction.name)
                 //load args onto stack

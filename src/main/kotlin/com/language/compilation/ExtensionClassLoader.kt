@@ -37,14 +37,20 @@ class ExtensionClassLoader(
         }
     }
 
-    fun createModuleTree(): Map<String, Module> = loadedClasses
-        .map { (name, clazz) -> name.replace(".", "::") to clazz.toModule() }
+    fun createModuleTree(): Map<SignatureString, Module> = loadedClasses
+        .map { (name, clazz) -> SignatureString.fromDotNotation(name) to clazz.toModule() }
         .toMap()
 
 
-    override fun loadClass(name: String): Class<*> = loadedClasses[name.replace("::", ".")] ?: parent.loadClass(name.replace("::", "."))
+    override fun loadClass(name: String): Class<*> {
+        val name = SignatureString.fromDotNotation(name)
+        return loadedClasses[name.toDotNotation()] ?: parent.loadClass(name.toDotNotation())
+    }
 
-    override fun findClass(name: String): Class<*> = loadedClasses[name.replace("::", ".")]  ?: parent.loadClass(name.replace("::", "."))
+    override fun findClass(name: String): Class<*> {
+        val name = SignatureString.fromDotNotation(name)
+        return loadedClasses[name.toDotNotation()]  ?: parent.loadClass(name.toDotNotation())
+    }
 }
 
 private fun Class<*>.toModule(): Module {
