@@ -1,5 +1,7 @@
 package com.language.compilation
 
+import com.language.Struct
+import java.lang.reflect.Constructor
 import java.lang.reflect.Modifier
 
 class BasicIRModuleLookup(
@@ -54,9 +56,49 @@ class BasicIRModuleLookup(
         }
     }
 
+
+    private fun getStruct(structPath: String): IRStruct? {
+        val structName = structPath.split("::").last()
+        return nativeModules.find { it.name == structPath.removeSuffix("::$structName")}?.structs?.get(structName)
+    }
+
+    override fun lookUpConstructor(className: String, argTypes: List<Type>): Type {
+        when(val struct = getStruct(className)) {
+            is IRStruct -> {
+                if (struct.fields.size != argTypes.size) {
+                    error("No constructor $className($argTypes)")
+                }
+                struct.fields.values
+                    .zip(argTypes)
+                    .forEach { (fieldType, argType) -> argType.assertIsInstanceOf(fieldType) }
+                return Type.JvmType(className)
+            }
+        }
+
+        val clazz = classOf(Type.JvmType(className))
+        val constructor = clazz.constructors.firstOrNull { constructor ->
+            constructor.parameterCount == argTypes.size &&
+            constructor.parameterTypes
+                .zip(argTypes)
+                .all{ (pType, argType) -> pType.canBe(argType) }
+        }
+        when(constructor) {
+            is Constructor<*> -> return Type.JvmType(className)
+            else -> error("No constructor $className($argTypes)")
+        }
+    }
+
     override fun lookUpFieldType(instance: Type, fieldName: String): Type {
         return when (instance) {
             is Type.JvmType -> {
+                val structName = instance.signature.split("::").last()
+                val modName = instance.signature.removeSuffix("::$structName")
+                when (val type = nativeModules.find { it.name == modName }?.structs?.get(structName)?.fields?.get(fieldName) ) {
+                    is Type -> return type
+                    else -> {}
+                }
+
+
                 //if the class doesn't exist, we simply throw
                 val clazz = externalJars.loadClass(instance.signature.replace("::", "."))
                 val field = clazz.fields.first { it.name == fieldName && !Modifier.isStatic(it.modifiers) }

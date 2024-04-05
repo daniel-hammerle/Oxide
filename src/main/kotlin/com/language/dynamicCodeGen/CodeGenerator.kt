@@ -205,6 +205,7 @@ class CodeGenerator {
             }
             is Instruction.LoadConstString -> mv.visitLdcInsn(instruction.value)
             is Instruction.Comparing -> TODO()
+            else -> TODO()
         }
     }
 }

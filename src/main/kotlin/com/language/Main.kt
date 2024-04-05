@@ -6,6 +6,9 @@ import com.language.compilation.*
 import com.language.lexer.lexCode
 import com.language.parser.parse
 import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 fun main() {
 
@@ -23,11 +26,9 @@ fun main() {
     val type = result.functions["main"]!!.type(listOf(), irLookup)
     println(type)
 
-    val bytes = compileProject(irLookup)["main"]!!
-    with(File("out.class")) {
-        writeBytes(bytes)
-    }
-
+    val project = compileProject(irLookup)
+    createZipFile(project, "out.jar")
+    /*
     val execution = ExecutionClassLoader(extensionClassLoader, ClassLoader.getPlatformClassLoader()).apply {
         putClassFile(bytes, "main")
     }
@@ -36,4 +37,23 @@ fun main() {
     execution.execute("main", "main")
 
 
+     */
+
+}
+
+fun createZipFile(entries: Map<String, ByteArray>, zipFilePath: String) {
+    val outputStream = FileOutputStream(zipFilePath)
+    val zipOutputStream = ZipOutputStream(outputStream)
+
+    try {
+        entries.forEach { (fileName, data) ->
+            val entry = ZipEntry(fileName.replace("::", "/") + ".class")
+            zipOutputStream.putNextEntry(entry)
+            zipOutputStream.write(data)
+            zipOutputStream.closeEntry()
+        }
+    } finally {
+        zipOutputStream.close()
+        outputStream.close()
+    }
 }

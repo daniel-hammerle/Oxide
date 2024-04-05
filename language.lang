@@ -1,11 +1,21 @@
 
 func main {
     i = 0
-    while i < 1000000 {
-        java::lang::System.out.println(i)
+    while i < 10000 {
+        print(i)
         i = i+1
     }
+
+    person = Person("Tom", 18)
+    print(person.name == "Tom")
 }
+
+struct Person {
+    name str,
+    age num
+}
+
+func print(value) java::lang::System.out.println(value)
 
 func f {
     result = test(2)

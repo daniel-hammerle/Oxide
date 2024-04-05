@@ -150,6 +150,18 @@ sealed class Instruction {
             return Type.Nothing
         }
     }
+    data class ConstructorCall(
+        val className: String,
+        val args: List<Instruction>,
+    ) : Instruction() {
+        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
+            val argTypes = args.map { it.type(variables, lookup) }
+            val returnType = lookup.lookUpConstructor(className, argTypes)
+            return returnType
+        }
+
+    }
+
     data class ModuleCall(
         val moduleName: String,
         val name: String,
@@ -402,4 +414,6 @@ fun Type.asBoxed() = when(this) {
     else -> this
 }
 
-data class IRModule(val name: String, val functions: Map<String, IRFunction>)
+data class IRStruct(val fields: Map<String, Type>)
+
+data class IRModule(val name: String, val functions: Map<String, IRFunction>, val structs: Map<String, IRStruct>)

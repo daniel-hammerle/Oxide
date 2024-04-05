@@ -7,6 +7,7 @@ sealed interface Token {
     data object Else : KeyWord
     data object Func : KeyWord
     data object Use : KeyWord
+    data object Struct : KeyWord
 
     data class Identifier(val name: String) : Token
 
@@ -44,6 +45,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "func" -> Token.Func
         "true" -> Token.True
         "false" -> Token.False
+        "struct" -> Token.Struct
         "use" -> Token.Use
         "_eq" -> Token.Eq
         "_neq" -> Token.Neq
@@ -73,10 +75,10 @@ fun lexCode(code: String) = mutableListOf<Token>().apply {
     }
 
     val iter = code
-        .replace("==", "_eq")
-        .replace("<=", "_seq")
-        .replace(">=", "_geq")
-        .replace("!=", "_neq")
+        .replace("==", " _eq ")
+        .replace("<=", " _seq ")
+        .replace(">=", " _geq ")
+        .replace("!=", " _neq ")
         .toCharArray().iterator()
     while (iter.hasNext()) {
         val token = when (val c = iter.nextChar()) {

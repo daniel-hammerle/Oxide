@@ -32,7 +32,36 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             val body = parseExpression(tokens, Variables.withEntries(args.toSet()))
             name to Function(args, body)
         }
+        Token.Struct -> {
+            val name = tokens.expect<Token.Identifier>().name
+            val args = when(tokens.visitNext()) {
+                Token.OpenCurly -> {
+                    tokens.expect<Token.OpenCurly>()
+                    parseTypedArgs(tokens)
+                }
+                else -> emptyMap()
+            }
+            name to Struct(args)
+        }
         else -> error("Invalid token $token")
+    }
+}
+
+fun parseTypedArgs(tokens: Tokens, closingSymbol: Token = Token.ClosingCurly): Map<String, String> {
+    if (tokens.visitNext() == closingSymbol) {
+        tokens.next()
+        return emptyMap()
+    }
+    val entries = mutableMapOf<String, String>()
+    while(true) {
+        val name = tokens.expect<Token.Identifier>().name
+        val type = tokens.expect<Token.Identifier>().name
+        entries[name] = type
+        when(tokens.next()) {
+            closingSymbol -> return entries
+            Token.Comma -> continue
+            else -> error("Invalid token expected `,` or `$closingSymbol`")
+        }
     }
 }
 

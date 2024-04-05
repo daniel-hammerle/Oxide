@@ -3,6 +3,7 @@ package com.language.compilation
 import com.language.Function
 import com.language.Module
 import com.language.ModuleChild
+import com.language.Struct
 
 data class BasicModuleLookup(
     val current: Module,
@@ -22,6 +23,18 @@ data class BasicModuleLookup(
         name in modules ||
                 //if a java class with the name exists
                 runCatching { externalJars.loadClass(name.replace("::", ".")) }.isSuccess
+
+    override fun hasStruct(name: String): Boolean {
+        if (current.children[name] is Struct)
+            return true
+        val structName = name.split("::").last()
+        val modName = name.removeSuffix("::$structName")
+
+        val mod = nativeModule(modName) ?: return false
+        return mod.children[structName] is Struct
+    }
+
+    override fun hasLocalStruct(name: String): Boolean = current.children[name] is Struct
 
     override fun nativeModule(name: String): Module? = modules[name]
 

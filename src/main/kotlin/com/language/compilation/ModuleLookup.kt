@@ -12,6 +12,8 @@ interface ModuleLookup {
 
     val localSymbols: Map<String, ModuleChild>
 
+    fun hasStruct(name: String): Boolean
+    fun hasLocalStruct(name: String): Boolean
     fun hasModule(name: String): Boolean
     fun nativeModule(name: String): Module?
 

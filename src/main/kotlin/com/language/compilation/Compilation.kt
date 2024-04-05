@@ -1,38 +1,37 @@
 package com.language.compilation
 
-import com.language.Expression
+import com.language.*
 import com.language.Function
-import com.language.Module
-import com.language.Statement
 
 fun compile(module: ModuleLookup): IRModule {
     val functions: MutableMap<String, IRFunction> = mutableMapOf()
+    val structs: MutableMap<String, IRStruct> = mutableMapOf()
     module.localSymbols.forEach { (name, entry) ->
-        val function = when(entry) {
-            is Function -> compileFunction(function = entry, module)
+        when(entry) {
+            is Function -> functions[name] = compileFunction(function = entry, module)
+            is Struct -> structs[name] = compileStruct(struct = entry, module)
             else -> error("Invalid construct")
         }
-        functions[name] = function
     }
 
-    return IRModule(module.localName, functions)
+    return IRModule(module.localName, functions, structs)
 }
 
+fun compileStruct(struct: Struct, module: ModuleLookup): IRStruct {
+    val fields = struct.args.mapValues { it.value.parseType(module) }
+    return IRStruct(fields)
+}
 
-
-class VariableIdMapping {
-    private val variables: MutableMap<String, Int> = hashMapOf()
-    private var currentId: Int = 0
-    operator fun get(name: String): Int = variables[name] ?: insert(name)
-
-    private fun insert(name: String): Int {
-        currentId++
-        variables[name] = currentId
-        return currentId
+fun String.parseType(module: ModuleLookup) = when(this) {
+    "num" -> Type.DoubleT
+    "str" -> Type.String
+    "bool" -> Type.BoolT
+    else -> {
+        when {
+            module.hasModule(this) -> Type.JvmType(this)
+            else -> error("Invalid type $this")
+        }
     }
-
-    val varCount: Int
-        get() = currentId
 }
 
 fun compileFunction(function: Function, module: ModuleLookup): IRFunction {
@@ -161,15 +160,27 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup): Instruction 
         //call in the same module
         // foo()
         is Expression.UnknownSymbol -> {
-            when(module.localGetFunction(parent.name)) {
-                is Function -> {
+            when {
+                module.localGetFunction(parent.name) is Function -> {
                     Instruction.ModuleCall(
                         moduleName = module.localName,
                         name = parent.name,
                         args = args,
                     )
                 }
-                else -> error("Cannot invoke non funciton")
+                module.hasLocalStruct(parent.name) -> {
+                    Instruction.ConstructorCall(
+                        className = "${module.localName}::${parent.name}",
+                        args = args
+                    )
+                }
+                module.hasModule(parent.name) || module.hasStruct(parent.name) -> {
+                    Instruction.ConstructorCall(
+                        className = parent.name,
+                        args = args
+                    )
+                }
+                else -> error("Cannot invoke non funciton ${parent.name}")
             }
         }
         //this would be a value invokable

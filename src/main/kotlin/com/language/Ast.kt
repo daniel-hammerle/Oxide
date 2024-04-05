@@ -35,6 +35,8 @@ sealed interface ModuleChild
 
 data class Function(val args: List<String>, val body: Expression) : ModuleChild
 
+data class Struct(val args: Map<String, String>) : ModuleChild
+
 data class Variable(val initialValue: Expression) : ModuleChild
 
 
