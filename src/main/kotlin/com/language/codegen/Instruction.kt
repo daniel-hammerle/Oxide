@@ -16,12 +16,28 @@ fun compileInstruction(mv: MethodVisitor, instruction: Instruction, variables: V
             val parentType = instruction.parent.type(variables, lookup)
             //load instance onto the stack
             compileInstruction(mv, instruction.parent, variables, lookup)
-            mv.visitFieldInsn(
-                Opcodes.GETFIELD,
-                parentType.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
-                instruction.name,
-                returnType.toJVMDescriptor()
-            )
+            when(parentType) {
+                is Type.Union -> {
+                    mv.dynamicDispatch(parentType.entries, returnType) { type ->
+                        mv.visitFieldInsn(
+                            Opcodes.GETFIELD,
+                            type.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
+                            instruction.name,
+                            returnType.toJVMDescriptor()
+                        )
+                    }
+                }
+                else -> {
+                    mv.visitFieldInsn(
+                        Opcodes.GETFIELD,
+                        parentType.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
+                        instruction.name,
+                        returnType.toJVMDescriptor()
+                    )
+                }
+            }
+
+
         }
         is Instruction.If -> {
             //eval condition
@@ -230,67 +246,82 @@ fun compileDynamicCall(
     val parentType = instruction.parent.type(variables, lookup)
     //load instance onto the stack
     compileInstruction(mv, instruction.parent, variables, lookup)
-
+    val argTypes = instruction.args.map { it.type(variables, lookup) }
     when {
         parentType is Type.Union -> {
-            val argTypes = instruction.args.map { it.type(variables, lookup) }
-
-            when(val interfaceType = parentType.checkCommonInterfacesForFunction(instruction.name, argTypes, lookup)) {
+            when (val interfaceType = parentType.checkCommonInterfacesForFunction(instruction.name, argTypes, lookup)) {
                 is Type.JvmType -> {
-                    val returnType = instruction.type(variables, lookup)
                     //mv.visitTypeInsn(Opcodes.CHECKCAST, interfaceType.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
                     instruction.args.forEach { compileInstruction(mv, it, variables, lookup) }
                     mv.visitMethodInsn(
                         Opcodes.INVOKEVIRTUAL,
                         interfaceType.toJVMDescriptor().removeSuffix(";").removePrefix("L"),
                         instruction.name,
-                        generateJVMFunctionSignature(argTypes, returnType),
+                        lookup.generateCallSignature(parentType, instruction.name, argTypes),
                         true
                     )
                 }
+
                 else -> {
-                    val end = Label()
-                    parentType.entries.forEach { type ->
-                        val skip = Label()
-                        val returnType = lookup.lookUpType(instance = type, funcName = instruction.name, argTypes = argTypes)
-                        mv.visitInsn(Opcodes.DUP)
-                        mv.visitTypeInsn(Opcodes.INSTANCEOF, type.toJVMDescriptor().removeSuffix(";").removePrefix("L"))
-                        mv.visitJumpInsn(Opcodes.IFEQ, skip)
-                        mv.visitTypeInsn(Opcodes.CHECKCAST, type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
-                        //perform call
-                        //load args onto the stack
+                    mv.dynamicDispatch(parentType.entries, instruction.type(variables, lookup)) { type ->
                         instruction.args.forEach { compileInstruction(mv, it, variables, lookup) }
                         mv.visitMethodInsn(
                             Opcodes.INVOKEVIRTUAL,
                             type.toJVMDescriptor().removeSuffix(";").removePrefix("L"),
                             instruction.name,
-                            generateJVMFunctionSignature(argTypes, returnType),
+                            lookup.generateCallSignature(type, instruction.name, argTypes),
                             false
                         )
 
-                        mv.visitJumpInsn(Opcodes.GOTO, end)
-                        mv.visitLabel(skip)
                     }
-
-                    mv.visitLabel(end)
                 }
             }
         }
+
         else -> {
-            val returnType = instruction.type(variables, lookup)
             //load args onto the stack
             instruction.args.forEach { compileInstruction(mv, it, variables, lookup) }
             mv.visitMethodInsn(
                 Opcodes.INVOKEVIRTUAL,
                 parentType.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
                 instruction.name,
-                generateJVMFunctionSignature(instruction.args.map { it.type(variables, lookup) }, returnType),
+                lookup.generateCallSignature(parentType, instruction.name, argTypes),
                 false
             )
+            if (lookup.hasGenericReturnType(parentType, instruction.name, argTypes)) {
+                mv.visitTypeInsn(Opcodes.CHECKCAST,lookup.lookUpType(instance = parentType, funcName = instruction.name, argTypes = argTypes).toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+            }
         }
+
+
     }
 
+}
 
+inline fun MethodVisitor.dynamicDispatch(types: Iterable<Type>, elseType: Type, task: (type: Type) -> Unit) {
+    val end = Label()
+
+    types.forEach { type ->
+        val skip = Label()
+        visitInsn(Opcodes.DUP)
+        visitTypeInsn(Opcodes.INSTANCEOF, type.toJVMDescriptor().removeSuffix(";").removePrefix("L"))
+        visitJumpInsn(Opcodes.IFEQ, skip)
+        visitTypeInsn(Opcodes.CHECKCAST, type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+        task(type)
+
+        visitJumpInsn(Opcodes.GOTO, end)
+        visitLabel(skip)
+    }
+    //introduce an else-case that literally never happens since we know its exhaustive just to keep the jvm happy
+    visitInsn(Opcodes.POP)
+    when(elseType) {
+        Type.BoolT, Type.IntT -> visitInsn(Opcodes.ICONST_0)
+        Type.DoubleT -> visitLdcInsn(0.0)
+        is Type.BasicJvmType, Type.Null, is Type.Union -> visitInsn(Opcodes.ACONST_NULL)
+        Type.Nothing -> {}
+    }
+
+    visitLabel(end)
 }
 
 

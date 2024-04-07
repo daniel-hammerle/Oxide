@@ -1,7 +1,8 @@
 package com.language.compilation
 
-import com.language.Struct
+import com.language.codegen.generateJVMFunctionSignature
 import java.lang.reflect.Constructor
+import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
 class BasicIRModuleLookup(
@@ -30,19 +31,73 @@ class BasicIRModuleLookup(
         }
     }
 
+    override fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int> {
+        when(instance) {
+            is Type.JvmType -> {
+                //if the class doesn't exist, we simply throw
+                val method = loadMethod(instance.signature, funcName, argTypes)
+
+                val typeParameters = method.genericParameterTypes
+                val typeMap =  typeParameters
+                    .mapIndexed { index, c -> index to c  }
+                    .filter { it.second.typeName in instance.genericTypes }
+                    .associate { (index, c) -> c.typeName to index }
+                return typeMap
+            }
+            else -> return emptyMap()
+        }
+    }
+
+    override fun generateCallSignature(instance: Type, funcName: String, argTypes: List<Type>): String {
+        return when (instance) {
+            is Type.JvmType -> {
+                //if the class doesn't exist, we simply throw
+                val method = loadMethod(instance.signature, funcName, argTypes)
+
+                generateJVMFunctionSignature(method.parameterTypes.map { it.toType() }, returnType = method.returnType.toType())
+            }
+            Type.BoolT -> generateCallSignature(Type.Bool, funcName, argTypes)
+            Type.DoubleT -> generateCallSignature(Type.Double, funcName, argTypes)
+            Type.IntT -> generateCallSignature(Type.Int, funcName, argTypes)
+            Type.Nothing -> error("Nothing does not have function $funcName")
+            Type.Null -> error("Null does not have function $funcName")
+            is Type.Union -> error("Can not return a single call signature for a UnionType")
+        }
+    }
+
+    private fun loadMethod(signatureString: SignatureString, funcName: String, argTypes: List<Type>): Method {
+        val clazz = externalJars.loadClass(signatureString.toDotNotation())
+        val methods = clazz.methods.filter { it.name == funcName && it.parameterCount == argTypes.size && !Modifier.isStatic(it.modifiers) }
+        val method = methods.first {
+            //map through each argument and check if it works
+            argTypes
+                .mapIndexed { index, type -> it.parameterTypes[index].canBe(type) }
+                .all { it }  //if every condition is true
+        }
+        return method
+    }
+
+    override fun hasGenericReturnType(instance: Type, funcName: String, argTypes: List<Type>): Boolean {
+        return when(instance) {
+            is Type.JvmType -> {
+                val method = loadMethod(instance.signature, funcName, argTypes)
+                method.returnType.name != method.genericReturnType.typeName
+            }
+            else -> false
+        }
+    }
+
     override fun lookUpType(instance: Type, funcName: String, argTypes: List<Type>): Type {
         return when (instance) {
             is Type.JvmType -> {
                 //if the class doesn't exist, we simply throw
-                val clazz = externalJars.loadClass(instance.signature.toDotNotation())
-                val methods = clazz.methods.filter { it.name == funcName && it.parameterCount == argTypes.size && !Modifier.isStatic(it.modifiers) }
-                val method = methods.first {
-                    //map through each argument and check if it works
-                    argTypes
-                        .mapIndexed { index, type -> it.parameterTypes[index].canBe(type) }
-                        .all { it }  //if every condition is true
+                val method = loadMethod(instance.signature, funcName, argTypes)
+
+                when (val tp = instance.genericTypes[method.genericReturnType.typeName]) {
+                    is Type.BroadType.Unknown -> Type.Object
+                    is Type.BroadType.Known -> tp.type
+                    else -> method.returnType.toType()
                 }
-                method.returnType.toType()
             }
             Type.BoolT -> lookUpType(Type.Bool, funcName, argTypes)
             Type.DoubleT -> lookUpType(Type.Double, funcName, argTypes)
@@ -70,11 +125,11 @@ class BasicIRModuleLookup(
                 struct.fields.values
                     .zip(argTypes)
                     .forEach { (fieldType, argType) -> argType.assertIsInstanceOf(fieldType) }
-                return Type.JvmType(className)
+                return Type.BasicJvmType(className)
             }
         }
 
-        val clazz = classOf(Type.JvmType(className))
+        val clazz = classOf(Type.BasicJvmType(className))
         val constructor = clazz.constructors.firstOrNull { constructor ->
             constructor.parameterCount == argTypes.size &&
             constructor.parameterTypes
@@ -82,7 +137,7 @@ class BasicIRModuleLookup(
                 .all{ (pType, argType) -> pType.canBe(argType) }
         }
         when(constructor) {
-            is Constructor<*> -> return Type.JvmType(className)
+            is Constructor<*> -> return clazz.toType()
             else -> error("No constructor $className($argTypes)")
         }
     }
@@ -94,7 +149,6 @@ class BasicIRModuleLookup(
                     is Type -> return type
                     else -> {}
                 }
-
 
                 //if the class doesn't exist, we simply throw
                 val clazz = externalJars.loadClass(instance.signature.toDotNotation())
@@ -125,14 +179,19 @@ class BasicIRModuleLookup(
 }
 
 
-fun Class<*>.toType() = when(val value = name.replace(".", "::")) {
+fun Class<*>.toType() = when(name) {
     "void" -> Type.Nothing
     "int" -> Type.IntT
     "double" -> Type.DoubleT
-    else -> Type.JvmType(SignatureString(value))
+    "boolean" -> Type.BoolT
+    else -> {
+        val generics = typeParameters.associate { it.typeName to Type.BroadType.Unknown }
+        Type.BasicJvmType(SignatureString.fromDotNotation(name), generics)
+    }
 }
 
 fun Class<*>.canBe(type: Type): Boolean {
+    if (name == "java.lang.Object" && !type.isUnboxedPrimitive()) return true
     return when(type) {
         is Type.JvmType -> SignatureString(this.name.replace(".", "::")) == type.signature || name == "java.lang.Object"
         Type.DoubleT -> name == "double"

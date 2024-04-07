@@ -88,6 +88,10 @@ class VariableMappingImpl private constructor(
 sealed class Instruction {
     abstract fun type(variables: VariableMapping, lookup: IRModuleLookup): Type
 
+    open fun genericChangeRequest(variables: VariableMapping, name: String, type: Type) {
+        //ignore
+    }
+
     data class DynamicCall(
         val parent: Instruction,
         val name: String,
@@ -99,7 +103,18 @@ sealed class Instruction {
 
             //get the return type (or error out if we don't have the method with the respective args)
             val returnType = lookup.lookUpType(parentType, name, argTypes)
+            val genericChanges = lookup.lookUpGenericTypes(parentType, name, argTypes)
+
+            for ((name, index) in genericChanges) {
+                genericChangeRequest(variables, name, argTypes[index])
+            }
+
             return returnType
+        }
+
+
+        override fun genericChangeRequest(variables: VariableMapping, name: String, type: Type) {
+            parent.genericChangeRequest(variables, name, type)
         }
     }
 
@@ -202,6 +217,15 @@ sealed class Instruction {
         override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
             return variables.getType(name)
         }
+
+        override fun genericChangeRequest(variables: VariableMapping, name: String, type: Type) {
+            when(val varType = variables.getType(this.name)) {
+                is Type.JvmType -> {
+                    variables.change(this.name, varType.extendGeneric(name, type))
+                }
+                else -> {}
+            }
+        }
     }
     data class MultiInstructions(val instructions: List<Instruction>) : Instruction() {
         override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
@@ -209,15 +233,25 @@ sealed class Instruction {
                 .map { it.type(variables, lookup) } //we need to execute every instruction to properly type check
                 .lastOrNull() ?: Type.Null
         }
+
+        override fun genericChangeRequest(variables: VariableMapping, name: String, type: Type) {
+            instructions.lastOrNull()?.genericChangeRequest(variables, name, type)
+        }
     }
 
     //its unknown since its dynamic
     data class DynamicPropertyAccess(val parent: Instruction, val name: String): Instruction() {
         override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            val parentType = parent.type(variables, lookup)
-            return lookup.lookUpFieldType(parentType, name)
+            return when(val parentType = parent.type(variables, lookup)) {
+                is Type.Union -> {
+                    parentType.entries.map { lookup.lookUpFieldType(it, name) }.reduce { acc, type -> acc.join(type) }
+                }
+                else ->lookup.lookUpFieldType(parentType, name)
+            }
         }
     }
+
+
     data class StaticPropertyAccess(val parentName: SignatureString, val name: String): Instruction() {
         override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
             return lookup.lookUpFieldType(parentName, name)
@@ -257,17 +291,33 @@ sealed class Instruction {
 }
 
 sealed interface Type {
+    //size in the var stack
+    //this is `1` for ints, booleans since 1 = 32bit
+    //and its also `1` for complex types since they are pointers and ptrs in jvm are 32 bit
+    //and its `2` for doubles or longs
     val size: Int
 
     companion object {
-        val String = JvmType(SignatureString("java::lang::String"))
-        val Int = JvmType(SignatureString("java::lang::Integer"))
-        val Double = JvmType(SignatureString("java::lang::Double"))
-        val Bool = JvmType(SignatureString("java::lang::Boolean"))
+        val String = BasicJvmType(SignatureString("java::lang::String"))
+        val Int = BasicJvmType(SignatureString("java::lang::Integer"))
+        val Double = BasicJvmType(SignatureString("java::lang::Double"))
+        val Bool = BasicJvmType(SignatureString("java::lang::Boolean"))
+        val Object = BasicJvmType(SignatureString("java::lang::Object"))
     }
-    data class JvmType(val signature: SignatureString): Type {
+    sealed interface JvmType : Type {
+        val signature: SignatureString
+        val genericTypes: Map<String, BroadType>
+    }
+
+    sealed interface BroadType {
+        data object Unknown : BroadType
+        data class Known(val type: Type): BroadType
+    }
+
+    data class BasicJvmType(override val signature: SignatureString, override val genericTypes: Map<String, BroadType> = emptyMap()): JvmType {
         override val size: Int = 1
     }
+
 
     data object BoolT : Type {
         override val size: Int = 1
@@ -292,6 +342,17 @@ sealed interface Type {
         override val size: Int = 0
     }
 
+}
+
+fun Type.JvmType.extendGeneric(name: String, type: Type): Type.JvmType {
+    val generics = genericTypes.toMutableMap()
+    when (val tp = generics[name]) {
+        is Type.BroadType.Known -> generics[name] = Type.BroadType.Known(tp.type.join(type))
+        Type.BroadType.Unknown -> generics[name] = Type.BroadType.Known(type)
+        null -> error("No generic type $name")
+    }
+
+    return Type.BasicJvmType(signature, generics)
 }
 
 fun Type.Union.mapEntries(closure: (item: Type) -> Type): Type.Union {

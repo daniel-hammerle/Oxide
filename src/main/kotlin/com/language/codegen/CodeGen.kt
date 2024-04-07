@@ -23,8 +23,8 @@ fun compileModule(module: IRModule, lookup: IRModuleLookup):  Pair<ByteArray, Ma
     cw.visit(
         49,
         Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER + Opcodes.ACC_FINAL,
-        module.name.structName,
         module.name.toJvmNotation(),
+        null,
         "java/lang/Object",
         null
     )

@@ -1,5 +1,26 @@
-
 func main {
+    map = java::util::HashMap()
+    map.put("Hello", Person("Tom", 18.4))
+    print(map.get("Hello").age)
+    map.put("Foo", Dog(3.2))
+    print(map.get("Foo").age)
+}
+
+func x(list) {
+    list.add("Hello World")
+}
+
+
+struct Person {
+    name str,
+    age num
+}
+
+struct Dog {
+    age num
+}
+
+func ff {
     i = 0
     while i < 10000 {
         print(i)
@@ -11,10 +32,6 @@ func main {
     bar()
 }
 
-struct Person {
-    name str,
-    age num
-}
 
 func print(value) java::lang::System.out.println(value)
 
@@ -32,6 +49,7 @@ func test(x) {
     }
 }
 
+
 func bar {
     result = java::lang::System.out
     other = com::example::Foo.instance
@@ -40,7 +58,6 @@ func bar {
     foo(other, "Hello")
     result = add(1, 2)
     io.print(result.toString())
-    1 / 2
 }
 
 func foo(x, y) {
@@ -51,3 +68,4 @@ func foo(x, y) {
 func add(a, b) {
     a * b
 }
+

@@ -28,7 +28,7 @@ fun String.parseType(module: ModuleLookup) = when(this) {
     "bool" -> Type.BoolT
     else -> {
         when {
-            module.hasModule(SignatureString(this)) -> Type.JvmType(SignatureString(this))
+            module.hasModule(SignatureString(this)) -> Type.BasicJvmType(SignatureString(this))
             else -> error("Invalid type $this")
         }
     }

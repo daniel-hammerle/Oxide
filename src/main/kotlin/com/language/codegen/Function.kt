@@ -17,7 +17,7 @@ fun compileCheckedFunction(cw: ClassWriter, function: IRFunction, name: String, 
         arrayOf()
     )
     val variables = VariableMappingImpl.fromVariables(function.args.zip(argTypes).associate { (arg, type) -> arg to type }.toMap())
-    mv.visitMaxs(20, function.getVarCount(argTypes, lookup)) // 1 for the instance
+    mv.visitMaxs(20, function.getVarCount(argTypes, lookup) + 1) // 1 for the instance
 
     //compile body
     compileInstruction(mv, function.body, variables, lookup)

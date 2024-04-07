@@ -12,8 +12,8 @@ fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct
     cw.visit(
         49,
         Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER + Opcodes.ACC_FINAL,
-        structName,
         structJVMName,
+        null,
         "java/lang/Object",
         null
     )
@@ -34,8 +34,9 @@ fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct
         generateJVMFunctionSignature(struct.fields.values, Type.Nothing),
         null,
         null
+
     )
-    mv.visitCode();
+    mv.visitMaxs(3, 1+struct.fields.map { it.value.size }.sum())
     mv.visitVarInsn(Opcodes.ALOAD, 0); // Load "this" onto the stack
     mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false); // Invoke super constructor
 
@@ -55,7 +56,6 @@ fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct
         i++
     }
     mv.visitInsn(Opcodes.RETURN)
-    mv.visitMaxs(2, 1+struct.fields.map { it.value.size }.sum())
     return cw.toByteArray()
 
 
