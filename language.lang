@@ -1,9 +1,13 @@
 func main {
     map = java::util::HashMap()
-    map.put("Hello", Person("Tom", 18.4))
+    map.put("Hello", Person("Tom", 18.1))
     print(map.get("Hello").age)
     map.put("Foo", Dog(3.2))
     print(map.get("Foo").age)
+    map.put("Bar", 3)
+    print(map.get("Bar"))
+    map.put("Baz", true)
+    print("Size is "+map.size())
 }
 
 func x(list) {

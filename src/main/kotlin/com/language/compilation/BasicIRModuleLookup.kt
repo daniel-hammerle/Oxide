@@ -9,10 +9,10 @@ class BasicIRModuleLookup(
     override val nativeModules: Set<IRModule>,
     private val externalJars: ClassLoader
 ) : IRModuleLookup {
-    override fun lookUpType(modName: SignatureString, funcName: String, argTypes: List<Type>): Type {
+    override fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate {
         return when(val module = nativeModules.find{ it.name == modName }) {
             is IRModule -> {
-                module.functions[funcName]?.type(argTypes, this) ?: error("Function $funcName in $modName with variants $argTypes not found")
+                module.functions[funcName]?.type(argTypes, this)?.let { FunctionCandidate(argTypes, argTypes, it, it) } ?: error("Function $funcName in $modName with variants $argTypes not found")
             }
             else -> {
                 val clazz = externalJars.loadClass(modName.toDotNotation())
@@ -25,7 +25,10 @@ class BasicIRModuleLookup(
                         .mapIndexed { index, type -> it.parameterTypes[index].canBe(type) }
                         .all { it }  //if every condition is true
                 }
-                method.returnType.toType()
+                val returnType = method.returnType.toType()
+                val actualArgTypes = method.parameterTypes.map { it.toType() }
+                //oxide and jvm return types are the same since generics cant exist on static functions
+                FunctionCandidate(oxideArgs = argTypes,jvmArgs = actualArgTypes, jvmReturnType = returnType, oxideReturnType = returnType)
             }
 
         }
@@ -68,12 +71,17 @@ class BasicIRModuleLookup(
     private fun loadMethod(signatureString: SignatureString, funcName: String, argTypes: List<Type>): Method {
         val clazz = externalJars.loadClass(signatureString.toDotNotation())
         val methods = clazz.methods.filter { it.name == funcName && it.parameterCount == argTypes.size && !Modifier.isStatic(it.modifiers) }
-        val method = methods.first {
+        val method = methods.firstOrNull {
             //map through each argument and check if it works
             argTypes
                 .mapIndexed { index, type -> it.parameterTypes[index].canBe(type) }
                 .all { it }  //if every condition is true
-        }
+        } ?: methods.firstOrNull {
+            //map through each argument and check if it works
+            argTypes
+                .mapIndexed { index, type -> it.parameterTypes[index].canBe(type.asBoxed()) }
+                .all { it }  //if every condition is true
+        } ?: error("No matching method found")
         return method
     }
 
@@ -87,26 +95,39 @@ class BasicIRModuleLookup(
         }
     }
 
-    override fun lookUpType(instance: Type, funcName: String, argTypes: List<Type>): Type {
+    override fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate {
         return when (instance) {
             is Type.JvmType -> {
                 //if the class doesn't exist, we simply throw
                 val method = loadMethod(instance.signature, funcName, argTypes)
 
-                when (val tp = instance.genericTypes[method.genericReturnType.typeName]) {
+                val returnType = when (val tp = instance.genericTypes[method.genericReturnType.typeName]) {
                     is Type.BroadType.Unknown -> Type.Object
                     is Type.BroadType.Known -> tp.type
                     else -> method.returnType.toType()
                 }
+
+                val actualArgTypes = method.parameterTypes.map { it.toType() }
+
+                val jvmReturnType = when {
+                    method.genericReturnType.typeName in instance.genericTypes -> Type.Object
+                    else -> returnType
+                }
+                FunctionCandidate(
+                    oxideArgs = argTypes,
+                    jvmArgs = actualArgTypes,
+                    oxideReturnType = returnType,
+                    jvmReturnType = jvmReturnType
+                )
             }
-            Type.BoolT -> lookUpType(Type.Bool, funcName, argTypes)
-            Type.DoubleT -> lookUpType(Type.Double, funcName, argTypes)
-            Type.IntT -> lookUpType(Type.Int, funcName, argTypes)
+            Type.BoolT -> lookUpCandidate(Type.Bool, funcName, argTypes)
+            Type.DoubleT -> lookUpCandidate(Type.Double, funcName, argTypes)
+            Type.IntT -> lookUpCandidate(Type.Int, funcName, argTypes)
             Type.Nothing -> error("Nothing does not have function $funcName")
             Type.Null -> error("Null does not have function $funcName")
             is Type.Union -> {
-                val types = instance.entries.map { lookUpType(it, funcName, argTypes) }
-                types.reduce { acc, type -> acc.join(type) }
+                val types = instance.entries.map { lookUpCandidate(it, funcName, argTypes) }
+                error("Cannot provide variant for unions")
             }
         }
     }
@@ -190,8 +211,9 @@ fun Class<*>.toType() = when(name) {
     }
 }
 
-fun Class<*>.canBe(type: Type): Boolean {
-    if (name == "java.lang.Object" && !type.isUnboxedPrimitive()) return true
+fun Class<*>.canBe(type: Type, strict: Boolean = false): Boolean {
+    if (!strict && (name == "double" || name == "java.lang.Double") && (type == Type.IntT || type == Type.Int)) return true
+    if (name == "java.lang.Object" && if (strict) !type.isUnboxedPrimitive() else true) return true
     return when(type) {
         is Type.JvmType -> SignatureString(this.name.replace(".", "::")) == type.signature || name == "java.lang.Object"
         Type.DoubleT -> name == "double"

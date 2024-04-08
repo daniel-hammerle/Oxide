@@ -1,9 +1,6 @@
 package com.language.codegen
 
-import com.language.compilation.IRModuleLookup
-import com.language.compilation.Type
-import com.language.compilation.canBe
-import com.language.compilation.toType
+import com.language.compilation.*
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 
@@ -78,11 +75,11 @@ fun Type.toJVMDescriptor() = when(this) {
 }
 
 
-fun Type.Union.checkCommonInterfacesForFunction(name: String, argTypes: List<Type>, lookup: IRModuleLookup): Type.JvmType? {
+fun Type.Union.checkCommonInterfacesForFunction(name: String, argTypes: List<Type>, lookup: IRModuleLookup): Pair<Type.JvmType, FunctionCandidate>? {
     if (entries.any{ it !is Type.JvmType }) return null
 
-    val returnType = entries
-        .map { lookup.lookUpType(it, name, argTypes) }
+    val candidate = entries
+        .map { lookup.lookUpCandidate(it, name, argTypes) }
         //if we have more than 1 single return type return null since it won't work
         .reduce { acc, type -> if (acc != type) return null else type }
 
@@ -91,12 +88,12 @@ fun Type.Union.checkCommonInterfacesForFunction(name: String, argTypes: List<Typ
     val commonInterface = commonInterfaces.firstOrNull { i ->
         i.methods.any { method ->
             method.parameterCount == argTypes.size &&
-                    method.returnType.canBe(returnType) &&
+                    method.returnType.canBe(candidate.oxideReturnType) &&
                     method.parameterTypes.toList().enumerate().all { (i ,it) -> it.canBe(argTypes[i]) }
 
         }
     }
-    return commonInterface?.toType() as? Type.JvmType
+    return (commonInterface?.toType() as? Type.JvmType)?.let { it to candidate }
 }
 
 fun<T> Iterable<T>.enumerate(): Iterable<Pair<Int, T>> {

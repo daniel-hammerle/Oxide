@@ -2,10 +2,10 @@ package com.language.compilation
 
 interface IRModuleLookup {
     val nativeModules: Set<IRModule>
-    fun lookUpType(modName: SignatureString, funcName: String, argTypes: List<Type>): Type
+    fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate
     fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int>
     fun hasGenericReturnType(instance: Type, funcName: String, argTypes: List<Type>): Boolean
-    fun lookUpType(instance: Type, funcName: String, argTypes: List<Type>): Type
+    fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate
     fun generateCallSignature(instance: Type, funcName: String, argTypes: List<Type>): String
 
     fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): Type

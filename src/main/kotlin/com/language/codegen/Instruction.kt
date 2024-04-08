@@ -3,6 +3,7 @@ package com.language.codegen
 import com.language.CompareOp
 import com.language.MathOp
 import com.language.compilation.*
+import org.objectweb.asm.Handle
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
@@ -104,10 +105,34 @@ fun compileInstruction(mv: MethodVisitor, instruction: Instruction, variables: V
         }
         is Instruction.Math -> {
             val firstType = instruction.first.type(variables, lookup)
-            val secondType = instruction.first.type(variables, lookup)
+            val secondType = instruction.second.type(variables, lookup)
 
             if (instruction.op == MathOp.Add && firstType == Type.String) {
-                TODO()
+                compileInstruction(mv, instruction.first, variables, lookup)
+                compileInstruction(mv, instruction.second, variables, lookup)
+                if (secondType != Type.String) {
+                    val tp = when(secondType) {
+                        Type.IntT -> "I"
+                        Type.DoubleT -> "D"
+                        Type.BoolT -> "Z"
+                        else -> "Ljava/lang/Object;"
+                    }
+                    mv.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        "java/lang/String",
+                        "valueOf",
+                        "($tp)Ljava/lang/String;",
+                        false
+                    )
+                }
+                mv.visitMethodInsn(
+                    Opcodes.INVOKEVIRTUAL,
+                    "java/lang/String",
+                    "concat",
+                    "(Ljava/lang/String;)Ljava/lang/String;",
+                    false
+                )
+                return
             }
 
             if (firstType.isDouble() || secondType.isDouble()) {
@@ -249,30 +274,34 @@ fun compileDynamicCall(
     val argTypes = instruction.args.map { it.type(variables, lookup) }
     when {
         parentType is Type.Union -> {
-            when (val interfaceType = parentType.checkCommonInterfacesForFunction(instruction.name, argTypes, lookup)) {
-                is Type.JvmType -> {
-                    //mv.visitTypeInsn(Opcodes.CHECKCAST, interfaceType.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
-                    instruction.args.forEach { compileInstruction(mv, it, variables, lookup) }
+            when (val commonType = parentType.checkCommonInterfacesForFunction(instruction.name, argTypes, lookup)) {
+                is Pair<Type.JvmType, FunctionCandidate> -> {
+                    val (interfaceType, candidate) = commonType
+                    mv.loadAndBox(candidate, instruction.args, variables, lookup)
                     mv.visitMethodInsn(
                         Opcodes.INVOKEVIRTUAL,
                         interfaceType.toJVMDescriptor().removeSuffix(";").removePrefix("L"),
                         instruction.name,
-                        lookup.generateCallSignature(parentType, instruction.name, argTypes),
+                        candidate.toJvmDescriptor(),
                         true
                     )
                 }
 
                 else -> {
                     mv.dynamicDispatch(parentType.entries, instruction.type(variables, lookup)) { type ->
-                        instruction.args.forEach { compileInstruction(mv, it, variables, lookup) }
+                        val candidate = lookup.lookUpCandidate(instance = type, funcName = instruction.name, argTypes = argTypes)
+                        mv.loadAndBox(candidate, instruction.args, variables, lookup)
+
                         mv.visitMethodInsn(
                             Opcodes.INVOKEVIRTUAL,
                             type.toJVMDescriptor().removeSuffix(";").removePrefix("L"),
                             instruction.name,
-                            lookup.generateCallSignature(type, instruction.name, argTypes),
+                            candidate.toJvmDescriptor(),
                             false
                         )
-
+                        if (candidate.hasGenericReturnType) {
+                            mv.visitTypeInsn(Opcodes.CHECKCAST, candidate.oxideReturnType.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+                        }
                     }
                 }
             }
@@ -280,16 +309,17 @@ fun compileDynamicCall(
 
         else -> {
             //load args onto the stack
-            instruction.args.forEach { compileInstruction(mv, it, variables, lookup) }
+            val candidate = lookup.lookUpCandidate(instance = parentType, funcName = instruction.name, argTypes = argTypes)
+            mv.loadAndBox(candidate, instruction.args, variables, lookup)
             mv.visitMethodInsn(
                 Opcodes.INVOKEVIRTUAL,
                 parentType.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
                 instruction.name,
-                lookup.generateCallSignature(parentType, instruction.name, argTypes),
+                candidate.toJvmDescriptor(),
                 false
             )
-            if (lookup.hasGenericReturnType(parentType, instruction.name, argTypes)) {
-                mv.visitTypeInsn(Opcodes.CHECKCAST,lookup.lookUpType(instance = parentType, funcName = instruction.name, argTypes = argTypes).toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+            if (candidate.hasGenericReturnType) {
+                mv.visitTypeInsn(Opcodes.CHECKCAST, candidate.oxideReturnType.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
             }
         }
 
@@ -297,6 +327,22 @@ fun compileDynamicCall(
     }
 
 }
+
+
+fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: Iterable<Instruction>, variables: VariableMapping, lookup: IRModuleLookup) {
+    for ((ins, type) in args.zip(candidate.jvmArgs)) {
+        val instructionType = ins.type(variables, lookup)
+        compileInstruction(this, ins, variables, lookup)
+        if (type != instructionType) {
+            if (instructionType.isInt() && type.isDouble()) {
+                visitInsn(Opcodes.I2D)
+            }
+            boxOrIgnore(this, instructionType)
+        }
+    }
+}
+
+
 
 inline fun MethodVisitor.dynamicDispatch(types: Iterable<Type>, elseType: Type, task: (type: Type) -> Unit) {
     val end = Label()

@@ -29,7 +29,7 @@ fun compileModule(module: IRModule, lookup: IRModuleLookup):  Pair<ByteArray, Ma
         null
     )
     module.functions.forEach { (name, function) ->
-        function.checkedVariants.forEach { (argTypes, _) ->
+        function.checkedVariantsUniqueJvm().forEach { (argTypes, _) ->
             compileCheckedFunction(cw, function, name, lookup, argTypes)
         }
     }

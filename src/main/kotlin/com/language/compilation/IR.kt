@@ -2,7 +2,6 @@ package com.language.compilation
 
 import com.language.CompareOp
 import com.language.MathOp
-import com.language.Variable
 
 interface VariableMapping {
     fun change(name: String, type: Type): Int
@@ -102,14 +101,15 @@ sealed class Instruction {
             val argTypes = args.map { it.type(variables, lookup) }
 
             //get the return type (or error out if we don't have the method with the respective args)
-            val returnType = lookup.lookUpType(parentType, name, argTypes)
             val genericChanges = lookup.lookUpGenericTypes(parentType, name, argTypes)
 
             for ((name, index) in genericChanges) {
-                genericChangeRequest(variables, name, argTypes[index])
+                val type = argTypes[index]
+                //generics cant contain unboxed primitives
+                genericChangeRequest(variables, name, type.asBoxed())
             }
 
-            return returnType
+            return lookup.lookUpCandidate(parent.type(variables, lookup), name, argTypes).oxideReturnType
         }
 
 
@@ -184,8 +184,8 @@ sealed class Instruction {
     ) : Instruction() {
         override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
             val argTypes = args.map { it.type(variables, lookup) }
-            val returnType = lookup.lookUpType(moduleName, name, argTypes)
-            return returnType
+            val returnType = lookup.lookUpCandidate(moduleName, name, argTypes)
+            return returnType.oxideReturnType
         }
     }
     data class StaticCall(
@@ -195,8 +195,8 @@ sealed class Instruction {
     ) : Instruction() {
         override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
             val argTypes = args.map { it.type(variables, lookup) }
-            val returnType = lookup.lookUpType(classModuleName, name, argTypes)
-            return returnType
+            val returnType = lookup.lookUpCandidate(classModuleName, name, argTypes)
+            return returnType.oxideReturnType
         }
     }
     data class Math(val op: MathOp, val first: Instruction, val second: Instruction) : Instruction()  {
@@ -435,8 +435,22 @@ fun typeMath(op: MathOp, first: Type, second: Type): Type {
     }
 }
 
+fun Type.toActualJvmType() = when(this) {
+    is Type.Union -> Type.Object
+    else -> this
+}
+
+
 data class IRFunction(val args: List<String>, val body: Instruction) {
     internal val checkedVariants: MutableMap<List<Type>, Type> = mutableMapOf()
+
+    fun checkedVariantsUniqueJvm(): Map<List<Type>, Type> {
+        return checkedVariants
+            .toList()
+            .map { it.first.map { tp -> tp.toActualJvmType() } to it.second.toActualJvmType() }
+            .toSet()
+            .toMap()
+    }
 
     fun getVarCount(argTypes: List<Type>, lookup: IRModuleLookup): Int {
         if (argTypes.size != this.args.size) {
