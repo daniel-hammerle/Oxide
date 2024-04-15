@@ -9,10 +9,10 @@ class BasicIRModuleLookup(
     override val nativeModules: Set<IRModule>,
     private val externalJars: ClassLoader
 ) : IRModuleLookup {
-    override fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate {
+    override suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate {
         return when(val module = nativeModules.find{ it.name == modName }) {
             is IRModule -> {
-                module.functions[funcName]?.type(argTypes, this)?.let { FunctionCandidate(argTypes, argTypes, it, it) } ?: error("Function $funcName in $modName with variants $argTypes not found")
+                module.functions[funcName]?.inferTypes(argTypes, this)?.let { FunctionCandidate(argTypes, argTypes, it.type, it.type) } ?: error("Function $funcName in $modName with variants $argTypes not found")
             }
             else -> {
                 val clazz = externalJars.loadClass(modName.toDotNotation())
@@ -28,7 +28,7 @@ class BasicIRModuleLookup(
                 val returnType = method.returnType.toType()
                 val actualArgTypes = method.parameterTypes.map { it.toType() }
                 //oxide and jvm return types are the same since generics cant exist on static functions
-                FunctionCandidate(oxideArgs = argTypes,jvmArgs = actualArgTypes, jvmReturnType = returnType, oxideReturnType = returnType)
+                FunctionCandidate(oxideArgs = argTypes, jvmArgs = actualArgTypes, jvmReturnType = returnType, oxideReturnType = returnType)
             }
 
         }
@@ -137,7 +137,7 @@ class BasicIRModuleLookup(
         return nativeModules.find { it.name == structPath.modName}?.structs?.get(structPath.structName)
     }
 
-    override fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): Type {
+    override fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate {
         when(val struct = getStruct(className)) {
             is IRStruct -> {
                 if (struct.fields.size != argTypes.size) {
@@ -146,7 +146,7 @@ class BasicIRModuleLookup(
                 struct.fields.values
                     .zip(argTypes)
                     .forEach { (fieldType, argType) -> argType.assertIsInstanceOf(fieldType) }
-                return Type.BasicJvmType(className)
+                return FunctionCandidate(argTypes, argTypes, Type.Nothing, Type.BasicJvmType(className))
             }
         }
 
@@ -158,7 +158,12 @@ class BasicIRModuleLookup(
                 .all{ (pType, argType) -> pType.canBe(argType) }
         }
         when(constructor) {
-            is Constructor<*> -> return clazz.toType()
+            is Constructor<*> -> return FunctionCandidate(
+                argTypes,
+                constructor.parameterTypes.map { it.toType() },
+                Type.Nothing,
+                clazz.toType()
+            )
             else -> error("No constructor $className($argTypes)")
         }
     }
@@ -173,7 +178,7 @@ class BasicIRModuleLookup(
 
                 //if the class doesn't exist, we simply throw
                 val clazz = externalJars.loadClass(instance.signature.toDotNotation())
-                val field = clazz.fields.first { it.name == fieldName && !Modifier.isStatic(it.modifiers) }
+                val field = clazz.fields.firstOrNull { it.name == fieldName && !Modifier.isStatic(it.modifiers) } ?: error("No field: $instance, $fieldName")
                 field.type.toType()
             }
             Type.BoolT -> error("Pimitive bool does not have field $fieldName")

@@ -52,13 +52,10 @@ fun compileStatement(statement: Statement, module: ModuleLookup): Instruction {
     return when(statement) {
         is Statement.Assign -> {
             val value = compileExpression(statement.value, module)
-            Instruction.MultiInstructions(
-                mutableListOf<Instruction>(
-                    Instruction.StoreVar(
-                        statement.name,
-                        value = value
-                    )
-                )
+
+            Instruction.StoreVar(
+                statement.name,
+                value = value
             )
         }
         is Statement.Expr -> compileExpression(expression = statement.expression, module)

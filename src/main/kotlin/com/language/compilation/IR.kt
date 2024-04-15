@@ -2,16 +2,27 @@ package com.language.compilation
 
 import com.language.CompareOp
 import com.language.MathOp
+import com.language.codegen.VarFrame
+import com.language.codegen.VarFrameImpl
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
-interface VariableMapping {
+sealed interface VariableMapping {
     fun change(name: String, type: Type): Int
     fun getType(name: String): Type
     fun getId(name: String): Int
+    fun clone(): VariableMapping
+    fun merge(branches: List<VariableMapping>): Pair<Map<String, Pair<Type, Type>>, Map<String, Pair<Type, Type>>>
+    fun toVarFrame(): VarFrame
 }
+
 
 class VariableMappingImpl private constructor(
     private val variables: MutableMap<String, Type> = mutableMapOf(),
-    private val variableIds: MutableMap<String, Int> = mutableMapOf()
+    private val variableIds: MutableMap<String, Int> = mutableMapOf(),
+    private val variableStack: MutableList<Boolean>     = mutableListOf()
 ) : VariableMapping {
 
     companion object {
@@ -20,7 +31,15 @@ class VariableMappingImpl private constructor(
         }
     }
 
-    private val variableStack: MutableList<Boolean> = mutableListOf()
+    override fun toVarFrame(): VarFrame {
+        val variables: List<Type?> = variableStack.mapIndexed { index, b ->
+            if (b)
+                variables[variableIds.filter { it.value == index }.entries.first().key]
+            else
+                null
+        }
+        return VarFrameImpl(variables)
+    }
 
     override fun change(name: String, type: Type): Int {
         return when {
@@ -47,16 +66,52 @@ class VariableMappingImpl private constructor(
 
     }
 
+    override fun merge(branches: List<VariableMapping>): Pair<Map<String, Pair<Type, Type>>, Map<String, Pair<Type, Type>>> {
+        val changes = branches
+            .filterIsInstance<VariableMappingImpl>()
+            //find the variables that have changed types
+            .map { branch ->
+                branch.variables.filter { (varName, type) ->
+                    varName in variables && variables[varName] != type
+                }
+            }
+            //merge them into one and create unions when necessary
+            .reduce { acc, map -> mergeMaps(acc, map) }
+        //apply the changes to variables
+        for ((name, type) in changes) {
+            change(name, type)
+        }
+
+        return Pair(emptyMap(), emptyMap())
+    }
+
+    private fun mergeMaps(map1: Map<String, Type>, map2: Map<String, Type>): Map<String, Type> {
+        val result = mutableMapOf<String, Type>()
+        result.putAll(map1)
+        for ((key, value) in map2) {
+            result.merge(key, value) { existingValue, newValue ->
+                existingValue.asBoxed().join(newValue.asBoxed())
+            }
+        }
+        return result
+    }
+
+
+    override fun clone(): VariableMapping {
+        return VariableMappingImpl(variables.toMutableMap(), variableIds.toMutableMap(), variableStack.toMutableList())
+    }
+
     private fun insertVariable(name: String, type: Type): Int {
         variables[name] = type
         var index = -1
 
         for (i in 0..variableStack.lastIndex - type.size + 1) {
-            for (j in 0..<type.size) {
-                if (variableStack[i+j]) break
+            val isFree = (0..<type.size).all { variableStack[i+it] == false }
+            if (isFree) {
+                index = i
+                break
             }
-            index = i
-            break
+
         }
 
         when {
@@ -66,6 +121,7 @@ class VariableMappingImpl private constructor(
                 return variableStack.lastIndex
             }
             else -> {
+                variableStack[index] = true
                 variableIds[name] = index
                 return index
             }
@@ -85,33 +141,42 @@ class VariableMappingImpl private constructor(
 }
 
 sealed class Instruction {
-    abstract fun type(variables: VariableMapping, lookup: IRModuleLookup): Type
 
     open fun genericChangeRequest(variables: VariableMapping, name: String, type: Type) {
         //ignore
     }
+
+    abstract suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction
 
     data class DynamicCall(
         val parent: Instruction,
         val name: String,
         val args: List<Instruction>,
     ) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            val parentType = parent.type(variables, lookup)
-            val argTypes = args.map { it.type(variables, lookup) }
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction.DynamicCall {
+            val parent = parent.inferTypes(variables, lookup)
+            val args = args.map { it.inferTypes(variables, lookup) }
 
             //get the return type (or error out if we don't have the method with the respective args)
-            val genericChanges = lookup.lookUpGenericTypes(parentType, name, argTypes)
+            val genericChanges = lookup.lookUpGenericTypes(parent.type, name, args.map { it.type })
 
             for ((name, index) in genericChanges) {
-                val type = argTypes[index]
+                val type = args[index].type
                 //generics cant contain unboxed primitives
                 genericChangeRequest(variables, name, type.asBoxed())
             }
+            val newParent = this.parent.inferTypes(variables, lookup)
+            val candidate = lookup.lookUpCandidate(newParent.type, name, args.map { it.type })
 
-            return lookup.lookUpCandidate(parent.type(variables, lookup), name, argTypes).oxideReturnType
+            return TypedInstruction.DynamicCall(
+                candidate,
+                name,
+                newParent,
+                args,
+                null
+            )
         }
-
 
         override fun genericChangeRequest(variables: VariableMapping, name: String, type: Type) {
             parent.genericChangeRequest(variables, name, type)
@@ -119,62 +184,84 @@ sealed class Instruction {
     }
 
     data class LoadConstString(val value: String) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            return Type.String
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return TypedInstruction.LoadConstString(value)
         }
     }
 
     data class LoadConstInt(val value: Int) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            return Type.IntT
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return TypedInstruction.LoadConstInt(value)
         }
     }
     data class LoadConstDouble(val value: Double) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            return Type.DoubleT
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return TypedInstruction.LoadConstDouble(value)
         }
     }
     data class LoadConstBool(val value: Boolean) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            return Type.BoolT
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return TypedInstruction.LoadConstBoolean(value)
         }
     }
     data class If(val cond: Instruction, val body: Instruction, val elseBody: Instruction?) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            val condType = cond.type(variables, lookup)
-            if (condType != Type.BoolT) {
-                error("Condition must be of type boolean but was $condType")
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction = coroutineScope {
+            val cond = cond.inferTypes(variables, lookup)
+            if (cond.type != Type.BoolT) {
+                error("Condition must be of type boolean but was ${cond.type}")
             }
-            val typeBody = body.type(variables, lookup)
-            val typeElseBody = elseBody?.type(variables, lookup) ?: Type.Null
-            return if (typeBody == typeElseBody) {
-                typeBody
-            } else {
-                //when we have different types, we need to box it
-                typeBody.asBoxed().join(typeElseBody.asBoxed())
-            }
+            val bodyVars = variables.clone()
+            val bodyFuture = async { body.inferTypes(bodyVars, lookup) }
+            val elseBodyVars = variables.clone()
+            val elseBodyFuture = async { elseBody?.inferTypes(elseBodyVars, lookup) }
+
+            val body = bodyFuture.await()
+            val elseBody = elseBodyFuture.await()
+            val (changesBody, changesElseBody) = variables.merge(listOf(bodyVars, elseBodyVars))
+
+            return@coroutineScope TypedInstruction.If(
+                cond,
+                body,
+                elseBody,
+                changesBody,
+                changesElseBody
+            )
         }
     }
 
     data class While(val cond: Instruction, val body: Instruction) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            if (cond.type(variables, lookup) != Type.BoolT) {
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val cond = cond.inferTypes(variables, lookup)
+            if (cond.type != Type.BoolT) {
                 error("Condition must be of type boolean vzt us")
             }
-            //while statements return null
-            return Type.Nothing
+            val bodyScope = variables.clone()
+            //we execute it twice since types may change between the first and second iterations
+            //that means, it has to survive 2 iterations then it's safe
+            body.inferTypes(bodyScope, lookup)
+            val body = body.inferTypes(bodyScope, lookup)
+            variables.merge(listOf(bodyScope))
+
+            return TypedInstruction.While(cond, body)
         }
     }
     data class ConstructorCall(
         val className: SignatureString,
         val args: List<Instruction>,
     ) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            val argTypes = args.map { it.type(variables, lookup) }
-            val returnType = lookup.lookUpConstructor(className, argTypes)
-            return returnType
-        }
 
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val args = args.map { it.inferTypes(variables, lookup) }
+            val candidate = lookup.lookUpConstructor(className, args.map { it.type })
+            return TypedInstruction.ConstructorCall(
+                className,
+                args,
+                candidate,
+               candidate.oxideReturnType
+            )
+        }
     }
 
     data class ModuleCall(
@@ -182,10 +269,17 @@ sealed class Instruction {
         val name: String,
         val args: List<Instruction>,
     ) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            val argTypes = args.map { it.type(variables, lookup) }
-            val returnType = lookup.lookUpCandidate(moduleName, name, argTypes)
-            return returnType.oxideReturnType
+
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val args= args.map { it.inferTypes(variables, lookup) }
+            val candidate = lookup.lookUpCandidate(moduleName, name, args.map { it.type })
+            return TypedInstruction.ModuleCall(
+                candidate,
+                name,
+                moduleName,
+                args
+            )
         }
     }
     data class StaticCall(
@@ -193,30 +287,48 @@ sealed class Instruction {
         val name: String,
         val args: List<Instruction>,
     ) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            val argTypes = args.map { it.type(variables, lookup) }
-            val returnType = lookup.lookUpCandidate(classModuleName, name, argTypes)
-            return returnType.oxideReturnType
+
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val args= args.map { it.inferTypes(variables, lookup) }
+            val candidate = lookup.lookUpCandidate(classModuleName, name, args.map { it.type })
+            return TypedInstruction.StaticCall(
+                candidate,
+                name,
+                classModuleName,
+                args
+            )
         }
     }
     data class Math(val op: MathOp, val first: Instruction, val second: Instruction) : Instruction()  {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            val firstType = first.type(variables, lookup)
-            val secondType = second.type(variables, lookup)
-            return typeMath(op, firstType, secondType)
+
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val first = first.inferTypes(variables, lookup)
+            val second = second.inferTypes(variables, lookup)
+            val resultType = typeMath(op, first.type, second.type)
+
+            return TypedInstruction.Math(
+                op,
+                first,
+                second,
+                resultType
+            )
         }
     }
     data class StoreVar(val name: String, val value: Instruction) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            val valueType = value.type(variables, lookup)
-            variables.change(name, valueType)
-            return Type.Nothing
+
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val value = value.inferTypes(variables, lookup)
+            variables.change(name, value.type)
+            return TypedInstruction.StoreVar(
+                variables.getId(name),
+                value
+            )
         }
     }
     data class LoadVar(val name: String) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            return variables.getType(name)
-        }
 
         override fun genericChangeRequest(variables: VariableMapping, name: String, type: Type) {
             when(val varType = variables.getType(this.name)) {
@@ -226,46 +338,69 @@ sealed class Instruction {
                 else -> {}
             }
         }
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val type = variables.getType(name)
+            return TypedInstruction.LoadVar(
+                variables.getId(name),
+                type
+            )
+        }
     }
     data class MultiInstructions(val instructions: List<Instruction>) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            return instructions
-                .map { it.type(variables, lookup) } //we need to execute every instruction to properly type check
-                .lastOrNull() ?: Type.Null
-        }
+
 
         override fun genericChangeRequest(variables: VariableMapping, name: String, type: Type) {
             instructions.lastOrNull()?.genericChangeRequest(variables, name, type)
+        }
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return TypedInstruction.MultiInstructions(instructions.map { it.inferTypes(variables, lookup) }, variables.toVarFrame())
         }
     }
 
     //its unknown since its dynamic
     data class DynamicPropertyAccess(val parent: Instruction, val name: String): Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            return when(val parentType = parent.type(variables, lookup)) {
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val parent = parent.inferTypes(variables, lookup)
+
+            val returnType = when(val parentType = parent.type) {
                 is Type.Union -> {
                     parentType.entries.map { lookup.lookUpFieldType(it, name) }.reduce { acc, type -> acc.join(type) }
                 }
                 else ->lookup.lookUpFieldType(parentType, name)
             }
+            return TypedInstruction.DynamicPropertyAccess(
+                parent,
+                name,
+                type = returnType
+            )
         }
     }
 
 
     data class StaticPropertyAccess(val parentName: SignatureString, val name: String): Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            return lookup.lookUpFieldType(parentName, name)
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return TypedInstruction.StaticPropertyAccess(
+                parentName,
+                name,
+                lookup.lookUpFieldType(parentName, name)
+            )
         }
     }
 
     data object Pop : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            return Type.Nothing
+
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return TypedInstruction.Pop
         }
     }
     data object Null : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            return Type.Null
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return TypedInstruction.Null
         }
     }
 
@@ -274,18 +409,24 @@ sealed class Instruction {
         val second: Instruction,
         val op: CompareOp
     ) : Instruction() {
-        override fun type(variables: VariableMapping, lookup: IRModuleLookup): Type {
-            val firstType = first.type(variables, lookup)
-            val secondType = second.type(variables, lookup)
 
-            return when(op) {
-                //equal comparisons always work
-                CompareOp.Eq, CompareOp.Neq -> Type.BoolT
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val first = first.inferTypes(variables, lookup)
+            val second = second.inferTypes(variables, lookup)
+
+            when(op) {
+                CompareOp.Eq, CompareOp.Neq -> {}
                 else -> when {
-                    firstType.isNumType() && secondType.isNumType() -> Type.BoolT
-                    else -> error("$firstType $op $secondType cannot be performed")
+                    first.type.isNumType() && second.type.isNumType() -> {}
+                    else -> error("${first.type} $op ${second.type} cannot be performed")
                 }
             }
+
+            return TypedInstruction.Comparing(
+                first,
+                second,
+                op
+            )
         }
     }
 }
@@ -442,38 +583,43 @@ fun Type.toActualJvmType() = when(this) {
 
 
 data class IRFunction(val args: List<String>, val body: Instruction) {
-    internal val checkedVariants: MutableMap<List<Type>, Type> = mutableMapOf()
+    private val mutex = Mutex()
+    private val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, Int>> = mutableMapOf()
 
-    fun checkedVariantsUniqueJvm(): Map<List<Type>, Type> {
+    fun checkedVariantsUniqueJvm(): Map<List<Type>, Pair<TypedInstruction, Int>> {
         return checkedVariants
             .toList()
-            .map { it.first.map { tp -> tp.toActualJvmType() } to it.second.toActualJvmType() }
+            .map { it.first.map { tp -> tp.toActualJvmType() } to it.second }
             .toSet()
             .toMap()
     }
 
-    fun getVarCount(argTypes: List<Type>, lookup: IRModuleLookup): Int {
+    suspend fun getVarCount(argTypes: List<Type>, lookup: IRModuleLookup): Int {
         if (argTypes.size != this.args.size) {
             error("Expected ${this.args.size} but got ${argTypes.size} arguments (TypeChecking)")
         }
-        val variables = VariableMappingImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
-        val result = body.type(variables, lookup)
-        return variables.varCount()
+        if (argTypes !in checkedVariants) {
+            inferTypes(argTypes, lookup)
+        }
+        return checkedVariants[argTypes]!!.second
     }
 
-    fun type(argTypes: List<Type>, lookup: IRModuleLookup): Type {
+    suspend fun inferTypes(argTypes: List<Type>, lookup: IRModuleLookup): TypedInstruction {
         if (argTypes in checkedVariants) {
-            return checkedVariants[argTypes]!!
+            return checkedVariants[argTypes]!!.first
         }
 
         if (argTypes.size != this.args.size) {
             error("Expected ${this.args.size} but got ${argTypes.size} arguments (TypeChecking)")
         }
         val variables = VariableMappingImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
-        val result = body.type(variables, lookup)
-        checkedVariants[argTypes] = result
+        val result = body.inferTypes(variables, lookup)
+        mutex.withLock {
+            checkedVariants[argTypes] = result to variables.varCount()
+        }
         return result
     }
+
 }
 
 fun Type.isNumType() = isInt() || isDouble()

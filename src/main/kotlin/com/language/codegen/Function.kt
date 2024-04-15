@@ -1,32 +1,52 @@
 package com.language.codegen
 
-import com.language.compilation.IRFunction
-import com.language.compilation.IRModuleLookup
-import com.language.compilation.Type
-import com.language.compilation.VariableMappingImpl
+import com.language.compilation.*
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
-fun compileCheckedFunction(cw: ClassWriter, function: IRFunction, name: String, lookup: IRModuleLookup, argTypes: List<Type>) {
-    val returnType = function.type(argTypes, lookup)
+suspend fun compileCheckedFunction(cw: ClassWriter, name: String, body: TypedInstruction, varCount: Int, argTypes: List<Type>) {
     val mv = cw.visitMethod(
         Opcodes.ACC_PUBLIC + Opcodes.ACC_FINAL + Opcodes.ACC_STATIC,
-        name,
-        generateJVMFunctionSignature(argTypes, returnType),
+        jvmName(name, argTypes),
+        generateJVMFunctionSignature(argTypes, body.type),
         null,
         arrayOf()
     )
-    val variables = VariableMappingImpl.fromVariables(function.args.zip(argTypes).associate { (arg, type) -> arg to type }.toMap())
-    mv.visitMaxs(20, function.getVarCount(argTypes, lookup) + 1) // 1 for the instance
+    mv.visitMaxs(20, varCount + 1) // 1 for the instance
 
+    val stackMap = StackMap.fromMax(20)
     //compile body
-    compileInstruction(mv, function.body, variables, lookup)
+    compileInstruction(mv, body, stackMap)
+
+    when(body.type) {
+        Type.Nothing -> assert(stackMap.stackSize == 0)
+        else -> assert(stackMap.stackSize == 1)
+    }
 
     //return
-    when(returnType) {
+    when(body.type) {
         is Type.JvmType, Type.Null, is Type.Union -> mv.visitInsn(Opcodes.ARETURN)
         Type.IntT, Type.BoolT -> mv.visitInsn(Opcodes.IRETURN)
         Type.DoubleT -> mv.visitInsn(Opcodes.DRETURN)
         Type.Nothing -> mv.visitInsn(Opcodes.RETURN)
     }
+}
+
+fun jvmName(name: String, argTypes: List<Type>): String {
+    return "${name}_${argTypes.hashCode().toLong() and 0xFFFFFFFFL}"
+}
+
+fun Type.BroadType.toFunctionNameNotation() = when(this) {
+    is Type.BroadType.Known -> type.toFunctionNameNotation()
+    Type.BroadType.Unknown -> "unknown"
+}
+
+fun Type.toFunctionNameNotation(): String = when(this) {
+    Type.BoolT -> "z"
+    Type.DoubleT -> "d"
+    Type.IntT -> "i"
+    is Type.BasicJvmType -> "${signature.toJvmNotation()}${genericTypes.values.joinToString("") { it.toFunctionNameNotation() }}"
+    Type.Nothing -> "v"
+    Type.Null -> "n"
+    is Type.Union -> "u(${entries.joinToString("") { it.toFunctionNameNotation() }})"
 }
