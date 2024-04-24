@@ -143,7 +143,7 @@ class VariableMappingImpl private constructor(
 sealed class Instruction {
 
     open fun genericChangeRequest(variables: VariableMapping, name: String, type: Type) {
-        //ignore
+        //ignore if not overwritten
     }
 
     abstract suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction
@@ -317,8 +317,6 @@ sealed class Instruction {
         }
     }
     data class StoreVar(val name: String, val value: Instruction) : Instruction() {
-
-
         override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
             val value = value.inferTypes(variables, lookup)
             variables.change(name, value.type)
@@ -379,6 +377,62 @@ sealed class Instruction {
         }
     }
 
+    //The type is unchecked
+    data class Noop(val type: Type): Instruction() {
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return TypedInstruction.Noop(type)
+        }
+    }
+
+
+    data class Match(
+        val parent: Instruction,
+        val patterns: List<Pair<IRPattern, Instruction>>
+    ) : Instruction() {
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val parent = parent.inferTypes(variables, lookup)
+            //val filteredPatterns = filterPatterns(patterns, parent.type)
+            val typedPatterns = patterns.map { (pattern, body) ->
+                val typedPattern = pattern.inferTypes(PatternMatchingContextImpl(listOf(Noop(parent.type))), lookup, variables)
+                //populate the scope with bindings
+                val bodyScope = variables.clone()
+                typedPattern.bindings.map { bodyScope.change(it.first, it.second) }
+                val typedBody = body.inferTypes(bodyScope, lookup)
+
+                typedPattern to typedBody
+            }
+            //TODO check exhaustiveness
+            return TypedInstruction.Match(parent, typedPatterns)
+        }
+
+        private fun filterPatterns(patterns: List<Pair<IRPattern, Instruction>>, type: Type): List<Pair<IRPattern, Instruction>> {
+            return patterns.filter {
+                checkPatternForType(it.first, type)
+            }
+        }
+
+
+        private fun IRPattern.isExhaustiveForType(type: Type) = when(this) {
+            is IRPattern.Binding -> true
+            is IRPattern.Condition -> false
+            is IRPattern.Destructuring -> type.isContainedOrEqualTo(this.type) && !hasCondition()
+        }
+
+        private fun IRPattern.hasCondition(): Boolean = when(this) {
+            is IRPattern.Binding -> false
+            is IRPattern.Condition -> true
+            is IRPattern.Destructuring -> patterns.any { it.hasCondition() }
+        }
+
+        private fun checkPatternForType(pattern: IRPattern, type: Type): Boolean {
+            return when(pattern) {
+                is IRPattern.Binding -> true
+                is IRPattern.Condition -> checkPatternForType(pattern.parent, type)
+                //if they have any overlaping types it is true
+                is IRPattern.Destructuring -> pattern.type.intersectsWith(type)
+            }
+        }
+    }
 
     data class StaticPropertyAccess(val parentName: SignatureString, val name: String): Instruction() {
         override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
@@ -429,6 +483,96 @@ sealed class Instruction {
             )
         }
     }
+
+    data class Dup(val type: Type) : Instruction() {
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return TypedInstruction.Dup(type)
+        }
+    }
+}
+
+data class PatternMatchingContextImpl(val types: List<Instruction>): PatternMatchingContext {
+    private var ptr = 0
+
+    override fun nextBinding(): Instruction = types[ptr++]
+}
+
+interface PatternMatchingContext {
+    fun nextBinding(): Instruction
+}
+
+sealed interface IRPattern {
+
+    suspend fun inferTypes(ctx: PatternMatchingContext, lookup: IRModuleLookup, variables: VariableMapping): TypedIRPattern
+
+    data class Binding(val name: String): IRPattern {
+        override suspend fun inferTypes(ctx: PatternMatchingContext, lookup: IRModuleLookup, variables: VariableMapping): TypedIRPattern.Binding {
+            val binding = ctx.nextBinding()
+            val ins = binding.inferTypes(variables, lookup)
+            val varId = variables.change(name, ins.type)
+            return TypedIRPattern.Binding(name, varId, ins)
+        }
+    }
+    data class Destructuring(val type: Type, val patterns: List<IRPattern>) : IRPattern {
+
+        init {
+            when {
+                type is Type.Union && patterns.isNotEmpty() -> error("When matching as a union accessing fields is not possible")
+            }
+        }
+
+        override suspend fun inferTypes(ctx: PatternMatchingContext, lookup: IRModuleLookup, variables: VariableMapping): TypedIRPattern {
+            val signature = (type.asBoxed() as Type.JvmType).signature
+            val binding = ctx.nextBinding()
+            val ins = binding.inferTypes(variables, lookup)
+            if (ins.type.isContainedOrEqualTo(type)) {
+                println("Useless branch (Impossible to reach $type with ${ins.type}")
+            }
+            val fields = lookup.lookUpOrderedFields(signature)
+
+            val fieldInstructions = fields.map { (name, _) ->
+                Instruction.DynamicPropertyAccess(Instruction.Dup(this.type), name)
+            }
+            val context = PatternMatchingContextImpl(fieldInstructions)
+            return TypedIRPattern.Destructuring(type, patterns.map { it.inferTypes(context, lookup, variables) }, ins)
+        }
+    }
+    data class Condition(val parent: IRPattern, val condition: Instruction) : IRPattern {
+        override suspend fun inferTypes(ctx: PatternMatchingContext, lookup: IRModuleLookup, variables: VariableMapping): TypedIRPattern {
+            val parent = parent.inferTypes(ctx, lookup, variables)
+            val condition = condition.inferTypes(variables, lookup)
+            return TypedIRPattern.Condition(parent, condition)
+        }
+    }
+}
+
+
+
+fun Type.intersectsWith(other: Type): Boolean = when {
+    this == other -> true
+    this is Type.Union && other is Type.Union -> entries.any { other.entries.any { o -> it.intersectsWith(o) } }
+    this is Type.Union -> entries.any { it.isContainedOrEqualTo(other) }
+    other is Type.Union -> other.entries.any { it.isContainedOrEqualTo(this) }
+    else -> false
+}
+
+fun Type.BroadType.isContainedOrEqualTo(other: Type.BroadType) = when {
+    this == other -> true
+    this is Type.BroadType.Unknown && other is Type.BroadType.Known -> false
+    other is Type.BroadType.Unknown && this is Type.BroadType.Known -> false
+    this is Type.BroadType.Known && other is Type.BroadType.Known -> type.isContainedOrEqualTo(other.type)
+    else -> error("Unreachable")
+}
+
+fun Type.isContainedOrEqualTo(other: Type): Boolean = when {
+    this == other -> true
+    this is Type.JvmType &&
+            other is Type.JvmType &&
+            signature == other.signature &&
+            genericTypes.keys == other.genericTypes.keys -> genericTypes.all { (name, type) -> type.isContainedOrEqualTo(other.genericTypes[name]!!) }
+    this is Type.Union -> entries.all { it.isContainedOrEqualTo(other) }
+    other is Type.Union ->  other.entries.any { this.isContainedOrEqualTo(it) }
+    else -> false
 }
 
 sealed interface Type {
@@ -588,10 +732,6 @@ data class IRFunction(val args: List<String>, val body: Instruction) {
 
     fun checkedVariantsUniqueJvm(): Map<List<Type>, Pair<TypedInstruction, Int>> {
         return checkedVariants
-            .toList()
-            .map { it.first.map { tp -> tp.toActualJvmType() } to it.second }
-            .toSet()
-            .toMap()
     }
 
     suspend fun getVarCount(argTypes: List<Type>, lookup: IRModuleLookup): Int {
@@ -610,7 +750,7 @@ data class IRFunction(val args: List<String>, val body: Instruction) {
         }
 
         if (argTypes.size != this.args.size) {
-            error("Expected ${this.args.size} but got ${argTypes.size} arguments (TypeChecking)")
+            error("Expected ${this.args.size} but got ${argTypes.size} arguments when calling $args (TypeChecking)")
         }
         val variables = VariableMappingImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
         val result = body.inferTypes(variables, lookup)

@@ -12,4 +12,6 @@ interface IRModuleLookup {
     fun lookUpFieldType(instance: Type, fieldName: String): Type
     fun lookUpFieldType(modName: SignatureString, fieldName: String): Type
     fun classOf(type: Type.JvmType): Class<*>
+
+    fun lookUpOrderedFields(className: SignatureString): List<Pair<String, Type>>
 }

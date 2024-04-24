@@ -2,7 +2,10 @@ package com.language.parser
 
 import com.language.*
 import com.language.Function
+import com.language.compilation.SignatureString
+import com.language.compilation.Type
 import com.language.lexer.Token
+import com.language.lexer.toCompareOp
 
 
 typealias Tokens = ListIterator<Token>
@@ -235,20 +238,25 @@ fun parseCallingArgs(tokens: Tokens, variables: Variables): List<Expression> = m
 }
 
 fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
-    return when(val token = tokens.next()) {
-        is Token.ConstStr -> Expression.ConstStr(token.value)
-        is Token.ConstNum -> parseNumber(tokens, token.value)
-        is Token.True -> Expression.ConstBool(true)
-        is Token.False -> Expression.ConstBool(false)
-        is Token.Identifier -> if (token.name in variables)
-            Expression.VariableSymbol(token.name)
-        else
-            Expression.UnknownSymbol(token.name)
+    return when(tokens.visitNext()) {
+        is Token.Match -> {
+            tokens.expect<Token.Match>()
+            parseMatch(tokens, variables)
+        }
+        is Token.Identifier -> {
+            val token = tokens.expect<Token.Identifier>()
+            if (token.name in variables)
+                Expression.VariableSymbol(token.name)
+            else
+                Expression.UnknownSymbol(token.name)
+        }
         is Token.OpenCurly -> {
+            tokens.expect<Token.OpenCurly>()
             val statements = parseStatements(tokens, variables.child())
             Expression.ReturningScope(statements)
         }
         is Token.If -> {
+            tokens.expect<Token.If>()
             val condition = parseExpression(tokens, variables)
             val body = parseExpression(tokens, variables)
             val elseBody = if (tokens.visitNext() == Token.Else) {
@@ -258,6 +266,13 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
 
             Expression.IfElse(condition, body, elseBody)
         }
+
+        else -> parseConst(tokens)
+    }
+}
+
+fun parseConst(tokens: Tokens): Expression.Const {
+    return when(val token = tokens.next()) {
         is Token.Minus -> {
             when (tokens.visitNext()) {
                 is Token.ConstNum -> {
@@ -267,9 +282,120 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
                 else -> error("Unexpected token $token at parseExpressionBase")
             }
         }
-        else -> error("Unexpected token $token at parseExpressionBase")
+        is Token.ConstStr -> Expression.ConstStr(token.value)
+        is Token.ConstNum -> parseNumber(tokens, token.value)
+        is Token.True -> Expression.ConstBool(true)
+        is Token.False -> Expression.ConstBool(false)
+        else -> error("Cannot")
     }
 }
+
+
+fun parseMatch(tokens: Tokens, variables: Variables): Expression.Match {
+    val parent = parseExpression(tokens, variables)
+    tokens.expect<Token.OpenCurly>()
+    val patterns = mutableListOf<Pair<Pattern, Expression>>()
+    while(true) {
+        if (tokens.visitNext() == Token.ClosingCurly) {
+            tokens.expect<Token.ClosingCurly>()
+            break
+        }
+
+        val pattern = parsePattern(tokens, variables)
+        val bodyScope = variables.child()
+        pattern.bindingNames.forEach { bodyScope.put(it) }
+        val body = parseExpression(tokens, bodyScope)
+
+        patterns.add(pattern to body)
+    }
+
+    return Expression.Match(parent, patterns)
+}
+
+private fun parsePatterns(tokens: Tokens, variables: Variables): List<Pattern> {
+    if (tokens.visitNext() == Token.ClosingBracket) {
+        tokens.expect<Token.ClosingBracket>()
+        return emptyList()
+    }
+    val patterns = mutableListOf<Pattern>()
+    while (true) {
+        patterns += parsePattern(tokens, variables)
+        when(val tk = tokens.next()) {
+            Token.ClosingBracket -> return patterns
+            Token.Comma -> continue
+            else -> error("Invalid token $tk")
+        }
+    }
+}
+
+private fun parsePattern(tokens: Tokens, variables: Variables): Pattern {
+    val base = parsePatternBase(tokens, variables)
+    return when(tokens.visitNext()) {
+        Token.If -> {
+            tokens.expect<Token.If>()
+
+            val scope = variables.child().apply {
+                base.bindingNames.forEach { name -> put(name) }
+            }
+            val condition = parseExpression(tokens, scope)
+            Pattern.Conditional(condition, base)
+        }
+        is Token.Comparison -> {
+            when(base) {
+                is Pattern.Binding -> {
+                    val op = tokens.expect<Token.Comparison>().toCompareOp()
+                    val scope = variables.child().apply { put(base.name) }
+                    val value = parseExpression(tokens, scope)
+                    val condition = Expression.Comparing(Expression.VariableSymbol(base.name), value, op)
+                    Pattern.Conditional(condition, base)
+                }
+                else -> base
+            }
+        }
+        else -> base
+    }
+}
+
+private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
+    return when(tokens.visitNext()) {
+        is Token.Identifier -> {
+            val next = tokens.expect<Token.Identifier>().name
+            runCatching { parseType(next) }.fold(
+                onSuccess = { type ->
+                    when(tokens.visitNext()) {
+                        is Token.OpenBracket -> {
+                            tokens.expect<Token.OpenBracket>()
+
+                            val patterns = parsePatterns(tokens, variables)
+                            Pattern.Destructuring(type, patterns)
+                        }
+                        else -> Pattern.Destructuring(type, emptyList())
+                    }
+                },
+                onFailure = {
+                    Pattern.Binding(next)
+                }
+            )
+        }
+        else -> {
+            Pattern.Const(parseConst(tokens))
+        }
+    }
+
+}
+
+private fun parseType(string: String): Type = when(string) {
+    "num" -> Type.IntT
+    "str" -> Type.String
+    "bool" -> Type.BoolT
+    else -> {
+        if (string.lowercase() == string) {
+            error("")
+        }
+        Type.BasicJvmType(runCatching { SignatureString(string) }.getOrNull() ?: error("Invalid type $string"))
+    }
+}
+
 
 private fun parseNumber(tokens: Tokens, initial: Int): Expression.ConstNum {
     return when(tokens.visitNext()) {

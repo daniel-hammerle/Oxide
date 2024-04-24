@@ -1,0 +1,43 @@
+struct Dog {
+    name str,
+    age num
+}
+
+struct Person {
+    name str,
+    age num
+}
+
+
+func someCondition {
+    random = java::util::Random()
+    random.nextBoolean()
+}
+
+func main {
+    x = if someCondition() {
+        Dog("Tom", 1.2)
+    } else {
+        Person("Tim", 18.3)
+    }
+
+    print(x.age)
+    print(
+        if someCondition() {
+            y = 3
+            y
+        } else
+        "Hello World"
+    )
+    truthMachine(1)
+
+}
+
+func truthMachine(i) {
+    while i == 1 {
+        print(1)
+    }
+    print(0)
+}
+
+func print(value) java::lang::System.out.println(value)

@@ -1,16 +1,21 @@
 
 func main {
-    limit = parseInt(input("Limit >"))
-    i = 1
-    while i <= limit {
-        x = i *i
-        print(x)
-        i = i +1
-    }
+    limit = parseInt(input("Limit > "))
 
+    i = 1
+    while i < limit {
+        print(i)
+        i = i+1
+    }
+    result = if limit >= 10 "big limit" else 3
+    print(result.toString())
+    egeg()
+    ff()
+    bar()
 }
 
-func parseInt(value) java::lang::Integer.valueOf(value).intValue()
+
+func parseInt(value) java::lang::Integer.parseInt(value)
 
 func input(text) {
     printRaw(text)
@@ -47,15 +52,8 @@ struct Dog {
 }
 
 func ff {
-    i = 0
-    while i < 10000 {
-        print(i)
-        i = i+1
-    }
-
-    person = Person("Tom", 18)
+    person = Person("Tom", 19.1)
     print(person.name == "Tom")
-    bar()
 }
 
 
@@ -81,7 +79,7 @@ func bar {
     foo(result, result)
     foo(other, "Hello")
     result = add(1, 2)
-    io.print(result.toString())
+    print(result.toString())
 }
 
 func foo(x, y) {

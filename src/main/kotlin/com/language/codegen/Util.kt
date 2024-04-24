@@ -34,21 +34,21 @@ fun boxOrIgnore(mv: MethodVisitor, type: Type) {
 fun unbox(mv: MethodVisitor, type: Type)  {
     when (type) {
         Type.Int -> mv.visitMethodInsn(
-            Opcodes.INVOKESTATIC,
+            Opcodes.INVOKEVIRTUAL,
             "java/lang/Integer",
             "intValue",
             "()I",
             false
         )
         Type.Double -> mv.visitMethodInsn(
-            Opcodes.INVOKESTATIC,
+            Opcodes.INVOKEVIRTUAL,
             "java/lang/Double",
             "doubleValue",
             "()D",
             false
         )
         Type.Bool -> mv.visitMethodInsn(
-            Opcodes.INVOKESTATIC,
+            Opcodes.INVOKEVIRTUAL,
             "java/lang/Boolean",
             "booleanValue",
             "()Z",
@@ -59,7 +59,7 @@ fun unbox(mv: MethodVisitor, type: Type)  {
 }
 
 fun generateJVMFunctionSignature(argTypes: Iterable<Type>, returnType: Type): String {
-    return "(${argTypes.joinToString(separator = "") { it.toJVMDescriptor() }})${returnType.toJVMDescriptor()}"
+    return "(${argTypes.joinToString(separator = "") { it.toActualJvmType().toJVMDescriptor() }})${returnType.toJVMDescriptor()}"
 }
 
 fun Type.toJVMDescriptor() = when(this) {

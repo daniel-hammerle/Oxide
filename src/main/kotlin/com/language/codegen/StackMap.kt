@@ -16,7 +16,7 @@ interface StackMap {
 
     val stackSize: Int
 
-    fun pushVarFrame(varFrame: VarFrame)
+    fun pushVarFrame(varFrame: VarFrame, cloning: Boolean = false)
 
     fun popVarFrame()
 
@@ -24,6 +24,7 @@ interface StackMap {
 
     fun generateFrame(mv: MethodVisitor)
     fun generateFrame(mv: MethodVisitor, varFrame: VarFrame)
+    fun dup()
 
     companion object {
         fun fromMax(maxStack: Int): StackMap {
@@ -81,6 +82,11 @@ class StackMapImpl(
         stack[currentStackPtr++] = type
     }
 
+    override fun dup() {
+        val value = stack[currentStackPtr-1]!!
+        push(value)
+    }
+
     override fun pop() {
         if (currentStackPtr < 1) {
             error("Cannot pop of empty stack")
@@ -88,8 +94,12 @@ class StackMapImpl(
         stack[--currentStackPtr] = null
     }
 
-    override fun pushVarFrame(varFrame: VarFrame) {
+    override fun pushVarFrame(varFrame: VarFrame, cloning: Boolean) {
         varFrames.add(varFrame)
+        if (cloning) {
+            mutableVarFrames.add(MutableVarFrame(varFrame.variables.toMutableList()))
+            return
+        }
         mutableVarFrames.add(MutableVarFrame(ArrayList(varFrame.variables.size)))
 
     }
@@ -106,11 +116,22 @@ class StackMapImpl(
 
     //private val frameHistory: MutableList<StackFrame> = mutableListOf()
 
+    private var previousVariables: VarFrame? = null
+    private var previousStack: List<Type?>? = null
+
     override fun generateFrame(mv: MethodVisitor) {
 
         val variables = mutableVarFrames.fold(VarFrameImpl(emptyList()) as VarFrame) { acc, frame ->
             frame.collapse(acc)
         }
+
+        if (variables.variables == previousVariables?.variables && stack.toList() == previousStack) {
+            mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null)
+            return
+        }
+
+        previousVariables = variables
+        previousStack = stack.toList()
 
          mv.visitFrame(
             Opcodes.F_FULL,

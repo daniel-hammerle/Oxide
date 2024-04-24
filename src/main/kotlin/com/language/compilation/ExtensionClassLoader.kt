@@ -12,6 +12,7 @@ import java.util.jar.JarFile
 
 class ExtensionClassLoader(
     jarPath: String,
+    private val parent: ClassLoader
 ) : ClassLoader() {
 
     private val loadedClasses: MutableMap<String, Class<*>> = mutableMapOf()

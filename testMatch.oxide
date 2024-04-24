@@ -1,0 +1,50 @@
+struct Person {
+    name str,
+    age num,
+    email str
+}
+
+struct Foo {
+    name str,
+    other str
+}
+
+func someCondition {
+    random = java::util::Random()
+    random.nextBoolean()
+}
+
+func test {
+    if someCondition() {
+        Person("Tom", 18, "foo@gmail.com")
+    } else {
+        Foo("rewgerg", "Hello World")
+    }
+}
+
+func print(value) {}
+
+func main {
+    x = test()
+    match x {
+        Person(name, age > 18, "foo@mail.com") if name == "Hello World" {
+            print(name + age)
+        }
+        "Hello WOrld" {
+            print("i exist")
+        }
+        Person(name, age > 18, email) {
+            print(email + name)
+        }
+        Person {
+            print("Hello World")
+        }
+        Foo("Test", foo) {
+
+        }
+        _ {
+            print("No match")
+        }
+    }
+
+}

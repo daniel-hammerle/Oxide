@@ -87,7 +87,20 @@ sealed interface TypedInstruction {
         val typeConversionsBody: Map<String, Pair<Type, Type>>,
         val typeConversionsElseBody: Map<String, Pair<Type, Type>>
     ) : TypedInstruction {
-        override val type: Type = body.type.join(elseBody?.type ?: Type.Null)
+        override val type: Type =when {
+            body.type == Type.Nothing && (elseBody?.type ?: Type.Nothing) == Type.Nothing -> Type.Nothing
+            body.type == elseBody?.type -> body.type
+            else -> body.type.asBoxed().join(elseBody?.type?.asBoxed() ?: Type.Null)
+        }
+
+    }
+
+    data class Match(
+        val parent: TypedInstruction,
+        val patterns: List<Pair<TypedIRPattern, TypedInstruction>>
+    ) : TypedInstruction {
+        override val type: Type
+            get() = patterns.map { it.second.type }.reduce { acc, type -> acc.asBoxed().join(type.asBoxed())  }
     }
 
     data class While(
@@ -112,5 +125,24 @@ sealed interface TypedInstruction {
     }
     data object Null : TypedInstruction {
         override val type: Type = Type.Null
+    }
+
+    //Doesn't for the type to be correct!!!
+    data class Dup(override val type: Type): TypedInstruction
+    data class Noop(override val type: Type): TypedInstruction
+}
+
+sealed interface TypedIRPattern {
+
+    val bindings: Set<Pair<String, Type>>
+
+    data class Binding(val name: String, val id: Int, val origin: TypedInstruction): TypedIRPattern {
+        override val bindings: Set<Pair<String, Type>> = setOf(name to origin.type)
+    }
+    data class Destructuring(val type: Type, val patterns: List<TypedIRPattern>, val origin: TypedInstruction) : TypedIRPattern {
+        override val bindings: Set<Pair<String, Type>> = patterns.flatMap { it.bindings }.toSet()
+    }
+    data class Condition(val parent: TypedIRPattern, val condition: TypedInstruction) : TypedIRPattern {
+        override val bindings: Set<Pair<String, Type>> = parent.bindings
     }
 }

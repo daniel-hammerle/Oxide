@@ -127,7 +127,7 @@ class BasicIRModuleLookup(
             Type.Null -> error("Null does not have function $funcName")
             is Type.Union -> {
                 val types = instance.entries.map { lookUpCandidate(it, funcName, argTypes) }
-                error("Cannot provide variant for unions")
+                types[0]
             }
         }
     }
@@ -168,6 +168,18 @@ class BasicIRModuleLookup(
         }
     }
 
+
+    override fun lookUpOrderedFields(className: SignatureString): List<Pair<String, Type>> {
+        return when(val module = nativeModules.find{ it.name == className.modName }) {
+            is IRModule -> {
+                val struct = module.structs[className.structName] ?: error("Cannot Find struct with $className")
+                struct.fields.toList()
+            }
+
+            else -> error("Ordered Fields are only guaranteed for `oxide` types ($className)")
+        }
+    }
+
     override fun lookUpFieldType(instance: Type, fieldName: String): Type {
         return when (instance) {
             is Type.JvmType -> {
@@ -202,6 +214,7 @@ class BasicIRModuleLookup(
     override fun classOf(type: Type.JvmType): Class<*> {
         return externalJars.loadClass(type.signature.toDotNotation())
     }
+
 }
 
 
@@ -226,6 +239,6 @@ fun Class<*>.canBe(type: Type, strict: Boolean = false): Boolean {
         Type.BoolT -> name == "boolean"
         Type.Nothing -> false
         Type.Null -> true
-        is Type.Union -> type.entries.any { this.canBe(it) }
+        is Type.Union -> type.entries.all { this.canBe(it) }
     }
 }

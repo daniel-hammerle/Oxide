@@ -4,7 +4,13 @@ import com.language.compilation.*
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
-suspend fun compileCheckedFunction(cw: ClassWriter, name: String, body: TypedInstruction, varCount: Int, argTypes: List<Type>) {
+suspend fun compileCheckedFunction(
+    cw: ClassWriter,
+    name: String,
+    body: TypedInstruction,
+    varCount: Int,
+    argTypes: List<Type>,
+) {
     val mv = cw.visitMethod(
         Opcodes.ACC_PUBLIC + Opcodes.ACC_FINAL + Opcodes.ACC_STATIC,
         jvmName(name, argTypes),
@@ -13,8 +19,8 @@ suspend fun compileCheckedFunction(cw: ClassWriter, name: String, body: TypedIns
         arrayOf()
     )
     mv.visitMaxs(20, varCount + 1) // 1 for the instance
-
     val stackMap = StackMap.fromMax(20)
+    stackMap.pushVarFrame(VarFrameImpl(argTypes), true)
     //compile body
     compileInstruction(mv, body, stackMap)
 

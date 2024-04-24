@@ -85,6 +85,14 @@ fun compileExpression(expression: Expression, module: ModuleLookup): Instruction
             first = compileExpression(expression.first, module),
             second = compileExpression(expression.second, module)
         )
+        is Expression.Match -> {
+            val parent = compileExpression(expression.matchable, module)
+            val branches = expression.branches.map { (pattern, body) ->
+                compilePattern(pattern, module) to compileExpression(body, module)
+            }
+
+            Instruction.Match(parent, branches)
+        }
         is Expression.UnknownSymbol -> error("Unknown symbol `${expression.name}`")
         is Expression.VariableSymbol -> Instruction.LoadVar(expression.name)
         is Expression.ReturningScope -> Instruction.MultiInstructions(compileStatements(expression.expressions, module))
@@ -110,6 +118,43 @@ fun compileExpression(expression: Expression, module: ModuleLookup): Instruction
             second = compileExpression(expression.second, module),
             op = expression.op
         )
+    }
+}
+
+
+fun compilePattern(pattern: Pattern, module: ModuleLookup): IRPattern {
+    return when(pattern) {
+        is Pattern.Binding -> IRPattern.Binding(pattern.name)
+        is Pattern.Conditional -> IRPattern.Condition(
+            parent = compilePattern(pattern.parent, module),
+            condition = compileExpression(pattern.condition, module)
+        )
+        is Pattern.Const -> IRPattern.Condition(
+            parent = IRPattern.Binding("_"),
+            condition = Instruction.Comparing(Instruction.LoadVar("_"), compileExpression(pattern.value, module), CompareOp.Eq)
+        )
+        is Pattern.Destructuring -> {
+
+
+            when {
+                pattern.type is Type.JvmType && !module.hasStruct(pattern.type.signature) ->
+                    error("Invalid type ${pattern.type} for destructuring (either JVM Type or non existent)")
+
+                module.hasLocalStruct((pattern.type as Type.BasicJvmType).signature) -> {
+                    IRPattern.Destructuring(
+                        type = pattern.type.copy(signature = module.localName + pattern.type.signature),
+                        patterns = pattern.patterns.map { compilePattern(it, module) }
+                    )
+                }
+                else -> {
+                    IRPattern.Destructuring(
+                        type = pattern.type,
+                        patterns = pattern.patterns.map { compilePattern(it, module) }
+                    )
+                }
+            }
+
+        }
     }
 }
 

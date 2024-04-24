@@ -1,5 +1,7 @@
 package com.language.lexer
 
+import com.language.CompareOp
+
 sealed interface Token {
     sealed interface KeyWord : Token
     data object If : KeyWord
@@ -9,6 +11,7 @@ sealed interface Token {
     data object Use : KeyWord
     data object Struct : KeyWord
     data object Self : KeyWord
+    data object Match : KeyWord
 
     data class Identifier(val name: String) : Token
 
@@ -30,12 +33,23 @@ sealed interface Token {
     data object Slash : Token
     data object EqualSign : Token
     data object ExclamationMark : Token
-    data object Eq : Token
-    data object Neq : Token
-    data object St : Token
-    data object ESt : Token
-    data object Gt : Token
-    data object EGt : Token
+
+    sealed interface Comparison : Token
+    data object Eq : Comparison
+    data object Neq : Comparison
+    data object St : Comparison
+    data object ESt : Comparison
+    data object Gt : Comparison
+    data object EGt : Comparison
+}
+
+fun Token.Comparison.toCompareOp(): CompareOp = when(this) {
+    Token.EGt -> CompareOp.EGt
+    Token.ESt -> CompareOp.ESt
+    Token.Eq -> CompareOp.Eq
+    Token.Gt -> CompareOp.Gt
+    Token.Neq ->CompareOp.Neq
+    Token.St -> CompareOp.St
 }
 
 private fun tryFindKeyWord(string: String): Token? {
@@ -49,6 +63,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "false" -> Token.False
         "struct" -> Token.Struct
         "use" -> Token.Use
+        "match" -> Token.Match
         "_eq" -> Token.Eq
         "_neq" -> Token.Neq
         "_geq" -> Token.EGt

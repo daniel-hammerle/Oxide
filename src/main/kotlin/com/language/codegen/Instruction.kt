@@ -6,6 +6,7 @@ import com.language.compilation.*
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import javax.swing.text.LabelView
 
 
 fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMap: StackMap) {
@@ -13,6 +14,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         is TypedInstruction.DynamicCall -> {
             compileDynamicCall(mv, instruction, stackMap)
         }
+        is TypedInstruction.Noop -> {}
         is TypedInstruction.DynamicPropertyAccess -> {
             //load instance onto the stack
             compileInstruction(mv, instruction.parent, stackMap)
@@ -50,15 +52,27 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitJumpInsn(Opcodes.IFEQ, betweenBodyAndElseBody)
             //the ifeq removes the bool from the stakc
             stackMap.pop()
-            stackMap.generateFrame(mv)
+            //stackMap.generateFrame(mv)
             //body
             compileInstruction(mv, instruction.body, stackMap)
             if (instruction.type != instruction.body.type) {
                 boxOrIgnore(mv, instruction.body.type)
             }
             //TODO("Apply changes to variables")
+
+            if(instruction.elseBody == null && instruction.body.type == Type.Nothing) {
+                mv.visitLabel(betweenBodyAndElseBody)
+                stackMap.generateFrame(mv)
+                return
+            }
+
+            //pop the result of the other branch for now
+            stackMap.pop()
+
+
             //skip else body when body was executed
             mv.visitJumpInsn(Opcodes.GOTO, afterElseBody)
+
             stackMap.generateFrame(mv)
             //here is the between body and else body label
             mv.visitLabel(betweenBodyAndElseBody)
@@ -70,6 +84,10 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             //TODO("Apply changes to variables")
             //label after else body
             mv.visitLabel(afterElseBody)
+
+            stackMap.pop()
+            stackMap.push(instruction.type)
+            stackMap.generateFrame(mv)
 
         }
         is TypedInstruction.LoadConstBoolean -> {
@@ -301,6 +319,81 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             stackMap.pop(instruction.args.size)
             stackMap.push(instruction.candidate.oxideReturnType)
         }
+
+        is TypedInstruction.Dup -> {
+            mv.visitInsn(Opcodes.DUP)
+            stackMap.dup()
+        }
+        is TypedInstruction.Match -> compileMatch(mv, instruction, stackMap)
+    }
+}
+
+fun compileMatch(
+    mv: MethodVisitor,
+    instruction: TypedInstruction.Match,
+    stackMap: StackMap
+) {
+    //load the matchable parent onto the stack
+    compileInstruction(mv, instruction.parent, stackMap)
+    val end = Label()
+    for ((pattern, body) in instruction.patterns) {
+        mv.visitInsn(Opcodes.DUP)
+        stackMap.dup()
+        val patternFail = Label()
+        compilePattern(mv, pattern, stackMap, patternFail)
+        //mv.visitInsn(Opcodes.POP)
+        //stackMap.pop()
+        compileInstruction(mv, body, stackMap)
+        mv.visitJumpInsn(Opcodes.GOTO, end)
+        mv.visitLabel(patternFail)
+    }
+    mv.visitLabel(end)
+}
+
+fun compilePattern(
+    mv: MethodVisitor,
+    pattern: TypedIRPattern,
+    stackMap: StackMap,
+    patternFail: Label
+) {
+    when(pattern) {
+        is TypedIRPattern.Binding -> {
+            //bind the binding (move it into its variable slot)
+            compileInstruction(mv, TypedInstruction.StoreVar(pattern.id, pattern.origin), stackMap)
+        }
+        is TypedIRPattern.Condition -> {
+            compilePattern(mv, pattern.parent, stackMap, patternFail)
+            compileInstruction(mv, pattern.condition, stackMap)
+            //if condition equal to is 0 (false) go to the fail stage
+            mv.visitJumpInsn(Opcodes.IFEQ, patternFail)
+            stackMap.pop()
+        }
+        is TypedIRPattern.Destructuring -> {
+            val skitFail = Label()
+            compileInstruction(mv, pattern.origin, stackMap)
+            mv.visitInsn(Opcodes.DUP)
+            stackMap.dup()
+            mv.visitTypeInsn(Opcodes.INSTANCEOF, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+            stackMap.pop()
+            stackMap.push(Type.BoolT)
+            mv.visitJumpInsn(Opcodes.IFNE, skitFail)
+            stackMap.pop()
+            //
+            mv.visitInsn(Opcodes.POP)
+            stackMap.pop()
+            //instance of check failed so go to the fail stage
+            mv.visitJumpInsn(Opcodes.GOTO, patternFail)
+            mv.visitLabel(skitFail)
+
+            //compile all the desturcturing patterns
+            pattern.patterns.forEach {
+                mv.visitInsn(Opcodes.DUP)
+                stackMap.dup()
+                compilePattern(mv, it, stackMap, patternFail)
+            }
+            mv.visitInsn(Opcodes.POP)
+            stackMap.pop()
+        }
     }
 }
 
@@ -309,9 +402,10 @@ fun compileDynamicCall(
     instruction: TypedInstruction.DynamicCall,
     stackMap: StackMap
 ) {
-    val parentType = instruction.parent.type
+    val parentType = instruction.parent.type.asBoxed()
     //load instance onto the stack
     compileInstruction(mv, instruction.parent, stackMap)
+    boxOrIgnore(mv, instruction.parent.type)
     when {
         parentType is Type.Union -> {
             when (val commonType = instruction.commonInterface) {
@@ -475,6 +569,7 @@ fun compileComparison(
                         false
                     )
                     stackMap.pop(2)
+                    stackMap.push(Type.BoolT)
                     if (instruction.op == CompareOp.Neq) {
                         val toFalse = Label()
                         val end = Label()
@@ -503,12 +598,14 @@ private fun compileNumberComparison(
     stackMap: StackMap
 ) {
     val firstType = first.type
-    val secondType = first.type
+    val secondType = second.type
     assert(firstType.isNumType() && secondType.isNumType())
     val isIntCmp = firstType.isInt() && secondType.isInt()
 
     compileInstruction(mv, first, stackMap)
     if (firstType.isBoxed()) {
+        stackMap.pop()
+        stackMap.push(secondType.asUnboxed())
         unbox(mv, firstType)
     }
     if (firstType.isInt() && !isIntCmp) {
@@ -516,6 +613,8 @@ private fun compileNumberComparison(
     }
     compileInstruction(mv, second, stackMap)
     if (secondType.isBoxed()) {
+        stackMap.pop()
+        stackMap.push(secondType.asUnboxed())
         unbox(mv, secondType)
     }
     if (secondType.isInt() && !isIntCmp) {
@@ -575,3 +674,9 @@ private fun compileNumberComparison(
 
 }
 
+fun Type.asUnboxed() = when (this) {
+    Type.BoolT, Type.Bool-> Type.BoolT
+    Type.DoubleT, Type.Double -> Type.DoubleT
+    Type.IntT, Type.Int -> Type.IntT
+    else -> error("Cannot unbox $this")
+}

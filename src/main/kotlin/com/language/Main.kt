@@ -1,16 +1,15 @@
 package com.language
 
+
 import java.io.FileOutputStream
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 
 
-fun main() {
-    execute()
-}
 
-fun execute() {
-    com.language.controlflow.compileProject("language.lang")
+
+fun main() {
+    com.language.controlflow.compileProject("testMatch.oxide")
 }
 
 fun createZipFile(entries: Map<String, ByteArray>, zipFilePath: String) {

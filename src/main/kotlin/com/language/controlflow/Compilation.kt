@@ -18,7 +18,7 @@ fun compileProject(fileName: String) {
     val scope = CoroutineScope(dispatcher)
 
     val runtimeLib = "./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar"
-    val extensionClassLoader = ExtensionClassLoader(runtimeLib)
+    val extensionClassLoader = ExtensionClassLoader(runtimeLib, ClassLoader.getSystemClassLoader())
     val modules = extensionClassLoader.createModuleTree()
     val lookup = BasicModuleLookup(module, SignatureString("main"), modules, ClassLoader.getPlatformClassLoader())
 
@@ -51,7 +51,7 @@ fun compileProject(fileName: String) {
     }
     createZipFile(project.mapKeys { it.key.value }, "out.jar")
 
-    ExtensionClassLoader("out.jar")
+    ExtensionClassLoader("out.jar", extensionClassLoader)
         .loadClass("main")
         .methods.first { it.name == "main_1" }
         .invoke(null)
