@@ -1,6 +1,7 @@
 package com.language.compilation
 
 import com.language.codegen.generateJVMFunctionSignature
+import com.language.codegen.toJVMDescriptor
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -31,6 +32,21 @@ class BasicIRModuleLookup(
                 FunctionCandidate(oxideArgs = argTypes, jvmArgs = actualArgTypes, jvmReturnType = returnType, oxideReturnType = returnType)
             }
 
+        }
+    }
+
+    override fun typeIsInterface(type: Type, interfaceType: SignatureString): Boolean {
+        return when(type) {
+            is Type.JvmType -> {
+                if (getStruct(type.signature) != null) {
+                    //native structs do not support jvm interfaces;
+                    //therefore, it is false
+                    return false
+                }
+                val clazz = externalJars.loadClass(type.signature.toDotNotation())
+                clazz.interfaces.any { it.name == interfaceType.toDotNotation() || typeIsInterface(Type.BasicJvmType(SignatureString.fromDotNotation(it.name), emptyMap()), interfaceType) }
+            }
+            else -> false
         }
     }
 
@@ -65,6 +81,7 @@ class BasicIRModuleLookup(
             Type.Nothing -> error("Nothing does not have function $funcName")
             Type.Null -> error("Null does not have function $funcName")
             is Type.Union -> error("Can not return a single call signature for a UnionType")
+            is Type.Array -> error("Cannot call methods on array types for now")
         }
     }
 
@@ -129,6 +146,8 @@ class BasicIRModuleLookup(
                 val types = instance.entries.map { lookUpCandidate(it, funcName, argTypes) }
                 types[0]
             }
+
+            is Type.Array -> TODO()
         }
     }
 
@@ -146,7 +165,7 @@ class BasicIRModuleLookup(
                 struct.fields.values
                     .zip(argTypes)
                     .forEach { (fieldType, argType) -> argType.assertIsInstanceOf(fieldType) }
-                return FunctionCandidate(argTypes, argTypes, Type.Nothing, Type.BasicJvmType(className))
+                return FunctionCandidate(struct.fields.values.toList(), struct.fields.values.toList(), Type.Nothing, Type.BasicJvmType(className))
             }
         }
 
@@ -202,6 +221,8 @@ class BasicIRModuleLookup(
                 val types = instance.entries.map { lookUpFieldType(it, fieldName) }
                 types.reduce { acc, type -> acc.join(type) }
             }
+
+            is Type.Array -> TODO()
         }
     }
 
@@ -218,16 +239,22 @@ class BasicIRModuleLookup(
 }
 
 
-fun Class<*>.toType() = when(name) {
-    "void" -> Type.Nothing
-    "int" -> Type.IntT
-    "double" -> Type.DoubleT
-    "boolean" -> Type.BoolT
-    else -> {
-        val generics = typeParameters.associate { it.typeName to Type.BroadType.Unknown }
-        Type.BasicJvmType(SignatureString.fromDotNotation(name), generics)
+fun Class<*>.toType(): Type {
+    return when(name) {
+        "void" -> Type.Nothing
+        "int" -> Type.IntT
+        "double" -> Type.DoubleT
+        "boolean" -> Type.BoolT
+        else -> {
+            if (name.startsWith("[")) {
+                return Type.Array(Class.forName(name.removePrefix("[L").removeSuffix(";")).toType())
+            }
+            val generics = typeParameters.associate { it.typeName to Type.BroadType.Unknown }
+            Type.BasicJvmType(SignatureString.fromDotNotation(name), generics)
+        }
     }
 }
+
 
 fun Class<*>.canBe(type: Type, strict: Boolean = false): Boolean {
     if (!strict && (name == "double" || name == "java.lang.Double") && (type == Type.IntT || type == Type.Int)) return true
@@ -240,5 +267,6 @@ fun Class<*>.canBe(type: Type, strict: Boolean = false): Boolean {
         Type.Nothing -> false
         Type.Null -> true
         is Type.Union -> type.entries.all { this.canBe(it) }
+        is Type.Array -> name == type.toJVMDescriptor().replace("/", ".")
     }
 }

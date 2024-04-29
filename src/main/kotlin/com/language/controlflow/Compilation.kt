@@ -19,8 +19,7 @@ fun compileProject(fileName: String) {
 
     val runtimeLib = "./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar"
     val extensionClassLoader = ExtensionClassLoader(runtimeLib, ClassLoader.getSystemClassLoader())
-    val modules = extensionClassLoader.createModuleTree()
-    val lookup = BasicModuleLookup(module, SignatureString("main"), modules, ClassLoader.getPlatformClassLoader())
+    val lookup = BasicModuleLookup(module, SignatureString("main"), mapOf(SignatureString("main") to module), extensionClassLoader)
 
     val result = compile(lookup)
     val irLookup =  BasicIRModuleLookup(setOf(result), extensionClassLoader)

@@ -20,6 +20,28 @@ sealed interface TypedInstruction {
         override val type: Type = Type.BoolT
     }
 
+    data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type) : TypedInstruction {
+        val isConstList = items.all { it is TypedConstructingArgument.Normal }
+        override val type: Type = Type.BasicJvmType(
+            SignatureString("java::util::ArrayList"),
+            mapOf("E" to Type.BroadType.Known(itemType))
+        )
+    }
+
+    data class LoadArray(val items: List<TypedConstructingArgument>, val arrayType: ArrayType, val itemType: Type, val tempIndexVarId: Int, val tempArrayVarId: Int) : TypedInstruction {
+        override val type: Type = when(arrayType) {
+            ArrayType.Object -> Type.Array(itemType.asBoxed())
+            else -> Type.Array(itemType)
+        }
+    }
+
+    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type) : TypedInstruction {
+        override val type: Type = when(arrayType) {
+            ArrayType.Object -> Type.Array(itemType.asBoxed())
+            else -> Type.Array(itemType)
+        }
+    }
+
     data class DynamicCall(
         val candidate: FunctionCandidate,
         val name: String,
@@ -97,7 +119,7 @@ sealed interface TypedInstruction {
 
     data class Match(
         val parent: TypedInstruction,
-        val patterns: List<Pair<TypedIRPattern, TypedInstruction>>
+        val patterns: List<Triple<TypedIRPattern, TypedInstruction, VarFrame>>
     ) : TypedInstruction {
         override val type: Type
             get() = patterns.map { it.second.type }.reduce { acc, type -> acc.asBoxed().join(type.asBoxed())  }
@@ -130,6 +152,23 @@ sealed interface TypedInstruction {
     //Doesn't for the type to be correct!!!
     data class Dup(override val type: Type): TypedInstruction
     data class Noop(override val type: Type): TypedInstruction
+}
+
+
+sealed interface TypedConstructingArgument {
+    abstract val instruction: TypedInstruction
+    val type: Type
+    @JvmInline
+    value class Normal(override val instruction: TypedInstruction) : TypedConstructingArgument {
+        override val type: Type
+            get() = instruction.type
+    }
+
+    @JvmInline
+    value class Collected(override val instruction: TypedInstruction) : TypedConstructingArgument {
+        override val type: Type
+            get() = instruction.type
+    }
 }
 
 sealed interface TypedIRPattern {

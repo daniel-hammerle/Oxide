@@ -8,6 +8,8 @@ interface IRModuleLookup {
     fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate
     fun generateCallSignature(instance: Type, funcName: String, argTypes: List<Type>): String
 
+    fun typeIsInterface(type: Type, interfaceType: SignatureString): Boolean
+
     fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate
     fun lookUpFieldType(instance: Type, fieldName: String): Type
     fun lookUpFieldType(modName: SignatureString, fieldName: String): Type

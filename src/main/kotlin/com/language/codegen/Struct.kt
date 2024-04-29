@@ -53,7 +53,10 @@ fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct
 
         mv.visitVarInsn(loadingInstruction, i+1)
         mv.visitFieldInsn(Opcodes.PUTFIELD, structJVMName, name, type.toJVMDescriptor())
-        i++
+        i+= when(type) {
+            is Type.DoubleT -> 2
+            else -> 1
+        }
     }
     mv.visitInsn(Opcodes.RETURN)
     return cw.toByteArray()

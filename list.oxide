@@ -1,0 +1,15 @@
+func main {
+    someArray = list["Hello", "World", true, 12]
+    someOtherArray = list[...someArray, true, ...someArray]
+    doSth(someOtherArray)
+}
+
+func doSth(x) {
+    i = 0
+    while i < x.size() {
+        print(x.get(i))
+        i = i+1
+    }
+}
+
+func print(value) java::lang::System.out.println(value)

@@ -62,12 +62,13 @@ fun generateJVMFunctionSignature(argTypes: Iterable<Type>, returnType: Type): St
     return "(${argTypes.joinToString(separator = "") { it.toActualJvmType().toJVMDescriptor() }})${returnType.toJVMDescriptor()}"
 }
 
-fun Type.toJVMDescriptor() = when(this) {
+fun Type.toJVMDescriptor(): String = when(this) {
     Type.DoubleT -> "D"
     Type.IntT -> "I"
     Type.BoolT -> "Z"
     is Type.JvmType -> "L${signature.toJvmNotation()};"
     Type.Nothing -> "V"
+    is Type.Array -> "[${type.toJVMDescriptor()}"
     //null has to be of some type, so we'll just make it object
     Type.Null -> "Ljava/lang/Object;"
     //unions will just be Objects

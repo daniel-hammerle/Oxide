@@ -1,6 +1,7 @@
 package com.language.compilation
 
 import com.language.*
+import com.language.ArrayType
 import com.language.Function
 
 fun compile(module: ModuleLookup): IRModule {
@@ -66,6 +67,13 @@ fun compileStatement(statement: Statement, module: ModuleLookup): Instruction {
     }
 }
 
+fun compileConstructingArg(arg: ConstructingArgument, module: ModuleLookup): Instruction.ConstructingArgument {
+    return when(arg) {
+        is ConstructingArgument.Collect -> Instruction.ConstructingArgument.Collected(compileExpression(arg.expression, module))
+        is ConstructingArgument.Normal -> Instruction.ConstructingArgument.Normal(compileExpression(arg.expression, module))
+    }
+}
+
 fun compileExpression(expression: Expression, module: ModuleLookup): Instruction {
     return when(expression) {
         is Expression.ConstBool -> Instruction.LoadConstBool(expression.bool)
@@ -79,6 +87,16 @@ fun compileExpression(expression: Expression, module: ModuleLookup): Instruction
             body = compileExpression(expression.body, module),
             elseBody = expression.elseBody?.let { compileExpression(it, module) }
         )
+        is Expression.ConstArray -> {
+            val items = expression.items.map { compileConstructingArg(it, module) }
+            when(expression.arrayType) {
+                ArrayType.Implicit -> Instruction.ConstArray(com.language.compilation.ArrayType.Object, items)
+                ArrayType.Int -> Instruction.ConstArray(com.language.compilation.ArrayType.Int, items)
+                ArrayType.Double -> Instruction.ConstArray(com.language.compilation.ArrayType.Double, items)
+                ArrayType.Bool -> Instruction.ConstArray(com.language.compilation.ArrayType.Bool, items)
+                ArrayType.List -> Instruction.ConstArrayList(items)
+            }
+        }
         is Expression.Invoke -> compileInvoke(expression, module)
         is Expression.Math -> Instruction.Math(
             op = expression.op,

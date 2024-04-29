@@ -8,6 +8,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.Closeable
+import java.util.UUID
+import kotlin.math.max
 
 sealed interface VariableMapping {
     fun change(name: String, type: Type): Int
@@ -16,8 +19,19 @@ sealed interface VariableMapping {
     fun clone(): VariableMapping
     fun merge(branches: List<VariableMapping>): Pair<Map<String, Pair<Type, Type>>, Map<String, Pair<Type, Type>>>
     fun toVarFrame(): VarFrame
+    fun deleteVar(name: String)
 }
 
+
+class TempVariable(private val variables: VariableMapping, val type: Type) : Closeable {
+    private val name: String = "_${UUID.randomUUID()}"
+    val id: Int = variables.change(name, type)
+
+    override fun close() {
+        variables.deleteVar(name)
+    }
+
+}
 
 class VariableMappingImpl private constructor(
     private val variables: MutableMap<String, Type> = mutableMapOf(),
@@ -103,10 +117,11 @@ class VariableMappingImpl private constructor(
 
     private fun insertVariable(name: String, type: Type): Int {
         variables[name] = type
+        varMax = max(varMax, variables.size)
         var index = -1
 
         for (i in 0..variableStack.lastIndex - type.size + 1) {
-            val isFree = (0..<type.size).all { variableStack[i+it] == false }
+            val isFree = (0..<type.size).all { !variableStack[i+it] }
             if (isFree) {
                 index = i
                 break
@@ -128,6 +143,14 @@ class VariableMappingImpl private constructor(
         }
     }
 
+    override fun deleteVar(name: String) {
+        val size = variables.remove(name)!!.size
+        val id = variableIds.remove(name)!!
+        for (offset in 0..<size) {
+            variableStack[id+offset] = false
+        }
+    }
+
     override fun getType(name: String): Type {
         return variables[name]!!
     }
@@ -136,7 +159,8 @@ class VariableMappingImpl private constructor(
         return variableIds[name]!!
     }
 
-    fun varCount(): Int = variableStack.size
+    private var varMax = 0
+    fun varCount(): Int = varMax
 
 }
 
@@ -181,6 +205,70 @@ sealed class Instruction {
         override fun genericChangeRequest(variables: VariableMapping, name: String, type: Type) {
             parent.genericChangeRequest(variables, name, type)
         }
+    }
+
+    data class ConstArray(val arrayType: ArrayType, val items: List<ConstructingArgument>) : Instruction() {
+
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            return when(items.all { it is ConstructingArgument.Normal }) {
+                true -> constArray(variables, lookup)
+                false -> notConstArray(variables, lookup)
+            }
+        }
+
+        private suspend fun constArray(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction.LoadConstArray {
+            val typedItems = items.map { (it as ConstructingArgument.Normal).item.inferTypes(variables, lookup) }
+            val itemType = typedItems.map { it.type }.reduce { acc, type -> acc.join(type) }
+            return TypedInstruction.LoadConstArray(typedItems, arrayType, itemType)
+        }
+
+        private suspend fun notConstArray(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction.LoadArray {
+            TempVariable(variables, Type.IntT).use { indexStorage ->
+                val typedItems = items.map { it.inferTypes(variables, lookup) }
+                val itemType = typedItems.map { it.type }.reduce { acc, type -> acc.join(type) }
+                TempVariable(variables, Type.Array(itemType)).use { arrayStorage ->
+                    when(arrayType) {
+                        ArrayType.Int -> if (!itemType.isContainedOrEqualTo(Type.IntT)) error("Type Error Primitive Int array can only hold IntT")
+                        ArrayType.Double -> if (!itemType.isContainedOrEqualTo(Type.DoubleT)) error("Type Error Primitive Int array can only hold DoubleT")
+                        ArrayType.Bool -> if (!itemType.isContainedOrEqualTo(Type.BoolT)) error("Type Error Primitive Int array can only hold BoolT")
+                        ArrayType.Object -> {}
+                    }
+                    return TypedInstruction.LoadArray(typedItems, arrayType, itemType, indexStorage.id, arrayStorage.id)
+                }
+            }
+        }
+    }
+
+    sealed interface ConstructingArgument {
+
+        suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedConstructingArgument
+
+        @JvmInline
+        value class Collected(private val item: Instruction): ConstructingArgument {
+            override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedConstructingArgument {
+                val item = item.inferTypes(variables, lookup)
+                if (!item.type.isCollectable(lookup)) {
+                    error("Type Error: Cannot collect ${item.type}")
+                }
+                return TypedConstructingArgument.Collected(item)
+            }
+        }
+
+        @JvmInline
+        value class Normal(val item: Instruction) : ConstructingArgument {
+            override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedConstructingArgument {
+                return TypedConstructingArgument.Normal(item.inferTypes(variables, lookup))
+            }
+        }
+    }
+
+    data class ConstArrayList(val items: List<ConstructingArgument>) : Instruction() {
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val typedItems = items.map { it.inferTypes(variables, lookup) }
+            val itemType = typedItems.map { it.type }.reduce { acc, type -> acc.join(type) }
+            return TypedInstruction.LoadList(typedItems, itemType)
+        }
+
     }
 
     data class LoadConstString(val value: String) : Instruction() {
@@ -399,7 +487,7 @@ sealed class Instruction {
                 typedPattern.bindings.map { bodyScope.change(it.first, it.second) }
                 val typedBody = body.inferTypes(bodyScope, lookup)
 
-                typedPattern to typedBody
+                Triple(typedPattern, typedBody, bodyScope.toVarFrame())
             }
             //TODO check exhaustiveness
             return TypedInstruction.Match(parent, typedPatterns)
@@ -531,7 +619,7 @@ sealed interface IRPattern {
             val fields = lookup.lookUpOrderedFields(signature)
 
             val fieldInstructions = fields.map { (name, _) ->
-                Instruction.DynamicPropertyAccess(Instruction.Dup(this.type), name)
+                Instruction.DynamicPropertyAccess(Instruction.Noop(this.type), name)
             }
             val context = PatternMatchingContextImpl(fieldInstructions)
             return TypedIRPattern.Destructuring(type, patterns.map { it.inferTypes(context, lookup, variables) }, ins)
@@ -575,6 +663,18 @@ fun Type.isContainedOrEqualTo(other: Type): Boolean = when {
     else -> false
 }
 
+enum class ArrayType {
+    Int,
+    Double,
+    Bool,
+    Object
+}
+
+
+fun Type.isCollectable(lookup: IRModuleLookup): Boolean {
+    return this is Type.Array || lookup.typeIsInterface(this, SignatureString("java::util::Collection"))
+}
+
 sealed interface Type {
     //size in the var stack
     //this is `1` for ints, booleans since 1 = 32bit
@@ -599,10 +699,14 @@ sealed interface Type {
         data class Known(val type: Type): BroadType
     }
 
+
     data class BasicJvmType(override val signature: SignatureString, override val genericTypes: Map<String, BroadType> = emptyMap()): JvmType {
         override val size: Int = 1
     }
 
+    data class Array(val type: Type) : Type {
+        override val size: Int = 1
+    }
 
     data object BoolT : Type {
         override val size: Int = 1
@@ -768,10 +872,11 @@ fun Type.isDouble() = this == Type.Double || this == Type.DoubleT
 fun Type.isBoolean() = this == Type.Bool || this == Type.BoolT
 fun Type.isBoxed() = this == Type.Int || this == Type.Double
 fun Type.isUnboxedPrimitive() = this == Type.IntT || this == Type.BoolT || this == Type.DoubleT
-fun Type.asBoxed() = when(this) {
+fun Type.asBoxed(): Type = when(this) {
     Type.IntT -> Type.Int
     Type.DoubleT -> Type.Double
     Type.BoolT -> Type.Bool
+    is Type.Union -> Type.Union(entries.map { it.asBoxed() }.toSet())
     else -> this
 }
 

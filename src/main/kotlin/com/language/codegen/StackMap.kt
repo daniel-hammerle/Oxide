@@ -25,6 +25,7 @@ interface StackMap {
     fun generateFrame(mv: MethodVisitor)
     fun generateFrame(mv: MethodVisitor, varFrame: VarFrame)
     fun dup()
+    fun swap()
 
     companion object {
         fun fromMax(maxStack: Int): StackMap {
@@ -73,11 +74,17 @@ class StackMapImpl(
     private val varFrames: MutableList<VarFrame> = mutableListOf()
     private val mutableVarFrames: MutableList<MutableVarFrame> = mutableListOf()
 
+    override fun swap() {
+        val latest = stack[currentStackPtr-1]!!
+        val old = stack[currentStackPtr-2]!!
+        stack[currentStackPtr-1] = old
+        stack[currentStackPtr-2] = latest
+    }
 
     override fun push(type: Type) {
         if (type == Type.Nothing) return
         if (currentStackPtr == stack.lastIndex) {
-            error("Stackoverflow (Stack si1ze too small) (Internal Error)")
+            error("Stackoverflow (Stack si1ze too small) (Internal Error) ${stack.contentDeepToString()}")
         }
         stack[currentStackPtr++] = type
     }
@@ -125,6 +132,7 @@ class StackMapImpl(
             frame.collapse(acc)
         }
 
+        /*
         if (variables.variables == previousVariables?.variables && stack.toList() == previousStack) {
             mv.visitFrame(Opcodes.F_SAME, 0, null, 0, null)
             return
@@ -133,6 +141,8 @@ class StackMapImpl(
         previousVariables = variables
         previousStack = stack.toList()
 
+
+         */
          mv.visitFrame(
             Opcodes.F_FULL,
             variables.variables.size,
@@ -197,4 +207,5 @@ fun Type.toFrameSignature(): Any = when(this) {
     Type.Nothing -> error("Nothing can't be on a stack")
     Type.Null -> "java/lang/Object"
     is Type.Union -> "java/lang/Object"
+    is Type.Array -> "[${type.toJVMDescriptor()}"
 }

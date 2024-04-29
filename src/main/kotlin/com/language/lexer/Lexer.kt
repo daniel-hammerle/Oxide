@@ -12,14 +12,25 @@ sealed interface Token {
     data object Struct : KeyWord
     data object Self : KeyWord
     data object Match : KeyWord
+    data object Error : KeyWord, Identifier {
+        override val name: String = "error"
 
-    data class Identifier(val name: String) : Token
+    }
+
+    sealed interface Identifier : Token {
+        val name: String
+    }
+
+    data class BasicIdentifier(override val name: String) : Identifier
 
     sealed interface Literal : Token
     data class ConstStr(val value: String) : Literal
     data class ConstNum(val value: Int) : Literal
     data object True : Literal, KeyWord
     data object False : Literal, KeyWord
+
+    data object OpenSquare : Token
+    data object ClosingSquare : Token
 
     data object OpenBracket : Token
     data object ClosingBracket : Token
@@ -33,6 +44,10 @@ sealed interface Token {
     data object Slash : Token
     data object EqualSign : Token
     data object ExclamationMark : Token
+
+    data object Collector : Token
+
+    data object Arrow : Token
 
     sealed interface Comparison : Token
     data object Eq : Comparison
@@ -68,6 +83,9 @@ private fun tryFindKeyWord(string: String): Token? {
         "_neq" -> Token.Neq
         "_geq" -> Token.EGt
         "_seq" -> Token.ESt
+        "_arrow" -> Token.Arrow
+        "_collector" -> Token.Collector
+        "error" -> Token.Error
         else -> null
     }
 }
@@ -86,7 +104,7 @@ fun lexCode(code: String) = mutableListOf<Token>().apply {
         }
         val string = buffer.toString()
         val keyword = tryFindKeyWord(string)
-        val token = keyword ?: tryParseNumber(string) ?: Token.Identifier(string)
+        val token = keyword ?: tryParseNumber(string) ?: Token.BasicIdentifier(string)
         this.add(token)
         buffer = StringBuilder()
     }
@@ -96,6 +114,8 @@ fun lexCode(code: String) = mutableListOf<Token>().apply {
         .replace("<=", " _seq ")
         .replace(">=", " _geq ")
         .replace("!=", " _neq ")
+        .replace("->", " _arrow ")
+        .replace("...", " _collector ")
         .toCharArray().iterator()
     while (iter.hasNext()) {
         val token = when (val c = iter.nextChar()) {
@@ -114,6 +134,14 @@ fun lexCode(code: String) = mutableListOf<Token>().apply {
             '/' -> {
                 flush()
                 Token.Slash
+            }
+            '[' -> {
+                flush()
+                Token.OpenSquare
+            }
+            ']' -> {
+                flush()
+                Token.ClosingSquare
             }
             '(' -> {
                 flush()

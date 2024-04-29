@@ -6,7 +6,6 @@ import com.language.compilation.*
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
-import javax.swing.text.LabelView
 
 
 fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMap: StackMap) {
@@ -44,7 +43,6 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         is TypedInstruction.If -> {
             //eval condition
             compileInstruction(mv, instruction.cond, stackMap)
-
 
             val betweenBodyAndElseBody = Label()
             val afterElseBody = Label()
@@ -112,7 +110,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         }
         is TypedInstruction.LoadVar -> {
             when(instruction.type) {
-                is Type.JvmType -> mv.visitVarInsn(Opcodes.ALOAD, instruction.id)
+                is Type.JvmType, is Type.Array -> mv.visitVarInsn(Opcodes.ALOAD, instruction.id)
                 Type.DoubleT -> mv.visitVarInsn(Opcodes.DLOAD, instruction.id)
                 Type.IntT, Type.BoolT -> mv.visitVarInsn(Opcodes.ILOAD, instruction.id)
                 Type.Nothing -> mv.visitInsn(Opcodes.ACONST_NULL)
@@ -128,7 +126,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 Type.DoubleT -> mv.visitVarInsn(Opcodes.DSTORE, instruction.id)
                 is Type.JvmType ->  mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
                 Type.Nothing -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
-                Type.Null -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
+                Type.Null, is Type.Array -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
                 is Type.Union -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
             }
             stackMap.changeVar(instruction.id, instruction.value.type)
@@ -221,7 +219,8 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         }
         is TypedInstruction.StaticCall -> {
             //load args
-            instruction.args.forEach { compileInstruction(mv, it, stackMap) }
+            mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
+
             mv.visitMethodInsn(
                 Opcodes.INVOKESTATIC,
                 instruction.parentName.toJvmNotation(),
@@ -234,7 +233,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         }
         is TypedInstruction.ModuleCall -> {
             //load args
-            instruction.args.forEach { compileInstruction(mv, it, stackMap) }
+            mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
             mv.visitMethodInsn(
                 Opcodes.INVOKESTATIC,
                 instruction.parentName.toJvmNotation(),
@@ -307,7 +306,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitTypeInsn(Opcodes.NEW, instruction.className.toJvmNotation())
             mv.visitInsn(Opcodes.DUP)
             //load args onto stack
-            instruction.args.forEach { compileInstruction(mv, it, stackMap) }
+            mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
             //call constructor
             mv.visitMethodInsn(
                 Opcodes.INVOKESPECIAL,
@@ -325,6 +324,200 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             stackMap.dup()
         }
         is TypedInstruction.Match -> compileMatch(mv, instruction, stackMap)
+        is TypedInstruction.LoadList -> {
+
+            mv.visitTypeInsn(Opcodes.NEW, "java/util/ArrayList")
+            stackMap.push(instruction.type)
+            mv.visitInsn(Opcodes.DUP)
+            stackMap.dup()
+            if (instruction.isConstList) {
+                compileInstruction(mv, TypedInstruction.LoadConstInt(instruction.items.size), stackMap)
+            }
+            if (instruction.isConstList) {
+                mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/util/ArrayList", "<init>", "(I)V", false)
+                stackMap.pop(2)
+            } else {
+                mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/util/ArrayList", "<init>", "()V", false)
+                stackMap.pop()
+            }
+            for(item in instruction.items) {
+                mv.visitInsn(Opcodes.DUP)
+                stackMap.dup()
+                compileInstruction(mv, item.instruction, stackMap)
+                boxOrIgnore(mv, item.type)
+                when(item) {
+                    is TypedConstructingArgument.Collected -> {
+                        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/ArrayList", "addAll", "(Ljava/util/Collection;)Z", false)
+                    }
+                    is TypedConstructingArgument.Normal -> {
+                        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/ArrayList", "add", "(Ljava/lang/Object;)Z", false)
+                    }
+                }
+                mv.visitInsn(Opcodes.POP)
+                stackMap.pop(2)
+
+            }
+        }
+        is TypedInstruction.LoadConstArray -> {
+            compileInstruction(mv, TypedInstruction.LoadConstInt(instruction.items.size), stackMap)
+            when(instruction.arrayType) {
+                ArrayType.Int -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT)
+                ArrayType.Double -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_DOUBLE)
+                ArrayType.Bool -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_BOOLEAN)
+                ArrayType.Object -> mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object")
+            }
+            stackMap.pop()
+            stackMap.push(instruction.type)
+
+            instruction.items.forEachIndexed { index, item ->
+                mv.visitInsn(Opcodes.DUP)
+                stackMap.dup()
+                compileInstruction(mv, TypedInstruction.LoadConstInt(index), stackMap)
+                compileInstruction(mv, item, stackMap)
+                if (instruction.arrayType == ArrayType.Object) {
+                    boxOrIgnore(mv, item.type)
+                }
+                when(instruction.arrayType) {
+                    ArrayType.Int -> mv.visitInsn(Opcodes.IASTORE)
+                    ArrayType.Double -> mv.visitInsn(Opcodes.DASTORE)
+                    ArrayType.Bool -> mv.visitInsn(Opcodes.IASTORE)
+                    ArrayType.Object -> mv.visitInsn(Opcodes.AASTORE)
+                }
+                stackMap.pop()
+                stackMap.pop()
+                stackMap.pop()
+            }
+
+        }
+        is TypedInstruction.LoadArray -> {
+            //load the number of items on the stack
+            mv.visitInsn(Opcodes.ICONST_0)
+            mv.visitVarInsn(Opcodes.ISTORE, instruction.tempIndexVarId)
+            for (item in instruction.items) {
+                compileInstruction(mv, item.instruction, stackMap)
+                if (instruction.arrayType == ArrayType.Object) {
+                    boxOrIgnore(mv, item.instruction.type)
+                }
+                when(item) {
+                    is TypedConstructingArgument.Collected -> {
+                        //make `stackmap` contain the item, itemLength
+                        stackMap.push(Type.IntT)
+
+                        //Now lets make the actual bytecode also contain item, itemLength
+                        //item
+                        mv.visitInsn(Opcodes.DUP)
+                        //item item
+                        when(item.type) {
+                            is Type.Array -> {
+                                mv.visitInsn(Opcodes.ARRAYLENGTH)
+                                //item itemLength
+                                mv.visitInsn(Opcodes.DUP)
+                                //item itemLength, itemLength
+
+                                //This will then be added and results in
+                                //item itemLength, newDLength
+                            }
+                            else -> TODO()
+                        }
+                    }
+                    is TypedConstructingArgument.Normal -> {
+                        mv.visitInsn(Opcodes.ICONST_1)
+                    }
+                }
+                mv.visitVarInsn(Opcodes.ILOAD, instruction.tempIndexVarId)
+                mv.visitInsn(Opcodes.IADD)
+                mv.visitVarInsn(Opcodes.ISTORE, instruction.tempIndexVarId)
+            }
+
+            for (item in instruction.items) {
+                stackMap.pop()
+                when(item) {
+                    is TypedConstructingArgument.Collected -> stackMap.pop()
+                    is TypedConstructingArgument.Normal -> {}
+                }
+            }
+            mv.visitVarInsn(Opcodes.ILOAD, instruction.tempIndexVarId)
+            mv.visitInsn(Opcodes.DUP)
+            mv.visitInsn(Opcodes.ICONST_1)
+            mv.visitInsn(Opcodes.ISUB)
+            mv.visitInsn(Opcodes.SWAP)
+            when(instruction.arrayType) {
+                ArrayType.Int -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT)
+                ArrayType.Double -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_DOUBLE)
+                ArrayType.Bool -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_BOOLEAN)
+                ArrayType.Object -> mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object")
+            }
+            mv.visitInsn(Opcodes.DUP)
+            mv.visitVarInsn(Opcodes.ASTORE, instruction.tempArrayVarId)
+            //NOTE: The following comments represent the items on the stack.
+            //The further right an item is, the closer it is to the top of the stack
+
+            //item int instance
+            instruction.items.asReversed().forEachIndexed { i, item ->
+                when(item) {
+                    is TypedConstructingArgument.Normal -> {
+                        mv.visitInsn(Opcodes.DUP_X2)
+                        mv.visitInsn(Opcodes.DUP_X2)
+                        //instance, instance, item, int, instance
+
+                        mv.visitInsn(Opcodes.POP)
+                        //instance, instance, item, int
+                        mv.visitInsn(Opcodes.DUP_X2)
+                        //instance, int, instance, item, int
+                        mv.visitInsn(Opcodes.SWAP)
+                        //instance, int, instance, int, item
+                        when(instruction.arrayType) {
+                            ArrayType.Int -> mv.visitInsn(Opcodes.IASTORE)
+                            ArrayType.Double -> mv.visitInsn(Opcodes.DASTORE)
+                            ArrayType.Bool -> mv.visitInsn(Opcodes.IASTORE)
+                            ArrayType.Object -> mv.visitInsn(Opcodes.AASTORE)
+                        }
+                        //instance, int
+                        mv.visitInsn(Opcodes.ICONST_1)
+                        mv.visitInsn(Opcodes.ISUB)
+
+                        if (i != instruction.items.lastIndex)
+                            mv.visitInsn(Opcodes.SWAP)
+                        //nextItem, int, instance
+                        else
+                            mv.visitInsn(Opcodes.POP)
+                        //instance
+                    }
+                    is TypedConstructingArgument.Collected -> {
+                        //srcArray, srcLength, index, instance
+
+                        mv.visitInsn(Opcodes.POP)
+                        //srcArray, srcLength, index
+                        mv.visitInsn(Opcodes.SWAP)
+                        mv.visitInsn(Opcodes.DUP_X1)
+                        mv.visitInsn(Opcodes.ISUB)
+                        mv.visitInsn(Opcodes.ICONST_1)
+                        mv.visitInsn(Opcodes.IADD)
+                        //srcArray, srcLegnth, newIndex
+                        mv.visitInsn(Opcodes.DUP_X2)
+                        //newIndex, srcArray, srcLength, newIndex
+                        mv.visitInsn(Opcodes.SWAP)
+                        //newIndex, srcArray, newIndex, srcLength
+                        mv.visitInsn(Opcodes.ICONST_0)
+                        mv.visitInsn(Opcodes.DUP_X2)
+                        mv.visitInsn(Opcodes.POP)
+                        //newIndex, srcArray, 0, newIndex, srcLength
+                        mv.visitVarInsn(Opcodes.ALOAD, instruction.tempArrayVarId)
+                        mv.visitInsn(Opcodes.DUP_X2)
+                        mv.visitInsn(Opcodes.POP)
+                        //newIndex, srcArray, 0, instance, newIndex, srcLength
+                        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V", false)
+                        //newIndex
+                        if (i == instruction.items.lastIndex)
+                            mv.visitInsn(Opcodes.POP)
+                        mv.visitVarInsn(Opcodes.ALOAD, instruction.tempArrayVarId)
+
+                    }
+                }
+
+            }
+            stackMap.push(Type.Array(instruction.type))
+        }
     }
 }
 
@@ -336,18 +529,43 @@ fun compileMatch(
     //load the matchable parent onto the stack
     compileInstruction(mv, instruction.parent, stackMap)
     val end = Label()
-    for ((pattern, body) in instruction.patterns) {
-        mv.visitInsn(Opcodes.DUP)
-        stackMap.dup()
+    var idx = 0
+    for ((pattern, body, varFrame) in instruction.patterns) {
+        stackMap.generateFrame(mv)
+        stackMap.pushVarFrame(varFrame, cloning = false)
+        if (idx != instruction.patterns.lastIndex) {
+            mv.visitInsn(Opcodes.DUP)
+            stackMap.dup()
+        }
+
         val patternFail = Label()
         compilePattern(mv, pattern, stackMap, patternFail)
         //mv.visitInsn(Opcodes.POP)
         //stackMap.pop()
         compileInstruction(mv, body, stackMap)
+        if (idx != instruction.patterns.lastIndex) {
+            if (body.type != Type.Nothing) {
+                mv.visitInsn(Opcodes.SWAP)
+            }
+            mv.visitInsn(Opcodes.POP)
+        }
         mv.visitJumpInsn(Opcodes.GOTO, end)
+
+        if (body.type != Type.Nothing) {
+            //we pop the value produced by the body in this loop since we dont need it rn
+            //on the stackmap however, we keep it in the actual bytecode
+            stackMap.pop()
+        }
+
         mv.visitLabel(patternFail)
+        stackMap.popVarFrame()
+        idx++
     }
     mv.visitLabel(end)
+    if (instruction.type != Type.Nothing) {
+        stackMap.push(instruction.type)
+    }
+    stackMap.generateFrame(mv)
 }
 
 fun compilePattern(
@@ -359,31 +577,48 @@ fun compilePattern(
     when(pattern) {
         is TypedIRPattern.Binding -> {
             //bind the binding (move it into its variable slot)
+            stackMap.changeVar(pattern.id, pattern.origin.type)
             compileInstruction(mv, TypedInstruction.StoreVar(pattern.id, pattern.origin), stackMap)
         }
         is TypedIRPattern.Condition -> {
             compilePattern(mv, pattern.parent, stackMap, patternFail)
             compileInstruction(mv, pattern.condition, stackMap)
             //if condition equal to is 0 (false) go to the fail stage
-            mv.visitJumpInsn(Opcodes.IFEQ, patternFail)
+            val skip = Label()
+            mv.visitJumpInsn(Opcodes.IFNE, skip)
+            mv.visitInsn(Opcodes.POP)
+            mv.visitJumpInsn(Opcodes.GOTO, patternFail)
+            mv.visitLabel(skip)
             stackMap.pop()
+            stackMap.generateFrame(mv)
         }
         is TypedIRPattern.Destructuring -> {
-            val skitFail = Label()
+            val success = Label()
             compileInstruction(mv, pattern.origin, stackMap)
-            mv.visitInsn(Opcodes.DUP)
-            stackMap.dup()
+            if (pattern.patterns.isNotEmpty()) {
+                mv.visitInsn(Opcodes.DUP)
+                stackMap.dup()
+            }
+
             mv.visitTypeInsn(Opcodes.INSTANCEOF, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
             stackMap.pop()
             stackMap.push(Type.BoolT)
-            mv.visitJumpInsn(Opcodes.IFNE, skitFail)
+            mv.visitJumpInsn(Opcodes.IFNE, success)
             stackMap.pop()
-            //
-            mv.visitInsn(Opcodes.POP)
-            stackMap.pop()
+
+            //IF FAIL
+            if (pattern.patterns.isNotEmpty()) {
+                mv.visitInsn(Opcodes.POP)
+            }
+
             //instance of check failed so go to the fail stage
             mv.visitJumpInsn(Opcodes.GOTO, patternFail)
-            mv.visitLabel(skitFail)
+            //END IF FAIL
+
+            //IF SUCCESS
+            mv.visitLabel(success)
+            stackMap.generateFrame(mv)
+            mv.visitTypeInsn(Opcodes.CHECKCAST, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
 
             //compile all the desturcturing patterns
             pattern.patterns.forEach {
@@ -396,6 +631,7 @@ fun compilePattern(
         }
     }
 }
+
 
 fun compileDynamicCall(
     mv: MethodVisitor,
@@ -472,6 +708,7 @@ fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: Iterable<TypedI
         if (type != ins.type) {
             if (ins.type.isInt() && type.isDouble()) {
                 visitInsn(Opcodes.I2D)
+                continue
             }
             boxOrIgnore(this, ins.type)
         }
@@ -505,7 +742,7 @@ inline fun MethodVisitor.dynamicDispatch(types: Iterable<Type>, elseType: Type, 
     when(elseType) {
         Type.BoolT, Type.IntT -> visitInsn(Opcodes.ICONST_0)
         Type.DoubleT -> visitLdcInsn(0.0)
-        is Type.BasicJvmType, Type.Null, is Type.Union -> visitInsn(Opcodes.ACONST_NULL)
+        is Type.BasicJvmType, Type.Null, is Type.Union, is Type.Array -> visitInsn(Opcodes.ACONST_NULL)
         Type.Nothing -> {}
     }
 

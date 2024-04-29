@@ -9,7 +9,7 @@ import java.util.jar.JarOutputStream
 
 
 fun main() {
-    com.language.controlflow.compileProject("testMatch.oxide")
+    com.language.controlflow.compileProject("list.oxide")
 }
 
 fun createZipFile(entries: Map<String, ByteArray>, zipFilePath: String) {

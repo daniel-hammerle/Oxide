@@ -1,7 +1,6 @@
 
 func main {
     limit = parseInt(input("Limit > "))
-
     i = 1
     while i < limit {
         print(i)
@@ -15,16 +14,19 @@ func main {
 }
 
 
+
 func parseInt(value) java::lang::Integer.parseInt(value)
 
 func input(text) {
-    printRaw(text)
-    inStream = java::lang::System.in
-    scanner = java::util::Scanner(inStream)
+    scanner = keep {
+        inStream = java::lang::System.in
+        java::util::Scanner(inStream)
+    }
     scanner.nextLine()
 }
 
 func print(value) java::lang::System.out.println(value)
+
 func printRaw(value) java::lang::System.out.print(value)
 
 

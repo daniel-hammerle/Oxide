@@ -4,6 +4,7 @@ import com.language.*
 import com.language.Function
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
+import com.language.compilation.compileExpression
 import com.language.lexer.Token
 import com.language.lexer.toCompareOp
 
@@ -197,7 +198,7 @@ fun parseExpressionCallBase(first: Expression, tokens: Tokens, variables: Variab
     return when(tokens.visitNext()) {
         is Token.OpenBracket -> {
             tokens.next()
-            val args = parseCallingArgs(tokens, variables)
+            val args = parseCallingArgs(tokens, variables, Token.ClosingBracket)
             parseExpressionCallBase(
                 Expression.Invoke(
                     first,
@@ -220,7 +221,7 @@ fun parseExpressionCallBase(first: Expression, tokens: Tokens, variables: Variab
     }
 }
 
-fun parseCallingArgs(tokens: Tokens, variables: Variables): List<Expression> = mutableListOf<Expression>().apply {
+fun parseCallingArgs(tokens: Tokens, variables: Variables, closingSymbol: Token): List<Expression> = mutableListOf<Expression>().apply {
     //return early in case its ()
     if (tokens.visitNext() == Token.ClosingBracket) {
         tokens.next()
@@ -230,12 +231,19 @@ fun parseCallingArgs(tokens: Tokens, variables: Variables): List<Expression> = m
         val arg = parseExpression(tokens, variables)
         add(arg)
         when (val token = tokens.next()) {
-            Token.ClosingBracket -> break
+            closingSymbol -> break
             Token.Comma -> continue
-            else -> error("Expected , or ) but got $token")
+            else -> error("Expected , or $closingSymbol but got $token")
         }
     }
 }
+
+val arrayDeclarationTypes = mapOf(
+    "int" to ArrayType.Int,
+    "double" to ArrayType.Double,
+    "bool" to ArrayType.Bool,
+    "list" to ArrayType.List
+)
 
 fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
     return when(tokens.visitNext()) {
@@ -245,10 +253,20 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
         }
         is Token.Identifier -> {
             val token = tokens.expect<Token.Identifier>()
+
+            if (token.name in arrayDeclarationTypes && tokens.visitNext() == Token.OpenSquare) {
+                tokens.expect<Token.OpenSquare>()
+                return parseArray(arrayDeclarationTypes[token.name]!!, tokens, variables)
+            }
+
             if (token.name in variables)
                 Expression.VariableSymbol(token.name)
             else
                 Expression.UnknownSymbol(token.name)
+        }
+        is Token.OpenSquare -> {
+            tokens.expect<Token.OpenSquare>()
+            parseArray(ArrayType.Implicit, tokens, variables)
         }
         is Token.OpenCurly -> {
             tokens.expect<Token.OpenCurly>()
@@ -269,6 +287,35 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
 
         else -> parseConst(tokens)
     }
+}
+
+fun parseConstructingArgument(tokens: Tokens, variables: Variables): ConstructingArgument {
+    return when(tokens.visitNext()) {
+        is Token.Collector -> {
+            tokens.expect<Token.Collector>()
+            ConstructingArgument.Collect(parseExpression(tokens, variables))
+        }
+        else -> ConstructingArgument.Normal(parseExpression(tokens, variables))
+    }
+}
+
+fun parseArray(type: ArrayType, tokens: Tokens, variables: Variables, closingSymbol: Token = Token.ClosingSquare): Expression.ConstArray {
+    if (tokens.visitNext() == closingSymbol) {
+        tokens.next()
+        return Expression.ConstArray(type, emptyList())
+    }
+
+    val items = mutableListOf<ConstructingArgument>()
+    while(true) {
+        items += parseConstructingArgument(tokens, variables)
+        when(tokens.next()) {
+            Token.Comma -> continue
+            closingSymbol -> break
+            else -> error("Invalid symbol")
+        }
+    }
+
+    return Expression.ConstArray(type, items)
 }
 
 fun parseConst(tokens: Tokens): Expression.Const {
@@ -302,6 +349,7 @@ fun parseMatch(tokens: Tokens, variables: Variables): Expression.Match {
         }
 
         val pattern = parsePattern(tokens, variables)
+        tokens.expect<Token.Arrow>()
         val bodyScope = variables.child()
         pattern.bindingNames.forEach { bodyScope.put(it) }
         val body = parseExpression(tokens, bodyScope)

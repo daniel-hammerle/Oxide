@@ -1,6 +1,6 @@
 package com.language
 
-import com.language.compilation.SignatureString
+import com.language.compilation.Instruction
 import com.language.compilation.Type
 
 sealed interface Expression {
@@ -9,6 +9,8 @@ sealed interface Expression {
     data class ConstNum(val num: Double) : Const
     data class ConstStr(val str: String) : Const
     data class ConstBool(val bool: Boolean) : Const
+
+    data class ConstArray(val arrayType: ArrayType, val items: List<ConstructingArgument>): Expression
 
     data class Invoke(val parent: Expression, val args: Map<String, Expression>): Expression
 
@@ -27,6 +29,19 @@ sealed interface Expression {
     data class ReturningScope(val expressions: List<Statement>) : Expression
     data class IfElse(val condition: Expression, val body: Expression, val elseBody: Expression?) : Expression
     data class Match(val matchable: Expression, val branches: List<Pair<Pattern, Expression>>) : Expression
+}
+
+sealed interface ConstructingArgument {
+    data class Collect(val expression: Expression) : ConstructingArgument
+    data class Normal(val expression: Expression) : ConstructingArgument
+}
+
+enum class ArrayType {
+    Implicit,
+    Int,
+    Double,
+    Bool,
+    List
 }
 
 sealed interface Pattern {
