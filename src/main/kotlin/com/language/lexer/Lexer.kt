@@ -10,12 +10,17 @@ sealed interface Token {
     data object Func : KeyWord
     data object Use : KeyWord
     data object Struct : KeyWord
-    data object Self : KeyWord
     data object Match : KeyWord
+    data object Impl : KeyWord
     data object Error : KeyWord, Identifier {
         override val name: String = "error"
-
     }
+    data object Self : KeyWord, Identifier {
+        override val name: String = "self"
+    }
+
+    data object Colon : Token
+
 
     sealed interface Identifier : Token {
         val name: String
@@ -86,6 +91,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "_arrow" -> Token.Arrow
         "_collector" -> Token.Collector
         "error" -> Token.Error
+        "impl" -> Token.Impl
         else -> null
     }
 }
@@ -126,6 +132,10 @@ fun lexCode(code: String) = mutableListOf<Token>().apply {
             '-' -> {
                 flush()
                 Token.Minus
+            }
+            ':' -> {
+                flush()
+                Token.Colon
             }
             '+' -> {
                 flush()

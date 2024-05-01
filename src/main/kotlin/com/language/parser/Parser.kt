@@ -4,9 +4,9 @@ import com.language.*
 import com.language.Function
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
-import com.language.compilation.compileExpression
 import com.language.lexer.Token
 import com.language.lexer.toCompareOp
+import java.util.UUID
 
 
 typealias Tokens = ListIterator<Token>
@@ -18,11 +18,19 @@ fun parse(tokens: List<Token>): Module {
 
 fun parseFile(tokens: Tokens): Module {
     val entries = mutableMapOf<String, ModuleChild>()
+    val implBlocks = mutableMapOf<Type, Impl>()
+    val imports: MutableMap<String, SignatureString> = mutableMapOf()
     while(tokens.hasNext()) {
         val (name, entry) = parseTopLevelEntity(tokens)
+        when(entry) {
+            is Impl -> implBlocks[entry.type] = entry
+            is UseStatement -> imports += entry.signatureStrings.map { it.structName to it }
+            else -> {}
+        }
         entries[name] = entry
+
     }
-    return Module(entries)
+    return Module(entries, implBlocks, imports)
 }
 
 fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
@@ -47,7 +55,48 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             }
             name to Struct(args)
         }
+        Token.Impl -> {
+            val type = parseType(tokens)
+            tokens.expect<Token.OpenCurly>()
+            val entries: MutableMap<String, ModuleChild> = mutableMapOf()
+            while(tokens.visitNext() != Token.ClosingCurly) {
+                val entry = parseTopLevelEntity(tokens)
+                entries += entry
+            }
+            tokens.expect<Token.ClosingCurly>()
+
+            val functions = entries.mapValues { (name, entry) -> when(entry) {
+                    is Function -> entry
+                    else -> error("Invalid declaration of $name $entry insisde an impl block")
+                }
+            }
+            val (methods, associatedFunctions) = functions.toList().partition { (_, function ) -> function.args.firstOrNull() == "self" }
+
+            UUID.randomUUID().toString() to Impl(type, methods.toMap(), associatedFunctions.toMap())
+        }
+        Token.Use -> UUID.randomUUID().toString() to UseStatement(parseImport(tokens))
         else -> error("Invalid token $token")
+    }
+}
+
+fun parseImports(tokens: Tokens): Set<SignatureString> = mutableSetOf<SignatureString>().apply {
+    while(true) {
+        addAll(parseImport(tokens))
+        when(tokens.next()) {
+            is Token.Comma -> continue
+            is Token.ClosingCurly -> break
+            else -> error("Invalid token expected , or }")
+        }
+    }
+}
+
+fun parseImport(tokens: Tokens): Set<SignatureString> {
+    val (signature, flag) = parseSignature(tokens)
+    return if (flag) {
+        tokens.expect<Token.OpenCurly>()
+        parseImports(tokens).map { signature + it }.toSet()
+    } else {
+        setOf(signature)
     }
 }
 
@@ -67,6 +116,28 @@ fun parseTypedArgs(tokens: Tokens, closingSymbol: Token = Token.ClosingCurly): M
             else -> error("Invalid token expected `,` or `$closingSymbol`")
         }
     }
+}
+
+fun parseSignature(tokens: Tokens): Pair<SignatureString, Boolean> {
+    val strings = mutableListOf<String>()
+    var flag = false
+    while(true) {
+        if (strings.isNotEmpty() && tokens.visitNext() == Token.OpenCurly) {
+            flag = true
+            break
+        }
+        strings+=tokens.expect<Token.Identifier>().name
+        when(tokens.visitNext()) {
+            is Token.Colon -> {
+                tokens.expect<Token.Colon>()
+                tokens.expect<Token.Colon>()
+                continue
+            }
+            else -> break
+        }
+    }
+    return SignatureString(strings.joinToString("::")) to flag
+
 }
 
 fun parseFunctionArgs(tokens: Tokens): List<String> = mutableListOf<String>().apply {
@@ -246,23 +317,29 @@ val arrayDeclarationTypes = mapOf(
 )
 
 fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
-    return when(tokens.visitNext()) {
+    return when(val tk = tokens.visitNext()) {
         is Token.Match -> {
             tokens.expect<Token.Match>()
             parseMatch(tokens, variables)
         }
         is Token.Identifier -> {
-            val token = tokens.expect<Token.Identifier>()
 
-            if (token.name in arrayDeclarationTypes && tokens.visitNext() == Token.OpenSquare) {
+            if (tk.name in arrayDeclarationTypes && tokens.visit2Next() == Token.OpenSquare) {
+                tokens.expect<Token.Identifier>()
                 tokens.expect<Token.OpenSquare>()
-                return parseArray(arrayDeclarationTypes[token.name]!!, tokens, variables)
+                return parseArray(arrayDeclarationTypes[tk.name]!!, tokens, variables)
             }
 
-            if (token.name in variables)
-                Expression.VariableSymbol(token.name)
-            else
-                Expression.UnknownSymbol(token.name)
+            if (tk.name in variables) {
+                tokens.expect<Token.Identifier>()
+                Expression.VariableSymbol(tk.name)
+            } else {
+                try {
+                    Expression.UnknownSymbol(parseSignature(tokens).first.oxideNotation)
+                } catch (e: Exception) {
+                    Expression.UnknownSymbol(tk.name)
+                }
+            }
         }
         is Token.OpenSquare -> {
             tokens.expect<Token.OpenSquare>()
@@ -405,10 +482,9 @@ private fun parsePattern(tokens: Tokens, variables: Variables): Pattern {
 }
 
 private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
-    return when(tokens.visitNext()) {
+    return when(val tk = tokens.visitNext()) {
         is Token.Identifier -> {
-            val next = tokens.expect<Token.Identifier>().name
-            runCatching { parseType(next) }.fold(
+            runCatching { parseType(tokens) }.fold(
                 onSuccess = { type ->
                     when(tokens.visitNext()) {
                         is Token.OpenBracket -> {
@@ -421,7 +497,7 @@ private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
                     }
                 },
                 onFailure = {
-                    Pattern.Binding(next)
+                    Pattern.Binding(tk.name)
                 }
             )
         }
@@ -432,16 +508,19 @@ private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
 
 }
 
-private fun parseType(string: String): Type = when(string) {
-    "num" -> Type.IntT
-    "str" -> Type.String
-    "bool" -> Type.BoolT
-    else -> {
-        if (string.lowercase() == string) {
-            error("")
+private fun parseType(tokens: Tokens): Type = when(val tk = tokens.next()) {
+    is Token.Identifier -> {
+        when(tk.name) {
+            "num" -> Type.IntT
+            "str" -> Type.String
+            "bool" -> Type.BoolT
+            else -> {
+                Type.BasicJvmType(runCatching { SignatureString(tk.name) }.getOrNull() ?: error("Invalid type ${tk.name}"))
+            }
         }
-        Type.BasicJvmType(runCatching { SignatureString(string) }.getOrNull() ?: error("Invalid type $string"))
     }
+    else -> error("Unexpected token")
+
 }
 
 
@@ -457,5 +536,7 @@ private fun parseNumber(tokens: Tokens, initial: Int): Expression.ConstNum {
 }
 
 fun Tokens.visitNext() = if (hasNext()) next().also { previous() } else null
+
+fun Tokens.visit2Next() = next().let { next().also { previous(); previous() } }
 
 inline fun<reified T: Token> Tokens.expect(): T = next() as T

@@ -1,10 +1,14 @@
+use java::util::{ArrayList, HashMap}
+use java::lang::System
+
 func main {
-    someArray = list["Hello", "World", true, 12]
-    someOtherArray = list[...someArray, true, ...someArray]
-    doSth(someOtherArray)
+    some_array = list["Hello", "World", true, 12]
+    some_other_array = list[...some_array, true, ...some_array]
+    do_sth(some_other_array)
+    foo()
 }
 
-func doSth(x) {
+func do_sth(x) {
     i = 0
     while i < x.size() {
         print(x.get(i))
@@ -12,4 +16,29 @@ func doSth(x) {
     }
 }
 
-func print(value) java::lang::System.out.println(value)
+func foo {
+    p = Person.new("Tom")
+    p.say_name()
+}
+
+struct Person {
+    name str
+}
+
+impl Person {
+    func say_name(self) {
+        print(self.name)
+    }
+
+    func new(name) {
+        Person(name.toString())
+    }
+}
+
+impl System {
+    func out(value) {
+        System.out.println(value)
+    }
+}
+
+func print(value) System.out(value)

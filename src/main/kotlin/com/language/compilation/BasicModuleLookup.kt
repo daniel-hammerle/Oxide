@@ -16,6 +16,13 @@ data class BasicModuleLookup(
     override val localSymbols: Map<String, ModuleChild>
         get() = current.children
 
+    override fun getImport(name: String): SignatureString? {
+        return current.imports[name]
+    }
+
+    override val localImports: Map<String, SignatureString>
+        get() = current.imports
+
     override fun localGetSymbol(name: String): ModuleChild? = current.children[name]
 
     override fun hasModule(name: SignatureString): Boolean =

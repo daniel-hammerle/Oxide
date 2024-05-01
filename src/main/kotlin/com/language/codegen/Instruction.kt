@@ -220,27 +220,14 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         is TypedInstruction.StaticCall -> {
             //load args
             mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
-
-            mv.visitMethodInsn(
-                Opcodes.INVOKESTATIC,
-                instruction.parentName.toJvmNotation(),
-                instruction.name,
-                instruction.candidate.toJvmDescriptor(),
-                false
-            )
+            instruction.candidate.generateCall(mv)
             stackMap.pop(instruction.candidate.oxideArgs.size)
             stackMap.push(instruction.candidate.oxideReturnType)
         }
         is TypedInstruction.ModuleCall -> {
             //load args
             mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
-            mv.visitMethodInsn(
-                Opcodes.INVOKESTATIC,
-                instruction.parentName.toJvmNotation(),
-                jvmName(instruction.name, instruction.candidate.oxideArgs),
-                instruction.candidate.toJvmDescriptor(),
-                false
-            )
+            instruction.candidate.generateCall(mv)
             stackMap.pop(instruction.candidate.oxideArgs.size)
             stackMap.push(instruction.candidate.oxideReturnType)
         }
@@ -308,13 +295,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             //load args onto stack
             mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
             //call constructor
-            mv.visitMethodInsn(
-                Opcodes.INVOKESPECIAL,
-                instruction.className.toJvmNotation(),
-                "<init>",
-                instruction.candidate.toJvmDescriptor(),
-                false
-            )
+            instruction.candidate.generateCall(mv)
             stackMap.pop(instruction.args.size)
             stackMap.push(instruction.candidate.oxideReturnType)
         }
@@ -682,13 +663,7 @@ fun compileDynamicCall(
         else -> {
             //load args onto the stack
             mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
-            mv.visitMethodInsn(
-                Opcodes.INVOKEVIRTUAL,
-                parentType.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
-                instruction.name,
-                instruction.candidate.toJvmDescriptor(),
-                false
-            )
+            instruction.candidate.generateCall(mv)
             if (instruction.candidate.hasGenericReturnType) {
                 mv.visitTypeInsn(Opcodes.CHECKCAST, instruction.candidate.oxideReturnType.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
             }

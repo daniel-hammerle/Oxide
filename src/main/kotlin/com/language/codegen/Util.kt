@@ -76,7 +76,7 @@ fun Type.toJVMDescriptor(): String = when(this) {
 }
 
 
-fun Type.Union.checkCommonInterfacesForFunction(name: String, argTypes: List<Type>, lookup: IRModuleLookup): Pair<Type.JvmType, FunctionCandidate>? {
+suspend fun Type.Union.checkCommonInterfacesForFunction(name: String, argTypes: List<Type>, lookup: IRModuleLookup): Pair<Type.JvmType, FunctionCandidate>? {
     if (entries.any{ it !is Type.JvmType }) return null
 
     val candidate = entries

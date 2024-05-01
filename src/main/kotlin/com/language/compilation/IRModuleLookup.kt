@@ -5,10 +5,12 @@ interface IRModuleLookup {
     suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate
     fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int>
     fun hasGenericReturnType(instance: Type, funcName: String, argTypes: List<Type>): Boolean
-    fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate
+    suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate
     fun generateCallSignature(instance: Type, funcName: String, argTypes: List<Type>): String
 
     fun typeIsInterface(type: Type, interfaceType: SignatureString): Boolean
+
+    fun newModFrame(modNames: Set<SignatureString>): IRModuleLookup
 
     fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate
     fun lookUpFieldType(instance: Type, fieldName: String): Type

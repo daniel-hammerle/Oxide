@@ -3,24 +3,62 @@ package com.language.compilation
 import com.language.*
 import com.language.ArrayType
 import com.language.Function
+import java.util.*
 
 fun compile(module: ModuleLookup): IRModule {
     val functions: MutableMap<String, IRFunction> = mutableMapOf()
     val structs: MutableMap<String, IRStruct> = mutableMapOf()
+    val implBlocks: MutableMap<Type, IRImpl> = mutableMapOf()
     module.localSymbols.forEach { (name, entry) ->
         when(entry) {
             is Function -> functions[name] = compileFunction(function = entry, module)
             is Struct -> structs[name] = compileStruct(struct = entry, module)
+            is Impl -> {
+                val type = if (entry.type is Type.JvmType && module.hasLocalStruct(entry.type.signature)) {
+                    Type.BasicJvmType(module.localName + entry.type.signature)
+                } else {
+                    entry.type.populate(module)
+                }
+                implBlocks[type] = compileImplBlock(entry, module)
+            }
+            is UseStatement -> {}
             else -> error("Invalid construct")
         }
     }
 
-    return IRModule(module.localName, functions, structs)
+    return IRModule(module.localName, functions, structs, implBlocks)
+}
+
+fun Type.populate(module: ModuleLookup): Type = when(this) {
+    is Type.JvmType -> Type.BasicJvmType(populateSignature(signature, module), genericTypes)
+    is Type.Union -> Type.Union(entries.map { it.populate(module) }.toSet())
+    else -> this
 }
 
 fun compileStruct(struct: Struct, module: ModuleLookup): IRStruct {
     val fields = struct.args.mapValues { it.value.parseType(module) }
     return IRStruct(fields)
+}
+
+fun compileImplBlock(implBlock: Impl, module: ModuleLookup): IRImpl {
+    if (!implBlock.type.exists(module)) {
+        error("Invalid type ${implBlock.type}")
+    }
+
+
+
+    val methods = implBlock.methods.mapValues { (_, function) -> compileFunction(function, module) }
+    val associatedFunctions = implBlock.associatedFunctions.mapValues { (_, function) -> compileFunction(function, module) }
+
+    return IRImpl(module.localName + Base64.getEncoder().encodeToString(UUID.randomUUID().toString().toByteArray()), methods, associatedFunctions)
+}
+
+
+fun Type.exists(module: ModuleLookup): Boolean = when(this) {
+    is Type.JvmType -> module.hasStruct(populateSignature(signature, module)) || module.hasModule(populateSignature(signature, module))
+    is Type.Union -> entries.all { it.exists(module) }
+    Type.IntT, Type.BoolT, Type.DoubleT, Type.Null, Type.Nothing -> true
+    is Type.Array -> type.exists(module)
 }
 
 fun String.parseType(module: ModuleLookup) = when(this) {
@@ -41,7 +79,8 @@ fun compileFunction(function: Function, module: ModuleLookup): IRFunction {
 
     return IRFunction(
         function.args,
-        body
+        body,
+        module.localImports.values.toSet() + module.localName
     )
 }
 
@@ -118,11 +157,12 @@ fun compileExpression(expression: Expression, module: ModuleLookup): Instruction
             when(val parent = expression.parent) {
                 //static property access
                 is Expression.UnknownSymbol -> {
-                    if (!module.hasModule(SignatureString(parent.name))) {
+                    val signature = populateSignature(SignatureString(parent.sigName), module)
+                    if (!module.hasModule(signature)) {
                         println("[Warning] Unknown Module ${parent.name}")
                     }
 
-                    Instruction.StaticPropertyAccess(SignatureString(parent.name), expression.name)
+                    Instruction.StaticPropertyAccess(signature, expression.name)
                 }
                 //dynamic property access
                 else -> {
@@ -184,19 +224,27 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup): Instruction 
             when(val modName = parent.parent) {
                 is Expression.UnknownSymbol -> {
                     //module call (for example, io.print("Hello World"))
-                    if (!module.hasModule(SignatureString(modName.name))) {
+                    val signature = populateSignature(SignatureString(modName.sigName), module)
+                    if (!module.hasModule(signature) && !module.hasStruct(signature)) {
                         error("No module with name ${modName.name}")
                     }
-                    when(module.nativeModule(SignatureString(modName.name))) {
-                        is Module -> {
+                    when {
+                        module.nativeModule(signature) is Module -> {
                             Instruction.ModuleCall(
-                                moduleName = SignatureString(modName.name),
+                                moduleName = signature,
+                                name = parent.name,
+                                args = args,
+                            )
+                        }
+                        module.hasLocalStruct(signature) -> {
+                            Instruction.ModuleCall(
+                                moduleName = module.localName + signature,
                                 name = parent.name,
                                 args = args,
                             )
                         }
                         else -> Instruction.StaticCall(
-                            classModuleName = SignatureString(modName.name),
+                            classModuleName = signature,
                             name = parent.name,
                             args = args,
                         )
@@ -228,15 +276,15 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup): Instruction 
                         args = args,
                     )
                 }
-                module.hasLocalStruct(SignatureString(parent.name)) -> {
+                module.hasLocalStruct(SignatureString(parent.sigName)) -> {
                     Instruction.ConstructorCall(
-                        className = module.localName + parent.name,
+                        className = module.localName +parent.sigName,
                         args = args
                     )
                 }
-                module.hasModule(SignatureString(parent.name)) || module.hasStruct(SignatureString(parent.name)) -> {
+                module.hasModule(SignatureString(parent.sigName)) || module.hasStruct(SignatureString(parent.sigName)) -> {
                     Instruction.ConstructorCall(
-                        className = SignatureString(parent.name),
+                        className = SignatureString(parent.sigName),
                         args = args
                     )
                 }
@@ -247,5 +295,12 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup): Instruction 
         //meaning a value that has an invoke function
         //you can still call .invoke for now but simply calling it will work too in the future
         else -> error("Invoking dynamic value invokables not implemented yet")
+    }
+}
+
+fun populateSignature(signatureString: SignatureString, module: ModuleLookup): SignatureString {
+    return when (val ctx = module.getImport(signatureString.members[0])) {
+        is SignatureString -> signatureString.chopOfStart()?.let { ctx + it } ?: ctx
+        else -> signatureString
     }
 }

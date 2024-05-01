@@ -9,8 +9,10 @@ interface ModuleLookup {
     fun localGetSymbol(name: String): ModuleChild?
 
     val localName: SignatureString
-
+    val localImports: Map<String, SignatureString>
     val localSymbols: Map<String, ModuleChild>
+
+    fun getImport(name: String): SignatureString?
 
     fun hasStruct(name: SignatureString): Boolean
     fun hasLocalStruct(name: SignatureString): Boolean

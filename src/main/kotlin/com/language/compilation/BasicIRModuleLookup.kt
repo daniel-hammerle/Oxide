@@ -2,37 +2,87 @@ package com.language.compilation
 
 import com.language.codegen.generateJVMFunctionSignature
 import com.language.codegen.toJVMDescriptor
+import org.objectweb.asm.Opcodes
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
 class BasicIRModuleLookup(
     override val nativeModules: Set<IRModule>,
-    private val externalJars: ClassLoader
+    private val externalJars: ClassLoader,
+    private val allowedImplBlocks: Map<Type, Set<IRImpl>> = emptyMap()
 ) : IRModuleLookup {
-    override suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate {
-        return when(val module = nativeModules.find{ it.name == modName }) {
-            is IRModule -> {
-                module.functions[funcName]?.inferTypes(argTypes, this)?.let { FunctionCandidate(argTypes, argTypes, it.type, it.type) } ?: error("Function $funcName in $modName with variants $argTypes not found")
-            }
-            else -> {
-                val clazz = externalJars.loadClass(modName.toDotNotation())
-                val methods = clazz.methods.filter {
-                    it.name == funcName && it.parameterCount == argTypes.size && Modifier.isStatic(it.modifiers)
-                }
-                val method = methods.first {
-                    //map through each argument and check if it works
-                    argTypes
-                        .mapIndexed { index, type -> it.parameterTypes[index].canBe(type) }
-                        .all { it }  //if every condition is true
-                }
-                val returnType = method.returnType.toType()
-                val actualArgTypes = method.parameterTypes.map { it.toType() }
-                //oxide and jvm return types are the same since generics cant exist on static functions
-                FunctionCandidate(oxideArgs = argTypes, jvmArgs = actualArgTypes, jvmReturnType = returnType, oxideReturnType = returnType)
-            }
 
+    override fun newModFrame(modNames: Set<SignatureString>): IRModuleLookup {
+        val newImplBlocks: MutableMap<Type, MutableSet<IRImpl>> = mutableMapOf()
+        nativeModules.filter { it.name in modNames }.forEach { mod ->
+            mod.implBlocks.forEach { (type, block) ->
+                newImplBlocks[type]?.add(block) ?: newImplBlocks.put(type, mutableSetOf(block))
+            }
         }
+
+        return BasicIRModuleLookup(nativeModules, externalJars, newImplBlocks)
+    }
+
+    override suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate {
+        if (nativeModules.any{ it.name == modName }) {
+            val module = nativeModules.first{ it.name == modName }
+            return module.functions[funcName]?.inferTypes(argTypes, this)?.let {
+                    FunctionCandidate(
+                    argTypes,
+                    argTypes,
+                    it.type,
+                    it.type,
+                    invocationType = Opcodes.INVOKESTATIC,
+                    jvmOwner = modName,
+                    name = funcName,
+                    true
+                )
+            } ?: error("Function $funcName in $modName with variants $argTypes not found")
+        }
+        if (allowedImplBlocks[Type.BasicJvmType(modName)]?.isNotEmpty() == true) {
+            val implBlock = allowedImplBlocks[Type.BasicJvmType(modName)]!!.find {
+                funcName in it.associatedFunctions
+            }
+            if (implBlock != null) {
+                val function = implBlock.associatedFunctions[funcName]!!
+                return function.inferTypes(argTypes, lookup = this).let {
+                    FunctionCandidate(
+                        argTypes,
+                        argTypes.map { t -> t.toActualJvmType() },
+                        it.type.toActualJvmType(),
+                        it.type,
+                        invocationType = Opcodes.INVOKESTATIC,
+                        jvmOwner = implBlock.fullSignature,
+                        name = funcName,
+                        obfuscateName = true
+                    )
+                }
+            }
+        }
+        val clazz = externalJars.loadClass(modName.toDotNotation())
+        val methods = clazz.methods.filter {
+            it.name == funcName && it.parameterCount == argTypes.size && Modifier.isStatic(it.modifiers)
+        }
+        val method = methods.first {
+            //map through each argument and check if it works
+            argTypes
+                .mapIndexed { index, type -> it.parameterTypes[index].canBe(type) }
+                .all { it }  //if every condition is true
+        }
+        val returnType = method.returnType.toType()
+        val actualArgTypes = method.parameterTypes.map { it.toType() }
+        //oxide and jvm return types are the same since generics cant exist on static functions
+        return FunctionCandidate(
+            oxideArgs = argTypes,
+            jvmArgs = actualArgTypes,
+            jvmReturnType = returnType,
+            oxideReturnType = returnType,
+            invocationType = Opcodes.INVOKESTATIC,
+            jvmOwner = modName,
+            name = funcName,
+            obfuscateName = false
+        )
     }
 
     override fun typeIsInterface(type: Type, interfaceType: SignatureString): Boolean {
@@ -53,6 +103,9 @@ class BasicIRModuleLookup(
     override fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int> {
         when(instance) {
             is Type.JvmType -> {
+                if (getStruct(instance.signature) != null) {
+                    return emptyMap()
+                }
                 //if the class doesn't exist, we simply throw
                 val method = loadMethod(instance.signature, funcName, argTypes)
 
@@ -112,7 +165,33 @@ class BasicIRModuleLookup(
         }
     }
 
-    override fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate {
+    private fun Type.ungenerify(): Type = when(this) {
+        is Type.JvmType -> Type.BasicJvmType(signature, emptyMap())
+        is Type.Union -> Type.Union(entries.map { it.ungenerify() }.toSet())
+        else -> this
+    }
+
+    override suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate {
+        when(val result = allowedImplBlocks[instance.ungenerify()]) {
+            is Set -> {
+                val implBlock = result.firstOrNull { funcName in it.methods }
+                if (implBlock != null) {
+                    val function = implBlock.methods[funcName]!!
+                    return function.inferTypes(listOf(instance) + argTypes, lookup = this).let {
+                        FunctionCandidate(
+                            argTypes,
+                            listOf(instance) + argTypes,
+                            it.type.toActualJvmType(),
+                            it.type,
+                            invocationType = Opcodes.INVOKESTATIC,
+                            jvmOwner = implBlock.fullSignature,
+                            name = funcName,
+                            obfuscateName = true
+                        )
+                    }
+                }
+            }
+        }
         return when (instance) {
             is Type.JvmType -> {
                 //if the class doesn't exist, we simply throw
@@ -134,7 +213,11 @@ class BasicIRModuleLookup(
                     oxideArgs = argTypes,
                     jvmArgs = actualArgTypes,
                     oxideReturnType = returnType,
-                    jvmReturnType = jvmReturnType
+                    jvmReturnType = jvmReturnType,
+                    invocationType = Opcodes.INVOKEVIRTUAL,
+                    jvmOwner = instance.signature,
+                    name = funcName,
+                    obfuscateName = false
                 )
             }
             Type.BoolT -> lookUpCandidate(Type.Bool, funcName, argTypes)
@@ -165,7 +248,16 @@ class BasicIRModuleLookup(
                 struct.fields.values
                     .zip(argTypes)
                     .forEach { (fieldType, argType) -> argType.assertIsInstanceOf(fieldType) }
-                return FunctionCandidate(struct.fields.values.toList(), struct.fields.values.toList(), Type.Nothing, Type.BasicJvmType(className))
+                return FunctionCandidate(
+                    oxideArgs = struct.fields.values.toList(),
+                    jvmArgs = struct.fields.values.toList(),
+                    jvmReturnType = Type.Nothing,
+                    oxideReturnType = Type.BasicJvmType(className),
+                    invocationType = Opcodes.INVOKESPECIAL,
+                    jvmOwner = className,
+                    name = "<init>",
+                    obfuscateName = false
+                )
             }
         }
 
@@ -181,7 +273,11 @@ class BasicIRModuleLookup(
                 argTypes,
                 constructor.parameterTypes.map { it.toType() },
                 Type.Nothing,
-                clazz.toType()
+                clazz.toType(),
+                invocationType = Opcodes.INVOKESPECIAL,
+                jvmOwner = className,
+                name = "<init>",
+                obfuscateName = false
             )
             else -> error("No constructor $className($argTypes)")
         }

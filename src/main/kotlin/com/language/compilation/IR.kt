@@ -830,7 +830,7 @@ fun Type.toActualJvmType() = when(this) {
 }
 
 
-data class IRFunction(val args: List<String>, val body: Instruction) {
+data class IRFunction(val args: List<String>, val body: Instruction, val imports: Set<SignatureString>) {
     private val mutex = Mutex()
     private val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, Int>> = mutableMapOf()
 
@@ -857,7 +857,7 @@ data class IRFunction(val args: List<String>, val body: Instruction) {
             error("Expected ${this.args.size} but got ${argTypes.size} arguments when calling $args (TypeChecking)")
         }
         val variables = VariableMappingImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
-        val result = body.inferTypes(variables, lookup)
+        val result = body.inferTypes(variables, lookup.newModFrame(imports))
         mutex.withLock {
             checkedVariants[argTypes] = result to variables.varCount()
         }
@@ -901,10 +901,28 @@ value class SignatureString(val value: String) {
     val oxideNotation
         get() = value
 
+    val members: List<String>
+        get() = value.split("::")
+
+    fun chopOfStart(): SignatureString? = runCatching {
+        SignatureString(members.slice(1..<members.size).joinToString("::"))
+    }.getOrNull()
+
     operator fun plus(other: String) = SignatureString("$value::$other")
     operator fun plus(other: SignatureString) = SignatureString("$value::${other.value}")
 }
 
 data class IRStruct(val fields: Map<String, Type>)
 
-data class IRModule(val name: SignatureString, val functions: Map<String, IRFunction>, val structs: Map<String, IRStruct>)
+data class IRImpl(
+    val fullSignature: SignatureString,
+    val methods: Map<String, IRFunction>,
+    val associatedFunctions: Map<String, IRFunction>
+)
+
+data class IRModule(
+    val name: SignatureString,
+    val functions: Map<String, IRFunction>,
+    val structs: Map<String, IRStruct>,
+    val implBlocks: Map<Type, IRImpl>
+)

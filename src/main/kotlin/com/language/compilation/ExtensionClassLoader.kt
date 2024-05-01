@@ -59,9 +59,9 @@ private fun Class<*>.toModule(): Module {
     declaredMethods
         .filter { Modifier.isStatic(it.modifiers) }
         .forEach { method ->
-            val function = Function(method.parameters.map { it.name }, Expression.UnknownSymbol("external body"))
+            val function = Function(method.parameters.map { it.name }, Expression.UnknownSymbol("external"))
             children[method.name] = function
         }
 
-    return Module(children)
+    return Module(children, emptyMap(), emptyMap())
 }

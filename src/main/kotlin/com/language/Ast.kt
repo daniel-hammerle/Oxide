@@ -1,6 +1,6 @@
 package com.language
 
-import com.language.compilation.Instruction
+import com.language.compilation.SignatureString
 import com.language.compilation.Type
 
 sealed interface Expression {
@@ -19,7 +19,9 @@ sealed interface Expression {
     sealed interface Invokable : Expression {
         val name: String
     }
-    data class UnknownSymbol(override val name: String): Invokable
+    data class UnknownSymbol(val sigName: String): Invokable {
+        override val name: String = sigName
+    }
 
     data class VariableSymbol(override val name: String): Invokable
 
@@ -68,13 +70,17 @@ sealed interface Statement {
     data class Assign(val name: String, val value: Expression) : Statement
 }
 
-data class Module(val children: Map<String, ModuleChild>)
+data class Module(val children: Map<String, ModuleChild>, val implBlocks: Map<Type, Impl>, val imports: Map<String, SignatureString>)
 
 sealed interface ModuleChild
 
 data class Function(val args: List<String>, val body: Expression) : ModuleChild
 
 data class Struct(val args: Map<String, String>) : ModuleChild
+
+data class Impl(val type: Type, val methods: Map<String, Function>, val associatedFunctions: Map<String, Function>) : ModuleChild
+
+data class UseStatement(val signatureStrings: Set<SignatureString>) : ModuleChild
 
 data class Variable(val initialValue: Expression) : ModuleChild
 
