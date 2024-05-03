@@ -18,7 +18,7 @@ fun parse(tokens: List<Token>): Module {
 
 fun parseFile(tokens: Tokens): Module {
     val entries = mutableMapOf<String, ModuleChild>()
-    val implBlocks = mutableMapOf<Type, Impl>()
+    val implBlocks = mutableMapOf<TemplatedType, Impl>()
     val imports: MutableMap<String, SignatureString> = mutableMapOf()
     while(tokens.hasNext()) {
         val (name, entry) = parseTopLevelEntity(tokens)
@@ -46,17 +46,19 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
         }
         Token.Struct -> {
             val name = tokens.expect<Token.Identifier>().name
+            val generics = parseGenericDefinition(tokens)
             val args = when(tokens.visitNext()) {
                 Token.OpenCurly -> {
                     tokens.expect<Token.OpenCurly>()
-                    parseTypedArgs(tokens)
+                    parseTypedArgs(tokens, generics)
                 }
                 else -> emptyMap()
             }
-            name to Struct(args)
+            name to Struct(args, generics)
         }
         Token.Impl -> {
-            val type = parseType(tokens)
+            val generics = parseGenericDefinition(tokens)
+            val type = parseType(tokens, generics)
             tokens.expect<Token.OpenCurly>()
             val entries: MutableMap<String, ModuleChild> = mutableMapOf()
             while(tokens.visitNext() != Token.ClosingCurly) {
@@ -100,15 +102,15 @@ fun parseImport(tokens: Tokens): Set<SignatureString> {
     }
 }
 
-fun parseTypedArgs(tokens: Tokens, closingSymbol: Token = Token.ClosingCurly): Map<String, String> {
+fun parseTypedArgs(tokens: Tokens, generics: List<String>, closingSymbol: Token = Token.ClosingCurly): Map<String, TemplatedType> {
     if (tokens.visitNext() == closingSymbol) {
         tokens.next()
         return emptyMap()
     }
-    val entries = mutableMapOf<String, String>()
+    val entries = mutableMapOf<String, TemplatedType>()
     while(true) {
         val name = tokens.expect<Token.Identifier>().name
-        val type = tokens.expect<Token.Identifier>().name
+        val type = parseType(tokens, generics)
         entries[name] = type
         when(tokens.next()) {
             closingSymbol -> return entries
@@ -484,7 +486,7 @@ private fun parsePattern(tokens: Tokens, variables: Variables): Pattern {
 private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
     return when(val tk = tokens.visitNext()) {
         is Token.Identifier -> {
-            runCatching { parseType(tokens) }.fold(
+            runCatching { parseType(tokens, allowGenerics = false) }.fold(
                 onSuccess = { type ->
                     when(tokens.visitNext()) {
                         is Token.OpenBracket -> {
@@ -508,18 +510,62 @@ private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
 
 }
 
-private fun parseType(tokens: Tokens): Type = when(val tk = tokens.next()) {
+private fun parseGenericDefinition(tokens: Tokens): List<String> {
+    if (tokens.visitNext() != Token.St) {
+        return emptyList()
+    }
+    tokens.expect<Token.St>()
+    val generics = mutableListOf<String>()
+    while(true) {
+        generics+=tokens.expect<Token.Identifier>().name
+        when(val tk = tokens.next()) {
+            is Token.Gt -> return generics
+            is Token.Comma -> continue
+            else -> error("Invalid token $tk expected closing `>` or `,`")
+        }
+    }
+}
+
+private fun parseGenericArgs(tokens: Tokens, generics: List<String>): List<TemplatedType> {
+    if (tokens.visitNext() != Token.St) {
+        return emptyList()
+    }
+    tokens.expect<Token.St>()
+    val genericTypes = mutableListOf<TemplatedType>()
+    while(true) {
+        genericTypes+= parseType(tokens, generics)
+        when(val tk = tokens.next()) {
+            is Token.Gt -> return genericTypes
+            is Token.Comma -> continue
+            else -> error("Invalid token $tk expected closing `>` or `,`")
+        }
+    }
+}
+
+
+private fun parseType(tokens: Tokens, generics: List<String> = emptyList(), allowGenerics: Boolean = true): TemplatedType = when(val tk = tokens.visitNext()) {
     is Token.Identifier -> {
         when(tk.name) {
-            "num" -> Type.IntT
-            "str" -> Type.String
-            "bool" -> Type.BoolT
+            in generics -> TemplatedType.Generic(tk.name).also { tokens.next() }
+            "int" -> TemplatedType.IntT.also { tokens.next() }
+            "double" ->  TemplatedType.DoubleT.also { tokens.next() }
+            "str" ->  TemplatedType.String.also { tokens.next() }
+            "bool" ->  TemplatedType.BoolT.also { tokens.next() }
             else -> {
-                Type.BasicJvmType(runCatching { SignatureString(tk.name) }.getOrNull() ?: error("Invalid type ${tk.name}"))
+                TemplatedType.Complex(
+                    runCatching { parseSignature(tokens).first }.getOrNull() ?: error("Invalid type ${tk.name}"),
+                    if (allowGenerics) parseGenericArgs(tokens, generics) else emptyList()
+                )
             }
         }
     }
-    else -> error("Unexpected token")
+    is Token.OpenSquare -> {
+        tokens.expect<Token.OpenSquare>()
+        val item = parseType(tokens, generics)
+        tokens.expect<Token.ClosingSquare>()
+        TemplatedType.Array(item)
+    }
+    else -> error("Unexpected token $tk")
 
 }
 

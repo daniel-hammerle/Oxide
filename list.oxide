@@ -2,8 +2,8 @@ use java::util::{ArrayList, HashMap}
 use java::lang::System
 
 func main {
-    some_array = list["Hello", "World", true, 12]
-    some_other_array = list[...some_array, true, ...some_array]
+    some_array = ["Hello", "World", true, 12]
+    some_other_array = [...some_array, true, ...some_array]
     do_sth(some_other_array)
     foo()
 }
@@ -17,13 +17,71 @@ func do_sth(x) {
 }
 
 func foo {
+    some_array = list["Hello", "World", true, 12]
+    some_other_array = list[...some_array, true, ...some_array]
+    do_sth(some_other_array)
     p = Person.new("Tom")
     p.say_name()
+    print("1".to_int() + 2)
+    print(["Hello", "World", "lol"].size())
 }
 
 struct Person {
     name str
 }
+
+use java::lang::{Integer, Double}
+
+impl str {
+    func to_int(self) {
+        Integer.parseInt(self)
+    }
+
+    func to_double(self) {
+        Double.parseDouble(self)
+    }
+
+    func to_bool(self) {
+        match self {
+            "true" -> true
+            "false" -> false
+            _ -> false
+        }
+    }
+}
+
+impl<T> T {
+    func log(self) {
+        print(self)
+        self
+    }
+}
+
+use java::util::Arrays
+impl<T> [T] {
+    func get(self, index) {
+        Arrays.asList(self).get(index)
+    }
+
+    func set(self, index, item) {
+        Arrays.asList(self).set(index, item)
+    }
+
+    func iterator(self) {
+        Arrays.asList(self).iterator()
+    }
+
+    func size(self) {
+        Arrays.asList(self).size()
+    }
+}
+
+impl int {
+    func foo(self, other) {
+        print(other+self)
+    }
+}
+
 
 impl Person {
     func say_name(self) {

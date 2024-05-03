@@ -8,50 +8,69 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import kotlin.concurrent.timerTask
 
 @OptIn(DelicateCoroutinesApi::class)
 fun compileProject(fileName: String) {
-    val tokens = lexCode(File(fileName).readText())
-    val module = parse(tokens)
+    val (extensionClassLoader, compilationTime) = measureTime {
+        val tokens = lexCode(File(fileName).readText())
 
-    val dispatcher = newFixedThreadPoolContext(8, "Compilation")
-    val scope = CoroutineScope(dispatcher)
+        val (module, parsingTime) = measureTime {
+            parse(tokens)
+        }
+        println("> Parsing took ${parsingTime}ms")
 
-    val runtimeLib = "./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar"
-    val extensionClassLoader = ExtensionClassLoader(runtimeLib, ClassLoader.getSystemClassLoader())
-    val lookup = BasicModuleLookup(module, SignatureString("main"), mapOf(SignatureString("main") to module), extensionClassLoader)
+        val dispatcher = newFixedThreadPoolContext(8, "Compilation")
+        val scope = CoroutineScope(dispatcher)
 
-    val result = compile(lookup)
-    val irLookup =  BasicIRModuleLookup(setOf(result), extensionClassLoader)
+        val runtimeLib = "./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar"
+        val extensionClassLoader = ExtensionClassLoader(runtimeLib, ClassLoader.getSystemClassLoader())
+        val lookup = BasicModuleLookup(module, SignatureString("main"), mapOf(SignatureString("main") to module), extensionClassLoader)
 
-    val preTypeChecking = Instant.now()
-    val type = runBlocking {
-        scope.async {
-            result.functions["main"]!!.inferTypes(listOf(), irLookup).type
-        }.await()
+        val result = compile(lookup)
+        val irLookup =  BasicIRModuleLookup(setOf(result), extensionClassLoader)
+
+        val (type, typeCheckingTime) = measureTime {
+            runBlocking {
+                scope.async {
+                    result.functions["main"]!!.inferTypes(listOf(), irLookup).type
+                }.await()
+            }
+        }
+        println("> Type-Inference took ${typeCheckingTime}ms")
+
+        val (project, compilationTime) = measureTime {
+            runBlocking {
+                scope.async {
+                    com.language.codegen.compileProject(irLookup)
+                }.await()
+            }
+        }
+
+        println("> Compilation took ${compilationTime}ms")
+
+        for ((name, bytes) in project.entries) {
+            File("out/${name.toJvmNotation()}.class").apply {
+                parentFile.mkdirs()
+                createNewFile()
+            }.writeBytes(bytes)
+        }
+        createZipFile(project.mapKeys { it.key.value }, "out.jar")
+
+        println("Finished Writing to File✅")
+        extensionClassLoader
     }
-    println("Resulting Type: $type")
-    println("Type-Inference took ${preTypeChecking.until(Instant.now(), ChronoUnit.MILLIS)}ms")
 
-    val preCompilation = Instant.now()
-    val project = runBlocking {
-        scope.async {
-            com.language.codegen.compileProject(irLookup)
-        }.await()
-    }
-
-    println("Compilation took ${preCompilation.until(Instant.now(), ChronoUnit.MILLIS)}ms")
-
-    for ((name, bytes) in project.entries) {
-        File("out/${name.toJvmNotation()}.class").apply {
-            parentFile.mkdirs()
-            createNewFile()
-        }.writeBytes(bytes)
-    }
-    createZipFile(project.mapKeys { it.key.value }, "out.jar")
+    println("Full Compilation process took ${compilationTime}ms")
 
     ExtensionClassLoader("out.jar", extensionClassLoader)
         .loadClass("main")
         .methods.first { it.name == "main_1" }
         .invoke(null)
+}
+
+inline fun<T> measureTime(task: () -> T): Pair<T, Long> {
+    val before = Instant.now()
+    val value = task()
+    return value to before.until(Instant.now(), ChronoUnit.MILLIS)
 }

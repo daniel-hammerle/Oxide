@@ -622,7 +622,7 @@ fun compileDynamicCall(
     val parentType = instruction.parent.type.asBoxed()
     //load instance onto the stack
     compileInstruction(mv, instruction.parent, stackMap)
-    boxOrIgnore(mv, instruction.parent.type)
+    //boxOrIgnore(mv, instruction.parent.type)
     when {
         parentType is Type.Union -> {
             when (val commonType = instruction.commonInterface) {
@@ -672,13 +672,20 @@ fun compileDynamicCall(
 
     }
 
-    stackMap.pop(instruction.candidate.oxideArgs.size+1) //args + instance
+    stackMap.pop(instruction.candidate.oxideArgs.size) //args + instance
     stackMap.push(instruction.candidate.oxideReturnType)
 }
 
 
-fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: Iterable<TypedInstruction>, stackMap: StackMap) {
-    for ((ins, type) in args.zip(candidate.jvmArgs)) {
+fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: List<TypedInstruction>, stackMap: StackMap) {
+    val iter = args.zip(if (args.size == candidate.jvmArgs.size)
+        candidate.jvmArgs
+    else if (candidate.jvmArgs.size == 1)
+        emptyList()
+    else
+        candidate.jvmArgs.subList(1, candidate.jvmArgs.size)
+    )
+    for ((ins, type) in iter) {
         compileInstruction(this, ins, stackMap)
         if (type != ins.type) {
             if (ins.type.isInt() && type.isDouble()) {

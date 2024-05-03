@@ -1,5 +1,7 @@
 package com.language.compilation
 
+import com.language.TemplatedType
+
 interface IRModuleLookup {
     val nativeModules: Set<IRModule>
     suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate
@@ -12,10 +14,10 @@ interface IRModuleLookup {
 
     fun newModFrame(modNames: Set<SignatureString>): IRModuleLookup
 
-    fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate
+    suspend fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate
     fun lookUpFieldType(instance: Type, fieldName: String): Type
     fun lookUpFieldType(modName: SignatureString, fieldName: String): Type
     fun classOf(type: Type.JvmType): Class<*>
 
-    fun lookUpOrderedFields(className: SignatureString): List<Pair<String, Type>>
+    fun lookUpOrderedFields(className: SignatureString): List<Pair<String, TemplatedType>>
 }

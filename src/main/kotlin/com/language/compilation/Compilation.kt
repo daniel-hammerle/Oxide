@@ -8,14 +8,14 @@ import java.util.*
 fun compile(module: ModuleLookup): IRModule {
     val functions: MutableMap<String, IRFunction> = mutableMapOf()
     val structs: MutableMap<String, IRStruct> = mutableMapOf()
-    val implBlocks: MutableMap<Type, IRImpl> = mutableMapOf()
+    val implBlocks: MutableMap<TemplatedType, IRImpl> = mutableMapOf()
     module.localSymbols.forEach { (name, entry) ->
         when(entry) {
             is Function -> functions[name] = compileFunction(function = entry, module)
             is Struct -> structs[name] = compileStruct(struct = entry, module)
             is Impl -> {
-                val type = if (entry.type is Type.JvmType && module.hasLocalStruct(entry.type.signature)) {
-                    Type.BasicJvmType(module.localName + entry.type.signature)
+                val type = if (entry.type is TemplatedType.Complex && module.hasLocalStruct(entry.type.signatureString)) {
+                    TemplatedType.Complex(module.localName + entry.type.signatureString, entry.type.generics)
                 } else {
                     entry.type.populate(module)
                 }
@@ -29,23 +29,20 @@ fun compile(module: ModuleLookup): IRModule {
     return IRModule(module.localName, functions, structs, implBlocks)
 }
 
-fun Type.populate(module: ModuleLookup): Type = when(this) {
-    is Type.JvmType -> Type.BasicJvmType(populateSignature(signature, module), genericTypes)
-    is Type.Union -> Type.Union(entries.map { it.populate(module) }.toSet())
+fun TemplatedType.populate(module: ModuleLookup): TemplatedType = when(this) {
+    is TemplatedType.Complex -> TemplatedType.Complex(populateSignature(signatureString, module), generics)
     else -> this
 }
 
 fun compileStruct(struct: Struct, module: ModuleLookup): IRStruct {
-    val fields = struct.args.mapValues { it.value.parseType(module) }
-    return IRStruct(fields)
+    val fields = struct.args.mapValues { it.value.populate(module) }
+    return IRStruct(fields, struct.generics)
 }
 
 fun compileImplBlock(implBlock: Impl, module: ModuleLookup): IRImpl {
     if (!implBlock.type.exists(module)) {
         error("Invalid type ${implBlock.type}")
     }
-
-
 
     val methods = implBlock.methods.mapValues { (_, function) -> compileFunction(function, module) }
     val associatedFunctions = implBlock.associatedFunctions.mapValues { (_, function) -> compileFunction(function, module) }
@@ -54,23 +51,11 @@ fun compileImplBlock(implBlock: Impl, module: ModuleLookup): IRImpl {
 }
 
 
-fun Type.exists(module: ModuleLookup): Boolean = when(this) {
-    is Type.JvmType -> module.hasStruct(populateSignature(signature, module)) || module.hasModule(populateSignature(signature, module))
-    is Type.Union -> entries.all { it.exists(module) }
-    Type.IntT, Type.BoolT, Type.DoubleT, Type.Null, Type.Nothing -> true
-    is Type.Array -> type.exists(module)
-}
-
-fun String.parseType(module: ModuleLookup) = when(this) {
-    "num" -> Type.DoubleT
-    "str" -> Type.String
-    "bool" -> Type.BoolT
-    else -> {
-        when {
-            module.hasModule(SignatureString(this)) -> Type.BasicJvmType(SignatureString(this))
-            else -> error("Invalid type $this")
-        }
-    }
+fun TemplatedType.exists(module: ModuleLookup): Boolean = when(this) {
+    is TemplatedType.Complex -> module.hasStruct(populateSignature(signatureString, module)) || module.hasModule(populateSignature(signatureString, module))
+    TemplatedType.IntT, TemplatedType.DoubleT, TemplatedType.BoolT -> true
+    is TemplatedType.Generic -> true
+    is TemplatedType.Array -> itemType.exists(module)
 }
 
 fun compileFunction(function: Function, module: ModuleLookup): IRFunction {

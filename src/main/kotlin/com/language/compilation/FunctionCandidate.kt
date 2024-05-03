@@ -13,7 +13,7 @@ data class FunctionCandidate(
     val invocationType: Int,
     val jvmOwner: SignatureString,
     val name: String,
-    val obfuscateName: Boolean
+    val obfuscateName: Boolean,
 )
 
 fun FunctionCandidate.generateCall(mv: MethodVisitor) {
@@ -22,7 +22,7 @@ fun FunctionCandidate.generateCall(mv: MethodVisitor) {
         jvmOwner.toJvmNotation(),
         if (obfuscateName) jvmName(name, oxideArgs) else name,
         generateJVMFunctionSignature(jvmArgs, jvmReturnType),
-        false
+        invocationType == Opcodes.INVOKEINTERFACE
     )
 }
 

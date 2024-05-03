@@ -38,6 +38,18 @@ sealed interface ConstructingArgument {
     data class Normal(val expression: Expression) : ConstructingArgument
 }
 
+sealed interface TemplatedType {
+    data object IntT: TemplatedType
+    data object DoubleT : TemplatedType
+    data object BoolT: TemplatedType
+    companion object {
+        val String = Complex(SignatureString("java::lang::String"), emptyList())
+    }
+    data class Generic(val name: String) : TemplatedType
+    data class Array(val itemType: TemplatedType) : TemplatedType
+    data class Complex(val signatureString: SignatureString, val generics: List<TemplatedType>) : TemplatedType
+}
+
 enum class ArrayType {
     Implicit,
     Int,
@@ -56,7 +68,7 @@ sealed interface Pattern {
     data class Binding(val name: String) : Pattern {
         override val bindingNames: Set<String> = setOf(name)
     }
-    data class Destructuring(val type: Type, val patterns: List<Pattern>) : Pattern {
+    data class Destructuring(val type: TemplatedType, val patterns: List<Pattern>) : Pattern {
         override val bindingNames: Set<String> = patterns.flatMap { it.bindingNames }.toSet()
     }
     data class Conditional(val condition: Expression, val parent: Pattern) : Pattern {
@@ -70,15 +82,15 @@ sealed interface Statement {
     data class Assign(val name: String, val value: Expression) : Statement
 }
 
-data class Module(val children: Map<String, ModuleChild>, val implBlocks: Map<Type, Impl>, val imports: Map<String, SignatureString>)
+data class Module(val children: Map<String, ModuleChild>, val implBlocks: Map<TemplatedType, Impl>, val imports: Map<String, SignatureString>)
 
 sealed interface ModuleChild
 
 data class Function(val args: List<String>, val body: Expression) : ModuleChild
 
-data class Struct(val args: Map<String, String>) : ModuleChild
+data class Struct(val args: Map<String, TemplatedType>, val generics: List<String>) : ModuleChild
 
-data class Impl(val type: Type, val methods: Map<String, Function>, val associatedFunctions: Map<String, Function>) : ModuleChild
+data class Impl(val type: TemplatedType, val methods: Map<String, Function>, val associatedFunctions: Map<String, Function>) : ModuleChild
 
 data class UseStatement(val signatureStrings: Set<SignatureString>) : ModuleChild
 

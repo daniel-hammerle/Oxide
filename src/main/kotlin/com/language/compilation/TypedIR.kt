@@ -24,7 +24,7 @@ sealed interface TypedInstruction {
         val isConstList = items.all { it is TypedConstructingArgument.Normal }
         override val type: Type = Type.BasicJvmType(
             SignatureString("java::util::ArrayList"),
-            mapOf("E" to Type.BroadType.Known(itemType))
+            linkedMapOf("E" to Type.BroadType.Known(itemType))
         )
     }
 

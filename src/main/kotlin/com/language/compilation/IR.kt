@@ -2,6 +2,7 @@ package com.language.compilation
 
 import com.language.CompareOp
 import com.language.MathOp
+import com.language.TemplatedType
 import com.language.codegen.VarFrame
 import com.language.codegen.VarFrameImpl
 import kotlinx.coroutines.async
@@ -691,7 +692,7 @@ sealed interface Type {
     }
     sealed interface JvmType : Type {
         val signature: SignatureString
-        val genericTypes: Map<String, BroadType>
+        val genericTypes: LinkedHashMap<String, BroadType>
     }
 
     sealed interface BroadType {
@@ -700,11 +701,11 @@ sealed interface Type {
     }
 
 
-    data class BasicJvmType(override val signature: SignatureString, override val genericTypes: Map<String, BroadType> = emptyMap()): JvmType {
+    data class BasicJvmType(override val signature: SignatureString, override val genericTypes: LinkedHashMap<String, BroadType> = linkedMapOf()): JvmType {
         override val size: Int = 1
     }
 
-    data class Array(val type: Type) : Type {
+    data class Array(val itemType: Type) : Type {
         override val size: Int = 1
     }
 
@@ -734,7 +735,7 @@ sealed interface Type {
 }
 
 fun Type.JvmType.extendGeneric(name: String, type: Type): Type.JvmType {
-    val generics = genericTypes.toMutableMap()
+    val generics = genericTypes
     when (val tp = generics[name]) {
         is Type.BroadType.Known -> generics[name] = Type.BroadType.Known(tp.type.join(type))
         Type.BroadType.Unknown -> generics[name] = Type.BroadType.Known(type)
@@ -912,7 +913,18 @@ value class SignatureString(val value: String) {
     operator fun plus(other: SignatureString) = SignatureString("$value::${other.value}")
 }
 
-data class IRStruct(val fields: Map<String, Type>)
+data class IRStruct(val fields: Map<String, TemplatedType>, val generics: List<String>) {
+    private val mutex = Mutex()
+
+    var defaultVariant: Map<String, Type>? = null
+        private set
+
+    suspend fun setDefaultVariant(defaultVariant: Map<String, Type>) {
+        mutex.withLock {
+            this.defaultVariant = defaultVariant
+        }
+    }
+}
 
 data class IRImpl(
     val fullSignature: SignatureString,
@@ -924,5 +936,5 @@ data class IRModule(
     val name: SignatureString,
     val functions: Map<String, IRFunction>,
     val structs: Map<String, IRStruct>,
-    val implBlocks: Map<Type, IRImpl>
+    val implBlocks: Map<TemplatedType, IRImpl>
 )

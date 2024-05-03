@@ -55,6 +55,6 @@ fun Type.toFunctionNameNotation(): String = when(this) {
     is Type.BasicJvmType -> "${signature.toJvmNotation()}${genericTypes.values.joinToString("") { it.toFunctionNameNotation() }}"
     Type.Nothing -> "v"
     Type.Null -> "n"
-    is Type.Array -> "${type.toJVMDescriptor().removeSuffix(";").removePrefix("L")}]"
+    is Type.Array -> "${itemType.toJVMDescriptor().removeSuffix(";").removePrefix("L")}]"
     is Type.Union -> "u(${entries.joinToString("") { it.toFunctionNameNotation() }})"
 }

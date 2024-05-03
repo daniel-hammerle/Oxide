@@ -17,8 +17,11 @@ fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct
         "java/lang/Object",
         null
     )
+    if (struct.defaultVariant == null) {
+        return cw.toByteArray()
+    }
     //create fields
-    for ((name, type) in struct.fields) {
+    for ((name, type) in struct.defaultVariant!!) {
         cw.visitField(
             Opcodes.ACC_PUBLIC,
             name,
@@ -31,17 +34,17 @@ fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct
     val mv = cw.visitMethod(
         Opcodes.ACC_PUBLIC,
         "<init>",
-        generateJVMFunctionSignature(struct.fields.values, Type.Nothing),
+        generateJVMFunctionSignature(struct.defaultVariant!!.values, Type.Nothing),
         null,
         null
 
     )
-    mv.visitMaxs(3, 1+struct.fields.map { it.value.size }.sum())
+    mv.visitMaxs(3, 1+struct.defaultVariant!!.map { it.value.size }.sum())
     mv.visitVarInsn(Opcodes.ALOAD, 0); // Load "this" onto the stack
     mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false); // Invoke super constructor
 
     var i = 0
-    for ((name, type) in struct.fields) {
+    for ((name, type) in struct.defaultVariant!!) {
         mv.visitVarInsn(Opcodes.ALOAD, 0)
         val loadingInstruction = when(type) {
             is Type.IntT, is Type.BoolT -> Opcodes.ILOAD
