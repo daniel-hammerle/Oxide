@@ -3,6 +3,11 @@ package com.language.compilation
 import com.language.*
 import com.language.ArrayType
 import com.language.Function
+import com.language.codegen.compileInstruction
+import com.language.parser.parseExpression
+import org.apache.commons.codec.binary.Base32
+import org.apache.commons.codec.binary.Base64
+import java.nio.ByteBuffer
 import java.util.*
 
 fun compile(module: ModuleLookup): IRModule {
@@ -47,9 +52,17 @@ fun compileImplBlock(implBlock: Impl, module: ModuleLookup): IRImpl {
     val methods = implBlock.methods.mapValues { (_, function) -> compileFunction(function, module) }
     val associatedFunctions = implBlock.associatedFunctions.mapValues { (_, function) -> compileFunction(function, module) }
 
-    return IRImpl(module.localName + Base64.getEncoder().encodeToString(UUID.randomUUID().toString().toByteArray()), methods, associatedFunctions)
+    return IRImpl(module.localName +  generateName(), methods, associatedFunctions)
 }
 
+fun generateName(): String = Base32().encodeToString(UUID.randomUUID().encodeUUID())
+    .replace("=", "")
+
+
+fun UUID.encodeUUID(): ByteArray = ByteBuffer.allocate(16).apply {
+    putLong(mostSignificantBits)
+    putLong(leastSignificantBits)
+}.array()
 
 fun TemplatedType.exists(module: ModuleLookup): Boolean = when(this) {
     is TemplatedType.Complex -> module.hasStruct(populateSignature(signatureString, module)) || module.hasModule(populateSignature(signatureString, module))
@@ -81,6 +94,13 @@ fun compileStatement(statement: Statement, module: ModuleLookup): Instruction {
             Instruction.StoreVar(
                 statement.name,
                 value = value
+            )
+        }
+        is Statement.For -> {
+            Instruction.For(
+                parent = compileExpression(statement.parent, module),
+                name = statement.itemName,
+                body = compileExpression(statement.body, module)
             )
         }
         is Statement.Expr -> compileExpression(expression = statement.expression, module)

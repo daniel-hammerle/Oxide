@@ -320,6 +320,43 @@ sealed class Instruction {
         }
     }
 
+    data class For(val parent: Instruction, val name: String, val body: Instruction) : Instruction() {
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val parent = parent.inferTypes(variables, lookup)
+            return when {
+                IteratorI.validate(lookup, parent.type) -> {
+                    val hasNext = lookup.lookUpCandidate(parent.type, "hasNext", emptyList())
+                    val next = lookup.lookUpCandidate(parent.type, "next", emptyList())
+
+                    val bodyScope = variables.clone()
+                    val itemId = bodyScope.change(name, next.oxideReturnType)
+                    val body = body.inferTypes(bodyScope, lookup)
+
+                    TypedInstruction.ForLoop(parent, itemId, hasNext, next, body)
+                }
+                IterableI.validate(lookup, parent.type) -> {
+                    val iterCall = DynamicCall(this.parent, "iterator", emptyList()).inferTypes(variables, lookup)
+
+                    val hasNext = lookup.lookUpCandidate(iterCall.type, "hasNext", emptyList())
+                    val next = lookup.lookUpCandidate(iterCall.type, "next", emptyList())
+
+                    val bodyScope = variables.clone()
+                    val itemId = bodyScope.change(name, next.oxideReturnType)
+                    val body = body.inferTypes(bodyScope, lookup)
+
+                    TypedInstruction.ForLoop(
+                        iterCall,
+                        itemId,
+                        hasNext,
+                        next,
+                        body
+                    )
+                }
+                else -> error("Invalid type ${parent.type}! it is neither an iterable nor an iterator")
+            }
+        }
+    }
+
     data class While(val cond: Instruction, val body: Instruction) : Instruction() {
         override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
             val cond = cond.inferTypes(variables, lookup)

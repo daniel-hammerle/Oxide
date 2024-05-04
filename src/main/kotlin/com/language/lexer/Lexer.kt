@@ -1,6 +1,7 @@
 package com.language.lexer
 
 import com.language.CompareOp
+import java.security.Key
 
 sealed interface Token {
     sealed interface KeyWord : Token
@@ -10,8 +11,10 @@ sealed interface Token {
     data object Func : KeyWord
     data object Use : KeyWord
     data object Struct : KeyWord
+    data object In : KeyWord
     data object Match : KeyWord
     data object Impl : KeyWord
+    data object For : KeyWord
     data object Error : KeyWord, Identifier {
         override val name: String = "error"
     }
@@ -92,6 +95,8 @@ private fun tryFindKeyWord(string: String): Token? {
         "_collector" -> Token.Collector
         "error" -> Token.Error
         "impl" -> Token.Impl
+        "for" -> Token.For
+        "in" -> Token.In
         else -> null
     }
 }

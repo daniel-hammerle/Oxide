@@ -35,6 +35,10 @@ sealed interface TypedInstruction {
         }
     }
 
+    data class ForLoop(val parent: TypedInstruction, val itemId: Int, val hasNextCall: FunctionCandidate, val nextCall: FunctionCandidate, val body: TypedInstruction) : TypedInstruction {
+        override val type: Type = Type.Nothing
+    }
+
     data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type) : TypedInstruction {
         override val type: Type = when(arrayType) {
             ArrayType.Object -> Type.Array(itemType.asBoxed())

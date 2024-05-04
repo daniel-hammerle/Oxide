@@ -13,6 +13,8 @@ dependencies {
     testImplementation 'org.jetbrains.kotlin:kotlin-test'
     implementation "org.ow2.asm:asm:9.5"
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1-Beta")
+    implementation("commons-codec:commons-codec:1.17.0")
+
 }
 
 test {

@@ -10,9 +10,7 @@ import org.objectweb.asm.Opcodes
 
 fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMap: StackMap) {
     when(instruction) {
-        is TypedInstruction.DynamicCall -> {
-            compileDynamicCall(mv, instruction, stackMap)
-        }
+        is TypedInstruction.DynamicCall -> compileDynamicCall(mv, instruction, stackMap)
         is TypedInstruction.Noop -> {}
         is TypedInstruction.DynamicPropertyAccess -> {
             //load instance onto the stack
@@ -498,6 +496,38 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
 
             }
             stackMap.push(Type.Array(instruction.type))
+        }
+
+        is TypedInstruction.ForLoop -> {
+            compileInstruction(mv, instruction.parent, stackMap)
+            val start = Label()
+            val end = Label()
+            mv.visitLabel(start)
+            stackMap.generateFrame(mv)
+            mv.visitInsn(Opcodes.DUP)
+            instruction.hasNextCall.generateCall(mv)
+            mv.visitJumpInsn(Opcodes.IFEQ, end)
+            mv.visitInsn(Opcodes.DUP)
+            instruction.nextCall.generateCall(mv)
+            val storeInstruction = when(instruction.nextCall.oxideReturnType) {
+                is Type.IntT -> Opcodes.ISTORE
+                is Type.BoolT -> Opcodes.ISTORE
+                is Type.DoubleT -> Opcodes.DSTORE
+                else -> Opcodes.ASTORE
+            }
+            mv.visitVarInsn(storeInstruction, instruction.itemId)
+            compileInstruction(mv, instruction.body, stackMap)
+            when (instruction.body.type) {
+                Type.Nothing -> {}
+                else -> {
+                    stackMap.pop()
+                    mv.visitInsn(Opcodes.POP)
+                }
+            }
+            mv.visitJumpInsn(Opcodes.GOTO, start)
+            mv.visitLabel(end)
+            stackMap.generateFrame(mv)
+            mv.visitInsn(Opcodes.POP)
         }
     }
 }

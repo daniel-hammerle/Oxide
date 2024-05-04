@@ -80,6 +80,7 @@ sealed interface Statement {
     data class Expr(val expression: Expression) : Statement
     data class While(val condition: Expression, val body: Expression): Statement
     data class Assign(val name: String, val value: Expression) : Statement
+    data class For(val parent: Expression, val itemName: String, val body: Expression) : Statement
 }
 
 data class Module(val children: Map<String, ModuleChild>, val implBlocks: Map<TemplatedType, Impl>, val imports: Map<String, SignatureString>)

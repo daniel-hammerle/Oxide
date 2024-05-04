@@ -9,10 +9,8 @@ func main {
 }
 
 func do_sth(x) {
-    i = 0
-    while i < x.size() {
-        print(x.get(i))
-        i = i+1
+    for item in x {
+        print(item)
     }
 }
 

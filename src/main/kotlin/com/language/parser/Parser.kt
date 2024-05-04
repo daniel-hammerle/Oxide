@@ -171,6 +171,16 @@ fun parseStatement(tokens: Tokens, variables: Variables): Statement {
             val body = parseExpression(tokens, variables)
             Statement.While(condition, body)
         }
+        is Token.For -> {
+            val name = tokens.expect<Token.Identifier>().name
+            tokens.expect<Token.In>()
+            val scope = variables.child()
+            scope.put(name)
+            val parent = parseExpression(tokens, variables)
+            val body = parseExpression(tokens, scope)
+
+            Statement.For(parent, name, body)
+        }
         else -> {
             tokens.previous()
             val expr = parseExpression(tokens, variables)
