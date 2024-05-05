@@ -4,6 +4,8 @@ import com.language.*
 import com.language.Function
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
+import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.modifiers.modifiers
 import com.language.lexer.Token
 import com.language.lexer.toCompareOp
 import java.util.UUID
@@ -33,18 +35,39 @@ fun parseFile(tokens: Tokens): Module {
     return Module(entries, implBlocks, imports)
 }
 
+fun parseModifiers(tokens: Tokens): Modifiers = modifiers {
+    while(true) {
+        when(tokens.visitNext()) {
+            is Token.ModifierToken -> {
+                val tk = tokens.expect<Token.ModifierToken>()
+                setModifier(tk.modifier)
+            }
+            else -> break
+        }
+    }
+}
+
+
+
 fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
+    val modifiers = parseModifiers(tokens)
     return when(val token = tokens.next()) {
         Token.Func -> {
+            if (!modifiers.isSubsetOf(Modifiers.FunctionModifiers)) {
+                error("Invalid Modifiers cannot apply $modifiers to a function")
+            }
             val name = tokens.expect<Token.Identifier>().name
             val args = if (tokens.visitNext() == Token.OpenBracket) {
                 tokens.expect<Token.OpenBracket>()
                 parseFunctionArgs(tokens)
             } else mutableListOf()
             val body = parseExpression(tokens, Variables.withEntries(args.toSet()))
-            name to Function(args, body)
+            name to Function(args, body, modifiers)
         }
         Token.Struct -> {
+            if (!modifiers.isSubsetOf(Modifiers.StructModifiers)) {
+                error("Invalid Modifiers cannot apply $modifiers to a struct")
+            }
             val name = tokens.expect<Token.Identifier>().name
             val generics = parseGenericDefinition(tokens)
             val args = when(tokens.visitNext()) {
@@ -54,9 +77,12 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
                 }
                 else -> emptyMap()
             }
-            name to Struct(args, generics)
+            name to Struct(args, generics, modifiers)
         }
         Token.Impl -> {
+            if (!modifiers.isSubsetOf(Modifiers.ImplBlockModifiers)) {
+                error("Invalid Modifiers cannot apply $modifiers to an impl block")
+            }
             val generics = parseGenericDefinition(tokens)
             val type = parseType(tokens, generics)
             tokens.expect<Token.OpenCurly>()
@@ -74,7 +100,7 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             }
             val (methods, associatedFunctions) = functions.toList().partition { (_, function ) -> function.args.firstOrNull() == "self" }
 
-            UUID.randomUUID().toString() to Impl(type, methods.toMap(), associatedFunctions.toMap())
+            UUID.randomUUID().toString() to Impl(type, methods.toMap(), associatedFunctions.toMap(), modifiers)
         }
         Token.Use -> UUID.randomUUID().toString() to UseStatement(parseImport(tokens))
         else -> error("Invalid token $token")
@@ -284,6 +310,10 @@ fun parseExpressionCall(tokens: Tokens, variables: Variables): Expression {
 
 fun parseExpressionCallBase(first: Expression, tokens: Tokens, variables: Variables): Expression {
     return when(tokens.visitNext()) {
+        is Token.QuestionMark -> {
+            tokens.next()
+            parseExpressionCallBase(Expression.Try(first), tokens, variables)
+        }
         is Token.OpenBracket -> {
             tokens.next()
             val args = parseCallingArgs(tokens, variables, Token.ClosingBracket)

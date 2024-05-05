@@ -82,7 +82,7 @@ suspend fun compileModule(module: IRModule): CompiledModuleOutput = coroutineSco
 
     module.functions.flatMap { (name, function) ->
         function.checkedVariantsUniqueJvm().map { (argTypes, body) ->
-            compileCheckedFunction(cw, name, body.first,body.second, argTypes)
+            compileCheckedFunction(cw, name, body.first, body.second, argTypes)
         }
     }
 

@@ -544,6 +544,18 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitInsn(Opcodes.POP)
             stackMap.pop()
         }
+        is TypedInstruction.Try -> {
+            compileInstruction(mv, instruction.parent, stackMap)
+            for (signature in instruction.errorTypes) {
+                mv.visitInsn(Opcodes.DUP)
+                mv.visitTypeInsn(Opcodes.INSTANCEOF, signature.toJvmNotation())
+                val skip = Label()
+                mv.visitJumpInsn(Opcodes.IFEQ, skip)
+                mv.visitInsn(Opcodes.ARETURN)
+                mv.visitLabel(skip)
+                stackMap.generateFrame(mv)
+            }
+        }
     }
 }
 
@@ -569,6 +581,9 @@ fun compileMatch(
         //mv.visitInsn(Opcodes.POP)
         //stackMap.pop()
         compileInstruction(mv, body, stackMap)
+        if (instruction.type != body.type) {
+            boxOrIgnore(mv, body.type)
+        }
         if (idx != instruction.patterns.lastIndex) {
             if (body.type != Type.Nothing) {
                 mv.visitInsn(Opcodes.SWAP)
@@ -652,8 +667,11 @@ fun compilePattern(
                 stackMap.dup()
                 compilePattern(mv, it, stackMap, patternFail)
             }
-            mv.visitInsn(Opcodes.POP)
-            stackMap.pop()
+            if (pattern.patterns.isNotEmpty()) {
+                mv.visitInsn(Opcodes.POP)
+                stackMap.pop()
+            }
+
         }
     }
 }
@@ -827,7 +845,7 @@ fun compileComparison(
                     boxOrIgnore(mv, firstType)
                     compileInstruction(mv, instruction.second, stackMap)
                     //boxes the element if unboxed, and if it's a boxed-type or a complex type it does nothing
-                    boxOrIgnore(mv, secondType)
+                    boxOrIgnore(mv, instruction.second.type)
                     mv.visitMethodInsn(
                         Opcodes.INVOKEVIRTUAL,
                         firstType.asBoxed().toJVMDescriptor().removePrefix("L").removeSuffix(";"),

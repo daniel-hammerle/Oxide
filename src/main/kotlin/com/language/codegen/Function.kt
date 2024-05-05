@@ -1,6 +1,7 @@
 package com.language.codegen
 
 import com.language.compilation.*
+import com.language.compilation.metadata.MetaDataHandle
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
@@ -8,17 +9,17 @@ suspend fun compileCheckedFunction(
     cw: ClassWriter,
     name: String,
     body: TypedInstruction,
-    varCount: Int,
+    metaData: FunctionMetaData,
     argTypes: List<Type>,
 ) {
     val mv = cw.visitMethod(
         Opcodes.ACC_PUBLIC + Opcodes.ACC_FINAL + Opcodes.ACC_STATIC,
         jvmName(name, argTypes),
-        generateJVMFunctionSignature(argTypes, body.type),
+        generateJVMFunctionSignature(argTypes, metaData.returnType),
         null,
         arrayOf()
     )
-    mv.visitMaxs(20, varCount + 1) // 1 for the instance
+    mv.visitMaxs(20, metaData.varCount + 1) // 1 for the instance
     val stackMap = StackMap.fromMax(20)
     stackMap.pushVarFrame(VarFrameImpl(argTypes), true)
     //compile body

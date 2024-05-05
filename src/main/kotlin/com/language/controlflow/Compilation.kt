@@ -13,7 +13,12 @@ import kotlin.concurrent.timerTask
 @OptIn(DelicateCoroutinesApi::class)
 fun compileProject(fileName: String) {
     val (extensionClassLoader, compilationTime) = measureTime {
-        val tokens = lexCode(File(fileName).readText())
+        val (tokens, lexingTime) = measureTime {
+            lexCode(File(fileName).readText())
+
+        }
+
+        println("> Lexing took ${lexingTime}ms")
 
         val (module, parsingTime) = measureTime {
             parse(tokens)
@@ -33,7 +38,7 @@ fun compileProject(fileName: String) {
         val (type, typeCheckingTime) = measureTime {
             runBlocking {
                 scope.async {
-                    result.functions["main"]!!.inferTypes(listOf(), irLookup).type
+                    result.functions["main"]!!.inferTypes(listOf(), irLookup)
                 }.await()
             }
         }
@@ -49,14 +54,17 @@ fun compileProject(fileName: String) {
 
         println("> Compilation took ${compilationTime}ms")
 
-        for ((name, bytes) in project.entries) {
-            File("out/${name.toJvmNotation()}.class").apply {
-                parentFile.mkdirs()
-                createNewFile()
-            }.writeBytes(bytes)
+        val (_, writingTime) = measureTime {
+            for ((name, bytes) in project.entries) {
+                File("out/${name.toJvmNotation()}.class").apply {
+                    parentFile.mkdirs()
+                    createNewFile()
+                }.writeBytes(bytes)
+            }
+            createZipFile(project.mapKeys { it.key.value }, "out.jar")
         }
-        createZipFile(project.mapKeys { it.key.value }, "out.jar")
 
+        println("> Writing took ${writingTime}ms")
         println("Finished Writing to File✅")
         extensionClassLoader
     }

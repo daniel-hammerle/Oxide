@@ -76,26 +76,6 @@ fun Type.toJVMDescriptor(): String = when(this) {
 }
 
 
-suspend fun Type.Union.checkCommonInterfacesForFunction(name: String, argTypes: List<Type>, lookup: IRModuleLookup): Pair<Type.JvmType, FunctionCandidate>? {
-    if (entries.any{ it !is Type.JvmType }) return null
-
-    val candidate = entries
-        .map { lookup.lookUpCandidate(it, name, argTypes) }
-        //if we have more than 1 single return type return null since it won't work
-        .reduce { acc, type -> if (acc != type) return null else type }
-
-    val classes = entries.map { lookup.classOf(it as Type.JvmType) }
-    val commonInterfaces = classes.map { it.interfaces.toSet() }.reduce { acc, interfaces -> acc.intersect(interfaces) }
-    val commonInterface = commonInterfaces.firstOrNull { i ->
-        i.methods.any { method ->
-            method.parameterCount == argTypes.size &&
-                    method.returnType.canBe(candidate.oxideReturnType) &&
-                    method.parameterTypes.toList().enumerate().all { (i ,it) -> it.canBe(argTypes[i]) }
-
-        }
-    }
-    return (commonInterface?.toType() as? Type.JvmType)?.let { it to candidate }
-}
 
 fun<T> Iterable<T>.enumerate(): Iterable<Pair<Int, T>> {
     return object : Iterable<Pair<Int, T>> {

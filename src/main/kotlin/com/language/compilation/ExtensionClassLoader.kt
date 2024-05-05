@@ -4,6 +4,8 @@ import com.language.Expression
 import com.language.Function
 import com.language.Module
 import com.language.ModuleChild
+import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.modifiers.modifiers
 import java.io.IOException
 import java.lang.reflect.Modifier
 import java.util.jar.JarEntry
@@ -59,7 +61,7 @@ private fun Class<*>.toModule(): Module {
     declaredMethods
         .filter { Modifier.isStatic(it.modifiers) }
         .forEach { method ->
-            val function = Function(method.parameters.map { it.name }, Expression.UnknownSymbol("external"))
+            val function = Function(method.parameters.map { it.name }, Expression.UnknownSymbol("external"), modifiers { setPublic() })
             children[method.name] = function
         }
 

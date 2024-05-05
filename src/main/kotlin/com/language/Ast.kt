@@ -2,6 +2,7 @@ package com.language
 
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
+import com.language.compilation.modifiers.Modifiers
 
 sealed interface Expression {
     sealed interface Const : Expression
@@ -25,6 +26,7 @@ sealed interface Expression {
 
     data class VariableSymbol(override val name: String): Invokable
 
+    data class Try(val expression: Expression): Expression
 
     data class Math(val first: Expression, val second: Expression, val op: MathOp) : Expression
     data class Comparing(val first: Expression, val second: Expression, val op: CompareOp) : Expression
@@ -69,7 +71,7 @@ sealed interface Pattern {
         override val bindingNames: Set<String> = setOf(name)
     }
     data class Destructuring(val type: TemplatedType, val patterns: List<Pattern>) : Pattern {
-        override val bindingNames: Set<String> = patterns.flatMap { it.bindingNames }.toSet()
+        override val bindingNames: Set<String> = patterns.flatMap { it.bindingNames }.toSet() + if (type is TemplatedType.Complex && !type.signatureString.oxideNotation.contains("::")) setOf(type.signatureString.oxideNotation) else emptySet()
     }
     data class Conditional(val condition: Expression, val parent: Pattern) : Pattern {
         override val bindingNames: Set<String> = parent.bindingNames
@@ -86,17 +88,26 @@ sealed interface Statement {
 
 data class Module(val children: Map<String, ModuleChild>, val implBlocks: Map<TemplatedType, Impl>, val imports: Map<String, SignatureString>)
 
-sealed interface ModuleChild
+sealed interface ModuleChild {
+    val modifiers: Modifiers
+}
 
-data class Function(val args: List<String>, val body: Expression) : ModuleChild
+data class Function(val args: List<String>, val body: Expression, override val modifiers: Modifiers) : ModuleChild
 
-data class Struct(val args: Map<String, TemplatedType>, val generics: List<String>) : ModuleChild
+data class Struct(val args: Map<String, TemplatedType>, val generics: List<String>, override val modifiers: Modifiers) : ModuleChild
 
-data class Impl(val type: TemplatedType, val methods: Map<String, Function>, val associatedFunctions: Map<String, Function>) : ModuleChild
+data class Impl(
+    val type: TemplatedType,
+    val methods: Map<String, Function>,
+    val associatedFunctions: Map<String, Function>,
+    override val modifiers: Modifiers
+) : ModuleChild
 
-data class UseStatement(val signatureStrings: Set<SignatureString>) : ModuleChild
+data class UseStatement(val signatureStrings: Set<SignatureString>) : ModuleChild {
+    override val modifiers: Modifiers = Modifiers.Empty
+}
 
-data class Variable(val initialValue: Expression) : ModuleChild
+data class Variable(val initialValue: Expression, override val modifiers: Modifiers) : ModuleChild
 
 
 enum class MathOp {

@@ -1,7 +1,6 @@
 package com.language.compilation
 
 import com.language.TemplatedType
-import com.language.codegen.generateJVMFunctionSignature
 import com.language.codegen.toJVMDescriptor
 import org.objectweb.asm.Opcodes
 import java.lang.reflect.Constructor
@@ -62,6 +61,15 @@ class BasicIRModuleLookup(
         return null
     }
 
+    override fun hasModifier(instance: Type, modifier: com.language.compilation.modifiers.Modifier): Boolean {
+        return when(instance) {
+            is Type.JvmType -> {
+                val struct = getStruct(instance.signature)
+                struct?.modifiers?.isModifier(modifier) ?: false
+            }
+            else -> false
+        }
+    }
 
     override fun newModFrame(modNames: Set<SignatureString>): IRModuleLookup {
         val newImplBlocks: MutableMap<TemplatedType, MutableSet<IRImpl>> = mutableMapOf()
@@ -81,8 +89,8 @@ class BasicIRModuleLookup(
                     FunctionCandidate(
                     argTypes,
                     argTypes,
-                    it.type,
-                    it.type,
+                    it,
+                    it,
                     invocationType = Opcodes.INVOKESTATIC,
                     jvmOwner = modName,
                     name = funcName,
@@ -97,8 +105,8 @@ class BasicIRModuleLookup(
                     FunctionCandidate(
                         argTypes,
                         argTypes.map { t -> t.toActualJvmType() },
-                        it.type.toActualJvmType(),
-                        it.type,
+                        it.toActualJvmType(),
+                        it,
                         invocationType = Opcodes.INVOKESTATIC,
                         jvmOwner = implBlock.fullSignature,
                         name = funcName,
@@ -134,7 +142,7 @@ class BasicIRModuleLookup(
         )
     }
 
-    override fun typeIsInterface(type: Type, interfaceType: SignatureString): Boolean {
+    override fun typeHasInterface(type: Type, interfaceType: SignatureString): Boolean {
         return when(type) {
             is Type.JvmType -> {
                 if (getStruct(type.signature) != null) {
@@ -143,7 +151,7 @@ class BasicIRModuleLookup(
                     return false
                 }
                 val clazz = externalJars.loadClass(type.signature.toDotNotation())
-                clazz.interfaces.any { it.name == interfaceType.toDotNotation() || typeIsInterface(Type.BasicJvmType(SignatureString.fromDotNotation(it.name), linkedMapOf()), interfaceType) }
+                clazz.interfaces.any { it.name == interfaceType.toDotNotation() || typeHasInterface(Type.BasicJvmType(SignatureString.fromDotNotation(it.name), linkedMapOf()), interfaceType) }
             }
             else -> false
         }
@@ -174,23 +182,6 @@ class BasicIRModuleLookup(
         }
     }
 
-    override fun generateCallSignature(instance: Type, funcName: String, argTypes: List<Type>): String {
-        return when (instance) {
-            is Type.JvmType -> {
-                //if the class doesn't exist, we simply throw
-                val method = loadMethod(instance.signature, funcName, argTypes)
-
-                generateJVMFunctionSignature(method.parameterTypes.map { it.toType() }, returnType = method.returnType.toType())
-            }
-            Type.BoolT -> generateCallSignature(Type.Bool, funcName, argTypes)
-            Type.DoubleT -> generateCallSignature(Type.Double, funcName, argTypes)
-            Type.IntT -> generateCallSignature(Type.Int, funcName, argTypes)
-            Type.Nothing -> error("Nothing does not have function $funcName")
-            Type.Null -> error("Null does not have function $funcName")
-            is Type.Union -> error("Can not return a single call signature for a UnionType")
-            is Type.Array -> error("Cannot call methods on array types for now")
-        }
-    }
 
     private fun loadMethod(signatureString: SignatureString, funcName: String, argTypes: List<Type>): Method {
         val clazz = externalJars.loadClass(signatureString.toDotNotation())
@@ -233,8 +224,8 @@ class BasicIRModuleLookup(
                     FunctionCandidate(
                         listOf(instance) + argTypes,
                         listOf(instance) + argTypes,
-                        it.type.toActualJvmType(),
-                        it.type,
+                        it.toActualJvmType(),
+                        it,
                         invocationType = Opcodes.INVOKESTATIC,
                         jvmOwner = implBlock.fullSignature,
                         name = funcName,
@@ -400,11 +391,11 @@ class BasicIRModuleLookup(
         return field.type.toType()
     }
 
-    override fun classOf(type: Type.JvmType): Class<*> {
+    fun classOf(type: Type.JvmType): Class<*> {
         return externalJars.loadClass(type.signature.toDotNotation())
     }
 
-    fun TemplatedType.populate(generics: LinkedHashMap<String, Type>): Type = when(this) {
+    override fun TemplatedType.populate(generics: LinkedHashMap<String, Type>): Type = when(this) {
         is TemplatedType.Array -> Type.Array(itemType.populate(generics))
         is TemplatedType.Complex -> {
             val availableGenerics = signatureGetGenerics(signatureString)

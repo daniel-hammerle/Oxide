@@ -5,7 +5,20 @@ func main {
     for i in range(0, 10) {
         print(i)
     }
-    print("true".to_bool() == false)
+    match testErrorHandling("truf") {
+        ConversionError(reason) -> print("An error occurred: "+ reason)
+        _ -> {}
+    }
+}
+
+func testErrorHandling(value) {
+    print(value.try_bool()?)
+}
+
+
+func panic(reason) {
+    print(reason)
+    System.exit(1)
 }
 
 func f {
@@ -31,11 +44,6 @@ func foo {
     print(["Hello", "World", "lol"].size())
 }
 
-error struct ConversionError {
-    reason str,
-    from str,
-    to str
-}
 
 struct Person {
     name str,
@@ -79,6 +87,18 @@ impl int {
     }
 }
 
+error struct ConversionError {
+    reason str,
+    from str,
+    to str
+}
+
+impl ConversionError {
+    func new(message, from, to) {
+        ConversionError(message, from, to)
+    }
+}
+
 use java::lang::{Integer, Double}
 
 impl str {
@@ -90,11 +110,11 @@ impl str {
         Double.parseDouble(self)
     }
 
-    func to_bool(self) {
+    func try_bool(self) {
         match self {
             "true" -> true
             "false" -> false
-            _ -> false
+            _ -> ConversionError.new("Invalid input `"+self+"`", "str", "bool")
         }
     }
 }

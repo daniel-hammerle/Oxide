@@ -20,6 +20,10 @@ sealed interface TypedInstruction {
         override val type: Type = Type.BoolT
     }
 
+    data class Try(val parent: TypedInstruction, val errorTypes: List<SignatureString>): TypedInstruction {
+        override val type = parent.type
+    }
+
     data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type) : TypedInstruction {
         val isConstList = items.all { it is TypedConstructingArgument.Normal }
         override val type: Type = Type.BasicJvmType(

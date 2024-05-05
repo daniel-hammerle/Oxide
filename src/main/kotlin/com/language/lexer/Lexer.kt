@@ -1,7 +1,7 @@
 package com.language.lexer
 
 import com.language.CompareOp
-import java.security.Key
+import com.language.compilation.modifiers.Modifier
 
 sealed interface Token {
     sealed interface KeyWord : Token
@@ -15,11 +15,20 @@ sealed interface Token {
     data object Match : KeyWord
     data object Impl : KeyWord
     data object For : KeyWord
-    data object Error : KeyWord, Identifier {
+    data object Error : KeyWord, Identifier, ModifierToken {
         override val name: String = "error"
+        override val modifier: Modifier = Modifier.Error
+    }
+    data object Public : KeyWord, Identifier, ModifierToken {
+        override val name: String = "pub"
+        override val modifier: Modifier = Modifier.Public
     }
     data object Self : KeyWord, Identifier {
         override val name: String = "self"
+    }
+
+    sealed interface ModifierToken : Token {
+        val modifier: Modifier
     }
 
     data object Colon : Token
@@ -50,6 +59,7 @@ sealed interface Token {
     data object Minus : Token
     data object Star : Token
     data object Slash : Token
+    data object QuestionMark : Token
     data object EqualSign : Token
     data object ExclamationMark : Token
 
@@ -97,6 +107,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "impl" -> Token.Impl
         "for" -> Token.For
         "in" -> Token.In
+        "pub" -> Token.Public
         else -> null
     }
 }
@@ -145,6 +156,10 @@ fun lexCode(code: String) = mutableListOf<Token>().apply {
             '+' -> {
                 flush()
                 Token.Plus
+            }
+            '?' -> {
+                flush()
+                Token.QuestionMark
             }
             '/' -> {
                 flush()

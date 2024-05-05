@@ -42,7 +42,7 @@ fun TemplatedType.populate(module: ModuleLookup): TemplatedType = when(this) {
 
 fun compileStruct(struct: Struct, module: ModuleLookup): IRStruct {
     val fields = struct.args.mapValues { it.value.populate(module) }
-    return IRStruct(fields, struct.generics)
+    return IRStruct(fields, struct.generics, struct.modifiers)
 }
 
 fun compileImplBlock(implBlock: Impl, module: ModuleLookup): IRImpl {
@@ -190,6 +190,8 @@ fun compileExpression(expression: Expression, module: ModuleLookup): Instruction
             second = compileExpression(expression.second, module),
             op = expression.op
         )
+
+        is Expression.Try -> Instruction.Try(compileExpression(expression.expression, module))
     }
 }
 
@@ -206,21 +208,18 @@ fun compilePattern(pattern: Pattern, module: ModuleLookup): IRPattern {
             condition = Instruction.Comparing(Instruction.LoadVar("_"), compileExpression(pattern.value, module), CompareOp.Eq)
         )
         is Pattern.Destructuring -> {
-
-
             when {
-                pattern.type is Type.JvmType && !module.hasStruct(pattern.type.signature) ->
-                    error("Invalid type ${pattern.type} for destructuring (either JVM Type or non existent)")
-
-                module.hasLocalStruct((pattern.type as Type.BasicJvmType).signature) -> {
+                pattern.type is TemplatedType.Complex && !module.hasStruct(pattern.type.signatureString) -> IRPattern.Binding(pattern.type.signatureString.oxideNotation)
+                module.hasLocalStruct((pattern.type as TemplatedType.Complex).signatureString) -> {
                     IRPattern.Destructuring(
-                        type = pattern.type.copy(signature = module.localName + pattern.type.signature),
+                        type = pattern.type.copy(signatureString = module.localName + pattern.type.signatureString),
                         patterns = pattern.patterns.map { compilePattern(it, module) }
                     )
                 }
+
                 else -> {
                     IRPattern.Destructuring(
-                        type = pattern.type,
+                        type = pattern.type.populate(module),
                         patterns = pattern.patterns.map { compilePattern(it, module) }
                     )
                 }
