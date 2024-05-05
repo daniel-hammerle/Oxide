@@ -14,6 +14,7 @@ data class FunctionCandidate(
     val jvmOwner: SignatureString,
     val name: String,
     val obfuscateName: Boolean,
+    val requireDispatch: Boolean
 )
 
 fun FunctionCandidate.generateCall(mv: MethodVisitor) {

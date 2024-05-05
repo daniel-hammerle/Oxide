@@ -45,6 +45,7 @@ sealed interface Token {
     data class ConstNum(val value: Int) : Literal
     data object True : Literal, KeyWord
     data object False : Literal, KeyWord
+    data object Null : Literal, KeyWord
 
     data object OpenSquare : Token
     data object ClosingSquare : Token
@@ -59,6 +60,7 @@ sealed interface Token {
     data object Minus : Token
     data object Star : Token
     data object Slash : Token
+    data object Pipe : Token
     data object QuestionMark : Token
     data object EqualSign : Token
     data object ExclamationMark : Token
@@ -108,6 +110,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "for" -> Token.For
         "in" -> Token.In
         "pub" -> Token.Public
+        "null" -> Token.Null
         else -> null
     }
 }
@@ -160,6 +163,10 @@ fun lexCode(code: String) = mutableListOf<Token>().apply {
             '?' -> {
                 flush()
                 Token.QuestionMark
+            }
+            '|' -> {
+                flush()
+                Token.Pipe
             }
             '/' -> {
                 flush()

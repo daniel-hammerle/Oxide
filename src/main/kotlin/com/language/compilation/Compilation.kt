@@ -69,6 +69,8 @@ fun TemplatedType.exists(module: ModuleLookup): Boolean = when(this) {
     is TemplatedType.Complex -> module.hasStruct(populateSignature(signatureString, module)) || module.hasModule(populateSignature(signatureString, module))
     TemplatedType.IntT, TemplatedType.DoubleT, TemplatedType.BoolT -> true
     is TemplatedType.Generic -> true
+    is TemplatedType.Union -> types.all { it.exists(module) }
+    TemplatedType.Null -> true
     is TemplatedType.Array -> itemType.exists(module)
 }
 
@@ -140,6 +142,7 @@ fun compileExpression(expression: Expression, module: ModuleLookup): Instruction
             body = compileExpression(expression.body, module),
             elseBody = expression.elseBody?.let { compileExpression(it, module) }
         )
+        is Expression.ConstNull -> Instruction.Null
         is Expression.ConstArray -> {
             val items = expression.items.map { compileConstructingArg(it, module) }
             when(expression.arrayType) {

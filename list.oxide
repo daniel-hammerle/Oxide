@@ -2,6 +2,10 @@ use java::util::{ArrayList, HashMap}
 use java::lang::System
 
 func main {
+    print(maybeNull().orDefault(false))
+}
+
+func t {
     for i in range(0, 10) {
         print(i)
     }
@@ -11,8 +15,25 @@ func main {
     }
 }
 
+func maybeNull {
+    if 1 == 1 {
+        null
+    } else {
+        "Hello World"
+    }
+}
+
 func testErrorHandling(value) {
     print(value.try_bool()?)
+}
+
+impl<T> null | T {
+    func orDefault(self, value) {
+        match self {
+            null -> value
+            _ -> self
+        }
+    }
 }
 
 

@@ -30,10 +30,14 @@ class BasicIRModuleLookup(
                     }
                 }
             }
+            //check if the union includes
+            is TemplatedType.Union -> type is Type.Union && types.all { type.entries.any { tp -> it.accepts(tp) } }
+
             is TemplatedType.Generic -> !type.isUnboxedPrimitive()
             TemplatedType.IntT -> type == Type.IntT
             TemplatedType.DoubleT -> type == Type.DoubleT
             TemplatedType.BoolT -> type == Type.BoolT
+            TemplatedType.Null -> type == Type.Null
         }
     }
 
@@ -94,7 +98,8 @@ class BasicIRModuleLookup(
                     invocationType = Opcodes.INVOKESTATIC,
                     jvmOwner = modName,
                     name = funcName,
-                    true
+                    true,
+                        requireDispatch = false
                 )
             } ?: error("Function $funcName in $modName with variants $argTypes not found")
         }
@@ -110,7 +115,8 @@ class BasicIRModuleLookup(
                         invocationType = Opcodes.INVOKESTATIC,
                         jvmOwner = implBlock.fullSignature,
                         name = funcName,
-                        obfuscateName = true
+                        obfuscateName = true,
+                        requireDispatch = false
                     )
                 }
             }
@@ -138,7 +144,8 @@ class BasicIRModuleLookup(
             invocationType = Opcodes.INVOKESTATIC,
             jvmOwner = modName,
             name = funcName,
-            obfuscateName = false
+            obfuscateName = false,
+            requireDispatch = false
         )
     }
 
@@ -229,7 +236,8 @@ class BasicIRModuleLookup(
                         invocationType = Opcodes.INVOKESTATIC,
                         jvmOwner = implBlock.fullSignature,
                         name = funcName,
-                        obfuscateName = true
+                        obfuscateName = true,
+                        requireDispatch = false
                     )
                 }
             }
@@ -261,6 +269,7 @@ class BasicIRModuleLookup(
                     jvmOwner = instance.signature,
                     name = funcName,
                     obfuscateName = false,
+                    requireDispatch = false
                 )
             }
             Type.BoolT -> lookUpCandidate(Type.Bool, funcName, argTypes)
@@ -270,7 +279,7 @@ class BasicIRModuleLookup(
             Type.Null -> error("Null does not have function $funcName")
             is Type.Union -> {
                 val types = instance.entries.map { lookUpCandidate(it, funcName, argTypes) }
-                types[0]
+                types[0].copy(requireDispatch = true)
             }
 
             is Type.Array -> TODO()
@@ -305,7 +314,8 @@ class BasicIRModuleLookup(
                     invocationType = Opcodes.INVOKESPECIAL,
                     jvmOwner = className,
                     name = "<init>",
-                    obfuscateName = false
+                    obfuscateName = false,
+                    requireDispatch = false
                 )
             }
         }
@@ -326,7 +336,8 @@ class BasicIRModuleLookup(
                 invocationType = Opcodes.INVOKESPECIAL,
                 jvmOwner = className,
                 name = "<init>",
-                obfuscateName = false
+                obfuscateName = false,
+                requireDispatch = false
             )
             else -> error("No constructor $className($argTypes)")
         }
@@ -408,6 +419,8 @@ class BasicIRModuleLookup(
         TemplatedType.IntT -> Type.IntT
         TemplatedType.DoubleT -> Type.DoubleT
         TemplatedType.BoolT -> Type.BoolT
+        TemplatedType.Null -> Type.Null
+        is TemplatedType.Union -> Type.Union(types.map { it.populate(generics) }.toSet())
     }
 
 }

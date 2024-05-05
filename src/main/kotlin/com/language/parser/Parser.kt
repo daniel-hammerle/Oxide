@@ -457,6 +457,7 @@ fun parseConst(tokens: Tokens): Expression.Const {
         is Token.ConstNum -> parseNumber(tokens, token.value)
         is Token.True -> Expression.ConstBool(true)
         is Token.False -> Expression.ConstBool(false)
+        is Token.Null -> Expression.ConstNull
         else -> error("Cannot")
     }
 }
@@ -588,7 +589,30 @@ private fun parseGenericArgs(tokens: Tokens, generics: List<String>): List<Templ
 }
 
 
-private fun parseType(tokens: Tokens, generics: List<String> = emptyList(), allowGenerics: Boolean = true): TemplatedType = when(val tk = tokens.visitNext()) {
+private fun parseType(tokens: Tokens, generics: List<String> = emptyList(), allowGenerics: Boolean = true): TemplatedType {
+    val types = mutableSetOf<TemplatedType>()
+    while(true) {
+        val type = parseTypeBase(tokens, generics, allowGenerics)
+        types.add(type)
+        when(tokens.visitNext()) {
+            is Token.Pipe -> {
+                tokens.expect<Token.Pipe>()
+            }
+            else -> break
+        }
+    }
+    return if (types.size == 1) {
+        types.first()
+    } else {
+        TemplatedType.Union(types)
+    }
+}
+
+private fun parseTypeBase(tokens: Tokens, generics: List<String> = emptyList(), allowGenerics: Boolean = true): TemplatedType = when(val tk = tokens.visitNext()) {
+    is Token.Null -> {
+        tokens.expect<Token.Null>()
+        TemplatedType.Null
+    }
     is Token.Identifier -> {
         when(tk.name) {
             in generics -> TemplatedType.Generic(tk.name).also { tokens.next() }

@@ -1,11 +1,12 @@
 package com.language
 
 import com.language.compilation.SignatureString
-import com.language.compilation.Type
 import com.language.compilation.modifiers.Modifiers
 
 sealed interface Expression {
+
     sealed interface Const : Expression
+    data object ConstNull : Const
 
     data class ConstNum(val num: Double) : Const
     data class ConstStr(val str: String) : Const
@@ -44,12 +45,14 @@ sealed interface TemplatedType {
     data object IntT: TemplatedType
     data object DoubleT : TemplatedType
     data object BoolT: TemplatedType
+    data object Null : TemplatedType
     companion object {
         val String = Complex(SignatureString("java::lang::String"), emptyList())
     }
     data class Generic(val name: String) : TemplatedType
     data class Array(val itemType: TemplatedType) : TemplatedType
     data class Complex(val signatureString: SignatureString, val generics: List<TemplatedType>) : TemplatedType
+    data class Union(val types: Set<TemplatedType>) : TemplatedType
 }
 
 enum class ArrayType {

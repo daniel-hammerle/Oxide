@@ -691,13 +691,7 @@ fun compileDynamicCall(
             when (val commonType = instruction.commonInterface) {
                 is Type.JvmType -> {
                     mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
-                    mv.visitMethodInsn(
-                        Opcodes.INVOKEVIRTUAL,
-                        commonType.toJVMDescriptor().removeSuffix(";").removePrefix("L"),
-                        instruction.name,
-                        instruction.candidate.toJvmDescriptor(),
-                        true
-                    )
+                    instruction.candidate.generateCall(mv)
 
                     if (instruction.candidate.hasGenericReturnType) {
                         mv.visitTypeInsn(Opcodes.CHECKCAST, instruction.candidate.oxideReturnType.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
@@ -705,20 +699,23 @@ fun compileDynamicCall(
                 }
 
                 else -> {
-                    mv.dynamicDispatch(parentType.entries, elseType = instruction.type, stackMap) { type ->
-                        mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
+                    if (instruction.candidate.requireDispatch) {
+                        mv.dynamicDispatch(parentType.entries, elseType = instruction.type, stackMap) { type ->
+                            mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
 
-                        mv.visitMethodInsn(
-                            Opcodes.INVOKEVIRTUAL,
-                            type.toJVMDescriptor().removeSuffix(";").removePrefix("L"),
-                            instruction.name,
-                            instruction.candidate.toJvmDescriptor(),
-                            false
-                        )
+                            instruction.candidate.generateCall(mv)
+                            if (instruction.candidate.hasGenericReturnType) {
+                                mv.visitTypeInsn(Opcodes.CHECKCAST, instruction.candidate.oxideReturnType.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+                            }
+                        }
+                    } else {
+                        mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
+                        instruction.candidate.generateCall(mv)
                         if (instruction.candidate.hasGenericReturnType) {
                             mv.visitTypeInsn(Opcodes.CHECKCAST, instruction.candidate.oxideReturnType.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
                         }
                     }
+
                 }
             }
         }
