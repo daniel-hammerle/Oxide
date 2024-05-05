@@ -126,7 +126,7 @@ sealed interface TypedInstruction {
         val patterns: List<Triple<TypedIRPattern, TypedInstruction, VarFrame>>
     ) : TypedInstruction {
         override val type: Type
-            get() = patterns.map { it.second.type }.reduce { acc, type -> acc.asBoxed().join(type.asBoxed())  }
+            get() = patterns.map { it.second.type }.reduce { acc, type -> acc.join(type)  }.let { if (it is Type.Union) it.asBoxed() else it }
     }
 
     data class While(
@@ -143,6 +143,11 @@ sealed interface TypedInstruction {
     data class LoadVar(val id: Int, override val type: Type) : TypedInstruction
 
     data class DynamicPropertyAccess(val parent: TypedInstruction, val name: String, override val type: Type) : TypedInstruction
+
+    data class DynamicPropertyAssignment(val parent: TypedInstruction, val name: String, val value: TypedInstruction,) : TypedInstruction {
+        override val type: Type = Type.Nothing
+    }
+
 
     data class StaticPropertyAccess(val parentName: SignatureString, val name: String, override val type: Type): TypedInstruction
 

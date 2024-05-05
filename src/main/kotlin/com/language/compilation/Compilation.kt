@@ -13,7 +13,7 @@ import java.util.*
 fun compile(module: ModuleLookup): IRModule {
     val functions: MutableMap<String, IRFunction> = mutableMapOf()
     val structs: MutableMap<String, IRStruct> = mutableMapOf()
-    val implBlocks: MutableMap<TemplatedType, IRImpl> = mutableMapOf()
+    val implBlocks: MutableMap<TemplatedType, MutableSet<IRImpl>> = mutableMapOf()
     module.localSymbols.forEach { (name, entry) ->
         when(entry) {
             is Function -> functions[name] = compileFunction(function = entry, module)
@@ -24,7 +24,8 @@ fun compile(module: ModuleLookup): IRModule {
                 } else {
                     entry.type.populate(module)
                 }
-                implBlocks[type] = compileImplBlock(entry, module)
+                val block = compileImplBlock(entry, module)
+                implBlocks[type]?.add(block) ?: run { implBlocks[type] = mutableSetOf(block) }
             }
             is UseStatement -> {}
             else -> error("Invalid construct")
@@ -108,6 +109,14 @@ fun compileStatement(statement: Statement, module: ModuleLookup): Instruction {
             cond = compileExpression(statement.condition, module),
             body = compileExpression(statement.body, module)
         )
+
+        is Statement.AssignProperty -> {
+            Instruction.DynamicPropertyAssignment(
+                parent = compileExpression(statement.parent, module),
+                name = statement.name,
+                value = compileExpression(statement.value, module)
+            )
+        }
     }
 }
 

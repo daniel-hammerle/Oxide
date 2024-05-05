@@ -63,7 +63,11 @@ suspend fun compileModule(module: IRModule): CompiledModuleOutput = coroutineSco
         }
     }
 
-    val impls = module.implBlocks.entries.map { (_, impl) -> impl.fullSignature to async { compileImpl(impl) }  }
+    val impls = module.implBlocks.entries.flatMap { (_, impls) ->
+        impls.map { impl ->
+            impl.fullSignature to async { compileImpl(impl) }
+        }
+    }
 
     val cw = ClassWriter(0)
 

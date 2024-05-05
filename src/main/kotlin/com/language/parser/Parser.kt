@@ -185,6 +185,11 @@ fun parseStatement(tokens: Tokens, variables: Variables): Statement {
             tokens.previous()
             val expr = parseExpression(tokens, variables)
             when {
+                expr is Expression.AccessProperty && tokens.visitNext() == Token.EqualSign ->  {
+                    tokens.expect<Token.EqualSign>()
+                    val value = parseExpression(tokens, variables)
+                    Statement.AssignProperty(expr.parent, expr.name, value)
+                }
                 (expr is Expression.Invokable) && tokens.visitNext() == Token.EqualSign -> {
                     tokens.next()
                     Statement.Assign(expr.name, parseExpression(tokens, variables)).also {

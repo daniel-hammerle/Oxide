@@ -2,6 +2,13 @@ use java::util::{ArrayList, HashMap}
 use java::lang::System
 
 func main {
+    for i in range(0, 10) {
+        print(i)
+    }
+    print("true".to_bool() == false)
+}
+
+func f {
     some_array = ["Hello", "World", true, 12]
     some_other_array = [...some_array, true, ...some_array]
     do_sth(some_other_array)
@@ -18,14 +25,58 @@ func foo {
     some_array = list["Hello", "World", true, 12]
     some_other_array = list[...some_array, true, ...some_array]
     do_sth(some_other_array)
-    p = Person.new("Tom")
+    p = Person.new("Tom", 18)
     p.say_name()
     print("1".to_int() + 2)
     print(["Hello", "World", "lol"].size())
 }
 
+error struct ConversionError {
+    reason str,
+    from str,
+    to str
+}
+
 struct Person {
-    name str
+    name str,
+    age int
+}
+
+func range(start, end) {
+    RangeIter.new(start, end)
+}
+
+impl int {
+    func range(self, other) {
+        range(self, other)
+    }
+}
+
+struct RangeIter {
+    current int,
+    limit int
+}
+
+impl RangeIter {
+    func new(start, end) {
+        RangeIter(start, end)
+    }
+
+    func hasNext(self) {
+        self.current < self.limit
+    }
+
+    func next(self) {
+        idx = self.current
+        self.current = idx + 1
+        idx
+    }
+}
+
+impl int {
+    func foo(self, other) {
+        range(self, other)
+    }
 }
 
 use java::lang::{Integer, Double}
@@ -74,20 +125,13 @@ impl<T> [T] {
     }
 }
 
-impl int {
-    func foo(self, other) {
-        print(other+self)
-    }
-}
-
-
 impl Person {
     func say_name(self) {
         print(self.name)
     }
 
-    func new(name) {
-        Person(name.toString())
+    func new(name, age) {
+        Person(name.toString(), age)
     }
 }
 

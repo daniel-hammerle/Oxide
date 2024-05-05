@@ -5,6 +5,7 @@ import com.language.MathOp
 import com.language.TemplatedType
 import com.language.codegen.VarFrame
 import com.language.codegen.VarFrameImpl
+import com.language.codegen.asUnboxed
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
@@ -503,6 +504,20 @@ sealed class Instruction {
         }
     }
 
+    data class DynamicPropertyAssignment(val parent: Instruction, val name: String, val value: Instruction) : Instruction() {
+        override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
+            val parent = parent.inferTypes(variables, lookup)
+
+            val fieldType = lookup.lookUpFieldType(parent.type, name)
+            val value = value.inferTypes(variables, lookup)
+            if (!value.type.isContainedOrEqualTo(fieldType))
+                error("Invalid type ${value.type} cannot be assigned to field $name of type $fieldType")
+
+            return TypedInstruction.DynamicPropertyAssignment(parent, name, value)
+        }
+
+    }
+
     //The type is unchecked
     data class Noop(val type: Type): Instruction() {
         override suspend fun inferTypes(variables: VariableMapping, lookup: IRModuleLookup): TypedInstruction {
@@ -615,6 +630,16 @@ sealed class Instruction {
             return TypedInstruction.Dup(type)
         }
     }
+}
+
+fun Type.simplifyUnbox(): Type = when(this) {
+    is Type.Union -> simplifyUnbox()
+    else -> this
+}
+
+fun Type.Union.simplifyUnbox(): Type = when {
+    entries.size == 1 -> entries.first().let { if (it.isBoxedPrimitive()) asUnboxed() else it  }
+    else -> this
 }
 
 data class PatternMatchingContextImpl(val types: List<Instruction>): PatternMatchingContext {
@@ -908,7 +933,7 @@ fun Type.isNumType() = isInt() || isDouble()
 fun Type.isInt() = this == Type.Int || this == Type.IntT
 fun Type.isDouble() = this == Type.Double || this == Type.DoubleT
 fun Type.isBoolean() = this == Type.Bool || this == Type.BoolT
-fun Type.isBoxed() = this == Type.Int || this == Type.Double
+fun Type.isBoxedPrimitive() = this == Type.Int || this == Type.Double || this == Type.Bool
 fun Type.isUnboxedPrimitive() = this == Type.IntT || this == Type.BoolT || this == Type.DoubleT
 fun Type.asBoxed(): Type = when(this) {
     Type.IntT -> Type.Int
@@ -973,5 +998,5 @@ data class IRModule(
     val name: SignatureString,
     val functions: Map<String, IRFunction>,
     val structs: Map<String, IRStruct>,
-    val implBlocks: Map<TemplatedType, IRImpl>
+    val implBlocks: Map<TemplatedType, Set<IRImpl>>
 )

@@ -38,6 +38,20 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             stackMap.pop() //pop instance
             stackMap.push(instruction.type)
         }
+        is TypedInstruction.DynamicPropertyAssignment -> {
+            //load instance onto the stack
+            compileInstruction(mv, instruction.parent, stackMap)
+            compileInstruction(mv, instruction.value, stackMap)
+
+            mv.visitFieldInsn(
+                Opcodes.PUTFIELD,
+                instruction.parent.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
+                instruction.name,
+                instruction.value.type.toJVMDescriptor()
+            )
+
+
+        }
         is TypedInstruction.If -> {
             //eval condition
             compileInstruction(mv, instruction.cond, stackMap)
@@ -528,6 +542,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitLabel(end)
             stackMap.generateFrame(mv)
             mv.visitInsn(Opcodes.POP)
+            stackMap.pop()
         }
     }
 }
@@ -588,16 +603,16 @@ fun compilePattern(
     when(pattern) {
         is TypedIRPattern.Binding -> {
             //bind the binding (move it into its variable slot)
-            stackMap.changeVar(pattern.id, pattern.origin.type)
             compileInstruction(mv, TypedInstruction.StoreVar(pattern.id, pattern.origin), stackMap)
         }
         is TypedIRPattern.Condition -> {
+
             compilePattern(mv, pattern.parent, stackMap, patternFail)
             compileInstruction(mv, pattern.condition, stackMap)
             //if condition equal to is 0 (false) go to the fail stage
             val skip = Label()
             mv.visitJumpInsn(Opcodes.IFNE, skip)
-            mv.visitInsn(Opcodes.POP)
+            //mv.visitInsn(Opcodes.POP)
             mv.visitJumpInsn(Opcodes.GOTO, patternFail)
             mv.visitLabel(skip)
             stackMap.pop()
@@ -794,13 +809,16 @@ fun compileComparison(
                     stackMap.pop(2)
                     val toElse = Label()
                     val end = Label()
-                    mv.visitJumpInsn(Opcodes.IFNE, toElse)
+                    mv.visitJumpInsn(Opcodes.IF_ICMPNE, toElse)
                     mv.visitInsn(if (instruction.op == CompareOp.Eq) Opcodes.ICONST_1 else Opcodes.ICONST_0)
                     mv.visitJumpInsn (Opcodes.GOTO, end)
                     mv.visitLabel(toElse)
+                    stackMap.generateFrame(mv)
                     mv.visitInsn(if (instruction.op == CompareOp.Eq) Opcodes.ICONST_0 else Opcodes.ICONST_1)
                     mv.visitLabel(end)
                     stackMap.push(Type.BoolT)
+                    stackMap.generateFrame(mv)
+
                 }
                 //complex objects so we have a .equals method
                 else -> {
@@ -852,7 +870,7 @@ private fun compileNumberComparison(
     val isIntCmp = firstType.isInt() && secondType.isInt()
 
     compileInstruction(mv, first, stackMap)
-    if (firstType.isBoxed()) {
+    if (firstType.isBoxedPrimitive()) {
         stackMap.pop()
         stackMap.push(secondType.asUnboxed())
         unbox(mv, firstType)
@@ -861,7 +879,7 @@ private fun compileNumberComparison(
         mv.visitInsn(Opcodes.I2D)
     }
     compileInstruction(mv, second, stackMap)
-    if (secondType.isBoxed()) {
+    if (secondType.isBoxedPrimitive()) {
         stackMap.pop()
         stackMap.push(secondType.asUnboxed())
         unbox(mv, secondType)

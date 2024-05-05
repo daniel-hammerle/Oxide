@@ -67,7 +67,7 @@ class BasicIRModuleLookup(
         val newImplBlocks: MutableMap<TemplatedType, MutableSet<IRImpl>> = mutableMapOf()
         nativeModules.filter { it.name in modNames }.forEach { mod ->
             mod.implBlocks.forEach { (type, block) ->
-                newImplBlocks[type]?.add(block) ?: newImplBlocks.put(type, mutableSetOf(block))
+                newImplBlocks[type]?.addAll(block) ?: newImplBlocks.put(type, block.toMutableSet())
             }
         }
 
@@ -205,7 +205,7 @@ class BasicIRModuleLookup(
             argTypes
                 .mapIndexed { index, type -> it.parameterTypes[index].canBe(type.asBoxed()) }
                 .all { it }  //if every condition is true
-        } ?: error("No matching method found")
+        } ?: error("No matching method found $signatureString::$funcName($argTypes)")
         return method
     }
 
