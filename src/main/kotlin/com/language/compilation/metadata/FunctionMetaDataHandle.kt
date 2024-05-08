@@ -4,7 +4,7 @@ import com.language.compilation.FunctionMetaData
 import com.language.compilation.Type
 import com.language.compilation.join
 
-class FunctionMetaDataHandle : MetaDataHandle {
+class FunctionMetaDataHandle(override val inheritedGenerics: Map<String, Type>) : MetaDataHandle {
     lateinit var returnType: Type
         private set
 

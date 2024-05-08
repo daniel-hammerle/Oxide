@@ -73,7 +73,7 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             val args = when(tokens.visitNext()) {
                 Token.OpenCurly -> {
                     tokens.expect<Token.OpenCurly>()
-                    parseTypedArgs(tokens, generics)
+                    parseTypedArgs(tokens, generics.keys)
                 }
                 else -> emptyMap()
             }
@@ -84,7 +84,7 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
                 error("Invalid Modifiers cannot apply $modifiers to an impl block")
             }
             val generics = parseGenericDefinition(tokens)
-            val type = parseType(tokens, generics)
+            val type = parseType(tokens, generics.keys)
             tokens.expect<Token.OpenCurly>()
             val entries: MutableMap<String, ModuleChild> = mutableMapOf()
             while(tokens.visitNext() != Token.ClosingCurly) {
@@ -100,7 +100,7 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             }
             val (methods, associatedFunctions) = functions.toList().partition { (_, function ) -> function.args.firstOrNull() == "self" }
 
-            UUID.randomUUID().toString() to Impl(type, methods.toMap(), associatedFunctions.toMap(), modifiers)
+            UUID.randomUUID().toString() to Impl(type, methods.toMap(), associatedFunctions.toMap(), generics, modifiers)
         }
         Token.Use -> UUID.randomUUID().toString() to UseStatement(parseImport(tokens))
         else -> error("Invalid token $token")
@@ -128,7 +128,7 @@ fun parseImport(tokens: Tokens): Set<SignatureString> {
     }
 }
 
-fun parseTypedArgs(tokens: Tokens, generics: List<String>, closingSymbol: Token = Token.ClosingCurly): Map<String, TemplatedType> {
+fun parseTypedArgs(tokens: Tokens, generics: Set<String>, closingSymbol: Token = Token.ClosingCurly): Map<String, TemplatedType> {
     if (tokens.visitNext() == closingSymbol) {
         tokens.next()
         return emptyMap()
@@ -556,14 +556,15 @@ private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
 
 }
 
-private fun parseGenericDefinition(tokens: Tokens): List<String> {
+private fun parseGenericDefinition(tokens: Tokens): Map<String, Modifiers> {
     if (tokens.visitNext() != Token.St) {
-        return emptyList()
+        return emptyMap()
     }
     tokens.expect<Token.St>()
-    val generics = mutableListOf<String>()
+    val generics = mutableMapOf<String, Modifiers>()
     while(true) {
-        generics+=tokens.expect<Token.Identifier>().name
+        val modifiers = parseModifiers(tokens)
+        generics+=tokens.expect<Token.Identifier>().name to modifiers
         when(val tk = tokens.next()) {
             is Token.Gt -> return generics
             is Token.Comma -> continue
@@ -572,7 +573,7 @@ private fun parseGenericDefinition(tokens: Tokens): List<String> {
     }
 }
 
-private fun parseGenericArgs(tokens: Tokens, generics: List<String>): List<TemplatedType> {
+private fun parseGenericArgs(tokens: Tokens, generics: Set<String>): List<TemplatedType> {
     if (tokens.visitNext() != Token.St) {
         return emptyList()
     }
@@ -589,7 +590,7 @@ private fun parseGenericArgs(tokens: Tokens, generics: List<String>): List<Templ
 }
 
 
-private fun parseType(tokens: Tokens, generics: List<String> = emptyList(), allowGenerics: Boolean = true): TemplatedType {
+private fun parseType(tokens: Tokens, generics: Set<String> = emptySet(), allowGenerics: Boolean = true): TemplatedType {
     val types = mutableSetOf<TemplatedType>()
     while(true) {
         val type = parseTypeBase(tokens, generics, allowGenerics)
@@ -608,7 +609,7 @@ private fun parseType(tokens: Tokens, generics: List<String> = emptyList(), allo
     }
 }
 
-private fun parseTypeBase(tokens: Tokens, generics: List<String> = emptyList(), allowGenerics: Boolean = true): TemplatedType = when(val tk = tokens.visitNext()) {
+private fun parseTypeBase(tokens: Tokens, generics: Set<String> = emptySet(), allowGenerics: Boolean = true): TemplatedType = when(val tk = tokens.visitNext()) {
     is Token.Null -> {
         tokens.expect<Token.Null>()
         TemplatedType.Null

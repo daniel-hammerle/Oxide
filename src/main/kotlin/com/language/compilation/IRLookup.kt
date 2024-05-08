@@ -2,8 +2,9 @@ package com.language.compilation
 
 import com.language.TemplatedType
 import com.language.compilation.modifiers.Modifier
+import com.language.compilation.modifiers.Modifiers
 
-interface IRModuleLookup {
+interface IRLookup {
     val nativeModules: Set<IRModule>
 
     /**
@@ -47,7 +48,7 @@ interface IRModuleLookup {
      * # Note
      * It will ignore modNames that don't have matching entries in the [nativeModules]
      */
-    fun newModFrame(modNames: Set<SignatureString>): IRModuleLookup
+    fun newModFrame(modNames: Set<SignatureString>): IRLookup
 
     /**
      * Returns a constructor which matches the argument types
@@ -76,6 +77,8 @@ interface IRModuleLookup {
     fun lookUpOrderedFields(className: SignatureString): List<Pair<String, TemplatedType>>
 
     fun hasModifier(instance: Type, modifier: Modifier): Boolean
+
+    fun satisfiesModifiers(instance: Type, modifiers: Modifiers): Boolean
 
     fun TemplatedType.populate(generics: LinkedHashMap<String, Type>): Type
 }

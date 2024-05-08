@@ -2,6 +2,7 @@ package com.language.codegen
 
 import com.language.CompareOp
 import com.language.MathOp
+import com.language.Pattern
 import com.language.compilation.*
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
@@ -574,6 +575,7 @@ fun compileMatch(
         if (idx != instruction.patterns.lastIndex) {
             mv.visitInsn(Opcodes.DUP)
             stackMap.dup()
+            if (pattern is TypedIRPattern.Binding) mv.visitInsn(Opcodes.DUP)
         }
 
         val patternFail = Label()
@@ -583,6 +585,7 @@ fun compileMatch(
         compileInstruction(mv, body, stackMap)
         if (instruction.type != body.type) {
             boxOrIgnore(mv, body.type)
+            unboxOrIgnore(mv, body.type)
         }
         if (idx != instruction.patterns.lastIndex) {
             if (body.type != Type.Nothing) {
@@ -633,49 +636,73 @@ fun compilePattern(
             stackMap.pop()
             stackMap.generateFrame(mv)
         }
-        is TypedIRPattern.Destructuring -> {
-            val success = Label()
-            compileInstruction(mv, pattern.origin, stackMap)
-            if (pattern.patterns.isNotEmpty()) {
-                mv.visitInsn(Opcodes.DUP)
-                stackMap.dup()
-            }
-
-            mv.visitTypeInsn(Opcodes.INSTANCEOF, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
-            stackMap.pop()
-            stackMap.push(Type.BoolT)
-            mv.visitJumpInsn(Opcodes.IFNE, success)
-            stackMap.pop()
-
-            //IF FAIL
-            if (pattern.patterns.isNotEmpty()) {
-                mv.visitInsn(Opcodes.POP)
-            }
-
-            //instance of check failed so go to the fail stage
-            mv.visitJumpInsn(Opcodes.GOTO, patternFail)
-            //END IF FAIL
-
-            //IF SUCCESS
-            mv.visitLabel(success)
-            stackMap.generateFrame(mv)
-            mv.visitTypeInsn(Opcodes.CHECKCAST, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
-
-            //compile all the desturcturing patterns
-            pattern.patterns.forEach {
-                mv.visitInsn(Opcodes.DUP)
-                stackMap.dup()
-                compilePattern(mv, it, stackMap, patternFail)
-            }
-            if (pattern.patterns.isNotEmpty()) {
-                mv.visitInsn(Opcodes.POP)
-                stackMap.pop()
-            }
-
-        }
+        is TypedIRPattern.Destructuring -> compilePatternDestructuring(mv, pattern, stackMap, patternFail)
     }
 }
 
+
+fun compilePatternDestructuring(
+    mv: MethodVisitor,
+    pattern: TypedIRPattern.Destructuring,
+    stackMap: StackMap,
+    patternFail: Label
+) {
+    if (pattern.isLast) {
+        when(pattern.castStoreId) {
+            null -> {
+                mv.visitInsn(Opcodes.POP)
+                stackMap.pop()
+            }
+            else -> {
+                mv.visitTypeInsn(Opcodes.CHECKCAST, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+                compileInstruction(mv, TypedInstruction.StoreVar(pattern.castStoreId, TypedInstruction.Noop(pattern.type)), stackMap)
+            }
+        }
+        return
+    }
+
+    val success = Label()
+    compileInstruction(mv, pattern.origin, stackMap)
+    if (pattern.patterns.isNotEmpty()) {
+        mv.visitInsn(Opcodes.DUP)
+        stackMap.dup()
+    }
+
+    mv.visitTypeInsn(Opcodes.INSTANCEOF, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+    stackMap.pop()
+    stackMap.push(Type.BoolT)
+    mv.visitJumpInsn(Opcodes.IFNE, success)
+    stackMap.pop()
+
+    //IF FAIL
+    if (pattern.patterns.isNotEmpty()) {
+        mv.visitInsn(Opcodes.POP)
+    }
+
+    //instance of check failed so go to the fail stage
+    mv.visitJumpInsn(Opcodes.GOTO, patternFail)
+    //END IF FAIL
+
+    //IF SUCCESS
+    mv.visitLabel(success)
+    stackMap.generateFrame(mv)
+    mv.visitTypeInsn(Opcodes.CHECKCAST, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+
+    if (pattern.castStoreId != null) {
+        compileInstruction(mv, TypedInstruction.StoreVar(pattern.castStoreId, TypedInstruction.Dup(pattern.type)), stackMap)
+    }
+
+    //compile all the desturcturing patterns
+    pattern.patterns.forEach {
+        mv.visitInsn(Opcodes.DUP)
+        stackMap.dup()
+        compilePattern(mv, it, stackMap, patternFail)
+    }
+    if (pattern.patterns.isNotEmpty()) {
+        mv.visitInsn(Opcodes.POP)
+        stackMap.pop()
+    }
+}
 
 fun compileDynamicCall(
     mv: MethodVisitor,
@@ -801,7 +828,7 @@ fun compileComparison(
     stackMap: StackMap
 ) {
     val firstType = instruction.first.type
-    val secondType = instruction.first.type
+    val secondType = instruction.second.type
     when(instruction.op) {
         CompareOp.Eq, CompareOp.Neq -> {
             when {
@@ -834,6 +861,51 @@ fun compileComparison(
                     stackMap.push(Type.BoolT)
                     stackMap.generateFrame(mv)
 
+                }
+                //is always true since Null is a singleton type
+                secondType == Type.Null && firstType == Type.Null -> {
+                    stackMap.push(Type.BoolT)
+                    mv.visitInsn(if (instruction.op == CompareOp.Eq) Opcodes.ICONST_1 else Opcodes.ICONST_0)
+                }
+                //unboxed primitives can never be null
+                secondType == Type.Null && firstType.isUnboxedPrimitive()-> {
+                    stackMap.push(Type.BoolT)
+                    mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_1 else Opcodes.ICONST_0)
+                }
+                //unboxed primitives can never be null
+                firstType == Type.Null && secondType.isUnboxedPrimitive()-> {
+                    stackMap.push(Type.BoolT)
+                    mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_1 else Opcodes.ICONST_0)
+                }
+                secondType == Type.Null -> {
+                    compileInstruction(mv, instruction.first, stackMap)
+                    val elseBody = Label()
+                    val end = Label()
+                    mv.visitJumpInsn(Opcodes.IFNULL, elseBody)
+                    stackMap.pop()
+                    mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_1 else Opcodes.ICONST_0)
+                    mv.visitJumpInsn(Opcodes.GOTO, end)
+                    mv.visitLabel(elseBody)
+                    stackMap.generateFrame(mv)
+                    mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_0 else Opcodes.ICONST_1)
+                    mv.visitLabel(end)
+                    stackMap.push(Type.BoolT)
+                    stackMap.generateFrame(mv)
+                }
+                firstType == Type.Null -> {
+                    compileInstruction(mv, instruction.second, stackMap)
+                    val elseBody = Label()
+                    val end = Label()
+                    mv.visitJumpInsn(Opcodes.IFNULL, elseBody)
+                    stackMap.pop()
+                    mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_1 else Opcodes.ICONST_0)
+                    mv.visitJumpInsn(Opcodes.GOTO, end)
+                    mv.visitLabel(elseBody)
+                    stackMap.generateFrame(mv)
+                    mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_0 else Opcodes.ICONST_1)
+                    mv.visitLabel(end)
+                    stackMap.push(Type.BoolT)
+                    stackMap.generateFrame(mv)
                 }
                 //complex objects so we have a .equals method
                 else -> {

@@ -53,7 +53,7 @@ fun compileImplBlock(implBlock: Impl, module: ModuleLookup): IRImpl {
     val methods = implBlock.methods.mapValues { (_, function) -> compileFunction(function, module) }
     val associatedFunctions = implBlock.associatedFunctions.mapValues { (_, function) -> compileFunction(function, module) }
 
-    return IRImpl(module.localName +  generateName(), methods, associatedFunctions)
+    return IRImpl(module.localName +  generateName(), methods, associatedFunctions, implBlock.generics)
 }
 
 fun generateName(): String = Base32().encodeToString(UUID.randomUUID().encodeUUID())

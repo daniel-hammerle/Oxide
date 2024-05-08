@@ -97,12 +97,13 @@ sealed interface ModuleChild {
 
 data class Function(val args: List<String>, val body: Expression, override val modifiers: Modifiers) : ModuleChild
 
-data class Struct(val args: Map<String, TemplatedType>, val generics: List<String>, override val modifiers: Modifiers) : ModuleChild
+data class Struct(val args: Map<String, TemplatedType>, val generics: Map<String, Modifiers>, override val modifiers: Modifiers) : ModuleChild
 
 data class Impl(
     val type: TemplatedType,
     val methods: Map<String, Function>,
     val associatedFunctions: Map<String, Function>,
+    val generics: Map<String, Modifiers>,
     override val modifiers: Modifiers
 ) : ModuleChild
 

@@ -130,7 +130,7 @@ sealed interface TypedInstruction {
         val patterns: List<Triple<TypedIRPattern, TypedInstruction, VarFrame>>
     ) : TypedInstruction {
         override val type: Type
-            get() = patterns.map { it.second.type }.reduce { acc, type -> acc.join(type)  }.let { if (it is Type.Union) it.asBoxed() else it }
+            get() = patterns.map { it.second.type }.reduce { acc, type -> acc.join(type)  }.let { if (it is Type.Union) it.asBoxed() else it }.simplifyUnbox()
     }
 
     data class While(
@@ -191,7 +191,7 @@ sealed interface TypedIRPattern {
     data class Binding(val name: String, val id: Int, val origin: TypedInstruction): TypedIRPattern {
         override val bindings: Set<Pair<String, Type>> = setOf(name to origin.type)
     }
-    data class Destructuring(val type: Type, val patterns: List<TypedIRPattern>, val origin: TypedInstruction) : TypedIRPattern {
+    data class Destructuring(val type: Type, val patterns: List<TypedIRPattern>, val origin: TypedInstruction, val isLast: Boolean, val castStoreId: Int?) : TypedIRPattern {
         override val bindings: Set<Pair<String, Type>> = patterns.flatMap { it.bindings }.toSet()
     }
     data class Condition(val parent: TypedIRPattern, val condition: TypedInstruction) : TypedIRPattern {

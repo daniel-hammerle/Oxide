@@ -11,7 +11,10 @@ sealed interface Token {
     data object Func : KeyWord
     data object Use : KeyWord
     data object Struct : KeyWord
-    data object In : KeyWord
+    data object In : KeyWord, Identifier {
+        override val name: String = "in"
+
+    }
     data object Match : KeyWord
     data object Impl : KeyWord
     data object For : KeyWord

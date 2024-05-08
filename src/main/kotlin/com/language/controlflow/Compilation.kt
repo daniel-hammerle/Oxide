@@ -25,7 +25,7 @@ fun compileProject(fileName: String) {
         }
         println("> Parsing took ${parsingTime}ms")
 
-        val dispatcher = newFixedThreadPoolContext(8, "Compilation")
+        val dispatcher = newFixedThreadPoolContext(Runtime.getRuntime().availableProcessors(), "Compilation")
         val scope = CoroutineScope(dispatcher)
 
         val runtimeLib = "./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar"
@@ -38,7 +38,7 @@ fun compileProject(fileName: String) {
         val (type, typeCheckingTime) = measureTime {
             runBlocking {
                 scope.async {
-                    result.functions["main"]!!.inferTypes(listOf(), irLookup)
+                    result.functions["main"]!!.inferTypes(listOf(), irLookup, emptyMap())
                 }.await()
             }
         }

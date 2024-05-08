@@ -1,0 +1,28 @@
+func main {
+    bool = tryBool("true").orDefault(false)
+    print(bool)
+}
+
+error struct ConversionError {
+    message str
+}
+
+func tryBool(input) {
+    match input {
+        "true" -> true
+        "false" -> false
+        _ -> ConversionError("failed to convert!")
+    }
+}
+
+impl<error E, T> E | T {
+    func orDefault(self, value) {
+        match self {
+            E -> value
+            T -> self
+        }
+    }
+}
+
+use java::lang::System
+func print(value) System.out.println(value)

@@ -31,6 +31,35 @@ fun boxOrIgnore(mv: MethodVisitor, type: Type) {
     }
 }
 
+
+fun unboxOrIgnore(mv: MethodVisitor, type: Type)  {
+    when (type) {
+        Type.Int -> mv.visitMethodInsn(
+            Opcodes.INVOKEVIRTUAL,
+            "java/lang/Integer",
+            "intValue",
+            "()I",
+            false
+        )
+        Type.Double -> mv.visitMethodInsn(
+            Opcodes.INVOKEVIRTUAL,
+            "java/lang/Double",
+            "doubleValue",
+            "()D",
+            false
+        )
+        Type.Bool -> mv.visitMethodInsn(
+            Opcodes.INVOKEVIRTUAL,
+            "java/lang/Boolean",
+            "booleanValue",
+            "()Z",
+            false
+        )
+        else -> {}
+    }
+}
+
+
 fun unbox(mv: MethodVisitor, type: Type)  {
     when (type) {
         Type.Int -> mv.visitMethodInsn(

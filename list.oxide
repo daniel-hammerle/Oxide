@@ -2,17 +2,17 @@ use java::util::{ArrayList, HashMap}
 use java::lang::System
 
 func main {
-    print(maybeNull().orDefault(false))
+    input = input()
+    bool = input.try_bool().orDefault(false)
+    print(bool)
 }
 
-func t {
-    for i in range(0, 10) {
-        print(i)
+func input {
+    scanner = {
+        inStream = java::lang::System.in
+        java::util::Scanner(inStream)
     }
-    match testErrorHandling("truf") {
-        ConversionError(reason) -> print("An error occurred: "+ reason)
-        _ -> {}
-    }
+    scanner.nextLine()
 }
 
 func maybeNull {
@@ -36,17 +36,62 @@ impl<T> null | T {
     }
 }
 
+impl<error E, T> E | T {
+    func orDefault(self, value) {
+        match self {
+            E -> value
+            _ -> self
+        }
+    }
+
+    func unwrap(self, message) {
+        match self {
+            E -> {
+                panic(message)
+                self
+            }
+            _ -> self
+        }
+    }
+}
 
 func panic(reason) {
     print(reason)
     System.exit(1)
 }
 
+struct IntRef {
+    value int
+}
+
+impl IntRef {
+    func new(value) {
+        IntRef(value)
+    }
+
+    func inc(self) {
+        self.value = self.value+1
+    }
+
+    func dec(self) {
+        self.value = self.value-1
+    }
+
+}
+
+
 func f {
     some_array = ["Hello", "World", true, 12]
     some_other_array = [...some_array, true, ...some_array]
     do_sth(some_other_array)
     foo()
+    for i in range(0, 10) {
+        print(i)
+    }
+    match testErrorHandling("truf") {
+        ConversionError(reason) -> print("An error occurred: "+ reason)
+        _ -> {}
+    }
 }
 
 func do_sth(x) {

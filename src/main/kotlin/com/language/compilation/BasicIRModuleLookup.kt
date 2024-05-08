@@ -2,6 +2,8 @@ package com.language.compilation
 
 import com.language.TemplatedType
 import com.language.codegen.toJVMDescriptor
+import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.templatedType.matches
 import org.objectweb.asm.Opcodes
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
@@ -11,44 +13,18 @@ class BasicIRModuleLookup(
     override val nativeModules: Set<IRModule>,
     private val externalJars: ClassLoader,
     private val allowedImplBlocks: Map<TemplatedType, Set<IRImpl>> = emptyMap()
-) : IRModuleLookup {
+) : IRLookup {
 
-    private fun TemplatedType.accepts(type: Type): Boolean {
-        return when(this) {
-            is TemplatedType.Array -> type is Type.Array && itemType.accepts(type.itemType)
-            is TemplatedType.Complex -> {
-                if (type !is Type.JvmType || type.signature != signatureString) {
-                    return false
-                }
-                var i = 0
-                type.genericTypes.all { (_, type) ->
-                    when(type) {
-                        is Type.BroadType.Known -> this.generics[i].accepts(type.type)
-                        Type.BroadType.Unknown -> true
-                    }.also {
-                        i++
-                    }
-                }
-            }
-            //check if the union includes
-            is TemplatedType.Union -> type is Type.Union && types.all { type.entries.any { tp -> it.accepts(tp) } }
 
-            is TemplatedType.Generic -> !type.isUnboxedPrimitive()
-            TemplatedType.IntT -> type == Type.IntT
-            TemplatedType.DoubleT -> type == Type.DoubleT
-            TemplatedType.BoolT -> type == Type.BoolT
-            TemplatedType.Null -> type == Type.Null
-        }
-    }
-
-    private fun getExtensionFunction(instance: Type, name: String): Pair<IRImpl, IRFunction>? {
+    private fun getExtensionFunction(instance: Type, name: String): Triple<IRImpl, IRFunction, Map<String, Type>>? {
         for ((template, blocks) in allowedImplBlocks) {
-            if (template.accepts(instance)) {
-                val impl = blocks.find { name in it.methods }
-                if (impl != null) {
-                    return impl to impl.methods[name]!!
+            val generics = mutableMapOf<String, Type>()
+            blocks.forEach { impl ->
+                if (name in impl.methods && template.matches(instance, generics, impl.genericModifiers, this)) {
+                    return Triple(impl, impl.methods[name]!!, generics)
                 }
             }
+
         }
         return null
     }
@@ -75,7 +51,17 @@ class BasicIRModuleLookup(
         }
     }
 
-    override fun newModFrame(modNames: Set<SignatureString>): IRModuleLookup {
+    override fun satisfiesModifiers(instance: Type, modifiers: Modifiers): Boolean {
+        return when(instance) {
+            is Type.JvmType -> {
+                val struct = getStruct(instance.signature)
+                struct?.modifiers == modifiers
+            }
+            else -> false
+        }
+    }
+
+    override fun newModFrame(modNames: Set<SignatureString>): IRLookup {
         val newImplBlocks: MutableMap<TemplatedType, MutableSet<IRImpl>> = mutableMapOf()
         nativeModules.filter { it.name in modNames }.forEach { mod ->
             mod.implBlocks.forEach { (type, block) ->
@@ -89,7 +75,7 @@ class BasicIRModuleLookup(
     override suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate {
         if (nativeModules.any{ it.name == modName }) {
             val module = nativeModules.first{ it.name == modName }
-            return module.functions[funcName]?.inferTypes(argTypes, this)?.let {
+            return module.functions[funcName]?.inferTypes(argTypes, this, emptyMap())?.let {
                     FunctionCandidate(
                     argTypes,
                     argTypes,
@@ -103,10 +89,10 @@ class BasicIRModuleLookup(
                 )
             } ?: error("Function $funcName in $modName with variants $argTypes not found")
         }
-        when (val x = getAssociatedFunction(modName, funcName)) {
+        when (val result = getAssociatedFunction(modName, funcName)) {
             is Pair<IRImpl, IRFunction> -> {
-                val (implBlock, function) = x
-                return function.inferTypes(argTypes, lookup = this).let {
+                val (implBlock, function) = result
+                return function.inferTypes(argTypes, lookup = this, emptyMap()).let {
                     FunctionCandidate(
                         argTypes,
                         argTypes.map { t -> t.toActualJvmType() },
@@ -225,9 +211,9 @@ class BasicIRModuleLookup(
 
     override suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate {
         when(val result = getExtensionFunction(instance, funcName)) {
-            is Pair<IRImpl, IRFunction> -> {
-                val (implBlock, function) = result
-                return function.inferTypes(listOf(instance) + argTypes, lookup = this).let {
+            is Triple<IRImpl, IRFunction, Map<String, Type>> -> {
+                val (implBlock, function, generics) = result
+                return function.inferTypes(listOf(instance) + argTypes, lookup = this, generics).let {
                     FunctionCandidate(
                         listOf(instance) + argTypes,
                         listOf(instance) + argTypes,
@@ -297,7 +283,7 @@ class BasicIRModuleLookup(
                 if (struct.fields.size != argTypes.size) {
                     error("No constructor $className($argTypes)")
                 }
-                val baseGenerics = linkedMapOf(*struct.generics.map { it to Type.Object as Type }.toTypedArray())
+                val baseGenerics = linkedMapOf(*struct.generics.map { it.key to Type.Object as Type }.toTypedArray())
                 val typedFields = struct.fields.mapValues { (_, value) -> value.populate(baseGenerics) }
 
                 if (struct.defaultVariant == null) struct.setDefaultVariant(typedFields)
@@ -387,13 +373,13 @@ class BasicIRModuleLookup(
         else -> error("Not eonough information to know type!")
     }
 
-    private fun signatureGetGenerics(signatureString: SignatureString): List<String> {
+    private fun signatureGetGenerics(signatureString: SignatureString): Map<String, Modifiers> {
         when(val struct = getStruct(signatureString)) {
             is IRStruct -> {
                 return struct.generics
             }
         }
-        return externalJars.loadClass(signatureString.toDotNotation()).typeParameters.map { it.name }
+        return externalJars.loadClass(signatureString.toDotNotation()).typeParameters.associate { it.name  to Modifiers.Empty}
     }
 
     override fun lookUpFieldType(modName: SignatureString, fieldName: String): Type {
@@ -410,8 +396,8 @@ class BasicIRModuleLookup(
         is TemplatedType.Array -> Type.Array(itemType.populate(generics))
         is TemplatedType.Complex -> {
             val availableGenerics = signatureGetGenerics(signatureString)
-            val entries = availableGenerics.mapIndexed { index, s ->
-                s to Type.BroadType.Known(this.generics[index].populate(generics))
+            val entries = availableGenerics.toList().mapIndexed { index, s ->
+                s.first to Type.BroadType.Known(this.generics[index].populate(generics))
             }.toTypedArray()
             Type.BasicJvmType(signatureString, linkedMapOf(*entries))
         }
