@@ -655,4 +655,7 @@ fun Tokens.visitNext() = if (hasNext()) next().also { previous() } else null
 
 fun Tokens.visit2Next() = next().let { next().also { previous(); previous() } }
 
-inline fun<reified T: Token> Tokens.expect(): T = next() as T
+inline fun<reified A> Iterator<*>.expect(): A = when (val v = next()){
+    !is A -> error("Expected ${A::class.simpleName} but got `$v`")
+    else -> v
+}

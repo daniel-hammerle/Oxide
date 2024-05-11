@@ -16,7 +16,7 @@ class BasicIRModuleLookup(
 ) : IRLookup {
 
 
-    private fun getExtensionFunction(instance: Type, name: String): Triple<IRImpl, IRFunction, Map<String, Type>>? {
+    private suspend fun getExtensionFunction(instance: Type, name: String): Triple<IRImpl, IRFunction, Map<String, Type>>? {
         for ((template, blocks) in allowedImplBlocks) {
             val generics = mutableMapOf<String, Type>()
             blocks.forEach { impl ->
@@ -41,7 +41,7 @@ class BasicIRModuleLookup(
         return null
     }
 
-    override fun hasModifier(instance: Type, modifier: com.language.compilation.modifiers.Modifier): Boolean {
+    override suspend fun hasModifier(instance: Type, modifier: com.language.compilation.modifiers.Modifier): Boolean {
         return when(instance) {
             is Type.JvmType -> {
                 val struct = getStruct(instance.signature)
@@ -51,7 +51,7 @@ class BasicIRModuleLookup(
         }
     }
 
-    override fun satisfiesModifiers(instance: Type, modifiers: Modifiers): Boolean {
+    override suspend fun satisfiesModifiers(instance: Type, modifiers: Modifiers): Boolean {
         return when(instance) {
             is Type.JvmType -> {
                 val struct = getStruct(instance.signature)
@@ -135,7 +135,7 @@ class BasicIRModuleLookup(
         )
     }
 
-    override fun typeHasInterface(type: Type, interfaceType: SignatureString): Boolean {
+    override suspend fun typeHasInterface(type: Type, interfaceType: SignatureString): Boolean {
         return when(type) {
             is Type.JvmType -> {
                 if (getStruct(type.signature) != null) {
@@ -150,7 +150,7 @@ class BasicIRModuleLookup(
         }
     }
 
-    override fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int> {
+    override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int> {
         when(instance) {
             is Type.JvmType -> {
                 if (getStruct(instance.signature) != null) {
@@ -193,7 +193,7 @@ class BasicIRModuleLookup(
         return method
     }
 
-    override fun hasGenericReturnType(instance: Type, funcName: String, argTypes: List<Type>): Boolean {
+    override suspend fun hasGenericReturnType(instance: Type, funcName: String, argTypes: List<Type>): Boolean {
         return when(instance) {
             is Type.JvmType -> {
                 val method = loadMethod(instance.signature, funcName, argTypes)
@@ -258,16 +258,16 @@ class BasicIRModuleLookup(
                     requireDispatch = false
                 )
             }
-            Type.BoolT -> lookUpCandidate(Type.Bool, funcName, argTypes)
+            is Type.BoolT -> lookUpCandidate(Type.Bool, funcName, argTypes)
             Type.DoubleT -> lookUpCandidate(Type.Double, funcName, argTypes)
             Type.IntT -> lookUpCandidate(Type.Int, funcName, argTypes)
             Type.Nothing -> error("Nothing does not have function $funcName")
+            Type.Never -> error("Type never does not have function $funcName (or any functions)")
             Type.Null -> error("Null does not have function $funcName")
             is Type.Union -> {
                 val types = instance.entries.map { lookUpCandidate(it, funcName, argTypes) }
                 types[0].copy(requireDispatch = true)
             }
-
             is Type.Array -> TODO()
         }
     }
@@ -341,7 +341,7 @@ class BasicIRModuleLookup(
         }
     }
 
-    override fun lookUpFieldType(instance: Type, fieldName: String): Type {
+    override suspend fun lookUpFieldType(instance: Type, fieldName: String): Type {
         return when (instance) {
             is Type.JvmType -> {
                 when (val type = nativeModules.find { it.name == instance.signature.modName }?.structs?.get(instance.signature.structName)?.fields?.get(fieldName) ) {
@@ -354,10 +354,11 @@ class BasicIRModuleLookup(
                 val field = clazz.fields.firstOrNull { it.name == fieldName && !Modifier.isStatic(it.modifiers) } ?: error("No field: $instance, $fieldName")
                 field.type.toType()
             }
-            Type.BoolT -> error("Pimitive bool does not have field $fieldName")
+            is Type.BoolT -> error("Pimitive bool does not have field $fieldName")
             Type.DoubleT -> error("Primitive double does not have field $fieldName")
             Type.IntT -> error("Primitive int does not have field $fieldName")
             Type.Nothing -> error("Nothing does not have field $fieldName")
+            Type.Never -> error("Never does not have field $fieldName")
             Type.Null -> error("Null does not have field $fieldName")
             is Type.Union -> {
                 val types = instance.entries.map { lookUpFieldType(it, fieldName) }
@@ -382,7 +383,7 @@ class BasicIRModuleLookup(
         return externalJars.loadClass(signatureString.toDotNotation()).typeParameters.associate { it.name  to Modifiers.Empty}
     }
 
-    override fun lookUpFieldType(modName: SignatureString, fieldName: String): Type {
+    override suspend fun lookUpFieldType(modName: SignatureString, fieldName: String): Type {
         val clazz = externalJars.loadClass(modName.toDotNotation())
         val field = clazz.fields.first { it.name == fieldName && Modifier.isStatic(it.modifiers) }
         return field.type.toType()
@@ -392,7 +393,7 @@ class BasicIRModuleLookup(
         return externalJars.loadClass(type.signature.toDotNotation())
     }
 
-    override fun TemplatedType.populate(generics: LinkedHashMap<String, Type>): Type = when(this) {
+    override suspend fun TemplatedType.populate(generics: LinkedHashMap<String, Type>): Type = when(this) {
         is TemplatedType.Array -> Type.Array(itemType.populate(generics))
         is TemplatedType.Complex -> {
             val availableGenerics = signatureGetGenerics(signatureString)
@@ -404,7 +405,7 @@ class BasicIRModuleLookup(
         is TemplatedType.Generic -> generics[name]!!
         TemplatedType.IntT -> Type.IntT
         TemplatedType.DoubleT -> Type.DoubleT
-        TemplatedType.BoolT -> Type.BoolT
+        TemplatedType.BoolT -> Type.BoolUnknown
         TemplatedType.Null -> Type.Null
         is TemplatedType.Union -> Type.Union(types.map { it.populate(generics) }.toSet())
     }
@@ -417,7 +418,7 @@ fun Class<*>.toType(): Type {
         "void" -> Type.Nothing
         "int" -> Type.IntT
         "double" -> Type.DoubleT
-        "boolean" -> Type.BoolT
+        "boolean" -> Type.BoolUnknown
         else -> {
             if (name.startsWith("[")) {
                 return Type.Array(Class.forName(name.removePrefix("[L").removeSuffix(";")).toType())
@@ -429,17 +430,26 @@ fun Class<*>.toType(): Type {
 }
 
 
-fun Class<*>.canBe(type: Type, strict: Boolean = false): Boolean {
+fun Class<*>.canBe(type: Type, strict: Boolean = false, nullable: Boolean = false): Boolean {
     if (!strict && (name == "double" || name == "java.lang.Double") && (type == Type.IntT || type == Type.Int)) return true
-    if (name == "java.lang.Object" && if (strict) !type.isUnboxedPrimitive() else true) return true
+    if (name == "java.lang.Object") return true
     return when(type) {
         is Type.JvmType -> SignatureString(this.name.replace(".", "::")) == type.signature || name == "java.lang.Object"
         Type.DoubleT -> name == "double"
         Type.IntT -> name == "int"
-        Type.BoolT -> name == "boolean"
+        is Type.BoolT -> name == "boolean"
         Type.Nothing -> false
         Type.Null -> true
-        is Type.Union -> type.entries.all { this.canBe(it) }
+        is Type.Union -> {
+            type.entries.all {
+                if (nullable && it is Type.Null) {
+                    true
+                } else {
+                    this.canBe(it, strict, nullable)
+                }
+            }
+        }
         is Type.Array -> name == type.toJVMDescriptor().replace("/", ".")
+        Type.Never -> false
     }
 }

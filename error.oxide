@@ -1,10 +1,15 @@
 func main {
-    bool = tryBool("true").orDefault(false)
+    bool = tryBool("tfrue").orDefault(false)
     print(bool)
 }
 
 error struct ConversionError {
     message str
+}
+
+struct Person {
+    name str,
+    age int
 }
 
 func tryBool(input) {
@@ -22,7 +27,19 @@ impl<error E, T> E | T {
             T -> self
         }
     }
+
+    func unwrap(self, message) {
+        match self {
+            E -> panic(message)
+            T -> self
+        }
+    }
 }
 
 use java::lang::System
+func panic(message) {
+    print(message)
+    System.exit(1)
+}
+
 func print(value) System.out.println(value)

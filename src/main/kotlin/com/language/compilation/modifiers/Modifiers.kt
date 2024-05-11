@@ -18,5 +18,7 @@ value class Modifiers(private val modifiers: Int) {
 
     fun isSubsetOf(other: Modifiers) = (modifiers and other.modifiers) == modifiers
 
+    fun hasAllModifiersOf(other: Modifiers) = other.isSubsetOf(this)
+
 }
 

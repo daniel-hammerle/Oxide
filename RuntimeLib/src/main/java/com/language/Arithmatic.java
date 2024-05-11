@@ -1,6 +1,9 @@
 package com.language;
 
+import org.jetbrains.annotations.Contract;
+
 public class Arithmatic {
+    @Contract("_, t -> fail")
     public static Object add(Object first, Object second) {
         return switch(first) {
             case String s -> s + second.toString();

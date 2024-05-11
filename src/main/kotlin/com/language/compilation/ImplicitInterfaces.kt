@@ -2,7 +2,7 @@ package com.language.compilation
 
 object IteratorI : ImplicitInterface {
     override val functions: Map<String, Pair<List<Type>, suspend (Type, IRLookup) -> Boolean>> = mapOf(
-        "hasNext" to (emptyList<Type>() to { it, _ -> it == Type.BoolT }) ,
+        "hasNext" to (emptyList<Type>() to { it, _ -> it is Type.BoolT }) ,
         "next" to (emptyList<Type>() to { type, _ -> type != Type.Nothing })
     )
 }

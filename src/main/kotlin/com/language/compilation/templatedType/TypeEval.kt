@@ -6,7 +6,7 @@ import com.language.compilation.Type
 import com.language.compilation.join
 import com.language.compilation.modifiers.Modifiers
 
-fun TemplatedType.matches(
+suspend fun TemplatedType.matches(
     type: Type,
     generics: MutableMap<String, Type> = mutableMapOf(),
     modifiers: Map<String, Modifiers>,
@@ -57,7 +57,7 @@ fun TemplatedType.matches(
             true
         }
         is TemplatedType.Array ->type is Type.Array
-        TemplatedType.BoolT ->type == Type.BoolT
+        TemplatedType.BoolT ->type is Type.BoolT
         TemplatedType.DoubleT ->type == Type.DoubleT
         TemplatedType.IntT -> type == Type.IntT
         TemplatedType.Null -> type == Type.Null

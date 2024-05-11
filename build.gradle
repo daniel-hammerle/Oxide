@@ -14,6 +14,8 @@ dependencies {
     implementation "org.ow2.asm:asm:9.5"
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1-Beta")
     implementation("commons-codec:commons-codec:1.17.0")
+    implementation("org.jetbrains:annotations:24.1.0")
+
 
 }
 

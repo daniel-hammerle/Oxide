@@ -105,7 +105,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             when(instruction.value) {
                 true -> mv.visitInsn(Opcodes.ICONST_1)
                 false -> mv.visitInsn(Opcodes.ICONST_0)
-            }.also { stackMap.push(Type.BoolT) }
+            }.also { stackMap.push(Type.BoolUnknown) }
         }
         is TypedInstruction.LoadConstDouble -> {
             mv.visitLdcInsn(instruction.value).also { stackMap.push(Type.DoubleT) }
@@ -125,22 +125,24 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             when(instruction.type) {
                 is Type.JvmType, is Type.Array -> mv.visitVarInsn(Opcodes.ALOAD, instruction.id)
                 Type.DoubleT -> mv.visitVarInsn(Opcodes.DLOAD, instruction.id)
-                Type.IntT, Type.BoolT -> mv.visitVarInsn(Opcodes.ILOAD, instruction.id)
+                Type.IntT, is Type.BoolT -> mv.visitVarInsn(Opcodes.ILOAD, instruction.id)
                 Type.Nothing -> mv.visitInsn(Opcodes.ACONST_NULL)
                 Type.Null -> mv.visitVarInsn(Opcodes.ALOAD, instruction.id)
                 is Type.Union -> mv.visitVarInsn(Opcodes.ALOAD, instruction.id)
+                Type.Never -> error("Cannot load variable of type Never")
             }
             stackMap.push(instruction.type)
         }
         is TypedInstruction.StoreVar -> {
             compileInstruction(mv, instruction.value, stackMap)
             when(instruction.value.type) {
-                Type.BoolT, Type.IntT -> mv.visitVarInsn(Opcodes.ISTORE, instruction.id)
+                is Type.BoolT, Type.IntT -> mv.visitVarInsn(Opcodes.ISTORE, instruction.id)
                 Type.DoubleT -> mv.visitVarInsn(Opcodes.DSTORE, instruction.id)
                 is Type.JvmType ->  mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
                 Type.Nothing -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
                 Type.Null, is Type.Array -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
                 is Type.Union -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
+                Type.Never -> error("Cannot store variable of type never")
             }
             stackMap.changeVar(instruction.id, instruction.value.type)
             //storing removes an item from the stack
@@ -157,7 +159,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                     val tp = when(secondType) {
                         Type.IntT -> "I"
                         Type.DoubleT -> "D"
-                        Type.BoolT -> "Z"
+                        is Type.BoolT -> "Z"
                         else -> "Ljava/lang/Object;"
                     }
                     mv.visitMethodInsn(
@@ -670,7 +672,7 @@ fun compilePatternDestructuring(
 
     mv.visitTypeInsn(Opcodes.INSTANCEOF, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
     stackMap.pop()
-    stackMap.push(Type.BoolT)
+    stackMap.push(Type.BoolUnknown)
     mv.visitJumpInsn(Opcodes.IFNE, success)
     stackMap.pop()
 
@@ -809,9 +811,9 @@ inline fun MethodVisitor.dynamicDispatch(types: Iterable<Type>, elseType: Type, 
     visitInsn(Opcodes.POP)
     stackMap.pop()
     when(elseType) {
-        Type.BoolT, Type.IntT -> visitInsn(Opcodes.ICONST_0)
+        is Type.BoolT, Type.IntT -> visitInsn(Opcodes.ICONST_0)
         Type.DoubleT -> visitLdcInsn(0.0)
-        is Type.BasicJvmType, Type.Null, is Type.Union, is Type.Array -> visitInsn(Opcodes.ACONST_NULL)
+        is Type.BasicJvmType, Type.Null, is Type.Union, is Type.Array, Type.Never -> visitInsn(Opcodes.ACONST_NULL)
         Type.Nothing -> {}
     }
 
@@ -838,14 +840,14 @@ fun compileComparison(
                 //when we compare a primitive non-number to a number, it will always be false, so we can evaluate that at compiletime:
                 firstType.isUnboxedPrimitive() && !firstType.isNumType() && secondType.isNumType() ->
 
-                    mv.visitInsn(Opcodes.ICONST_0).also { stackMap.push(Type.BoolT) }
+                    mv.visitInsn(Opcodes.ICONST_0).also { stackMap.push(Type.BoolUnknown) }
                 secondType.isUnboxedPrimitive() && !secondType.isNumType() && firstType.isNumType() ->
-                    mv.visitInsn(Opcodes.ICONST_0).also { stackMap.push(Type.BoolT) }
+                    mv.visitInsn(Opcodes.ICONST_0).also { stackMap.push(Type.BoolUnknown) }
 
                 //this should only be called when there are 2 unboxed booleans since every other case was handled already
                 firstType.isUnboxedPrimitive() && secondType.isUnboxedPrimitive() -> {
                     //sanity-check
-                    assert(firstType == Type.BoolT && secondType == Type.BoolT)
+                    assert(firstType is Type.BoolT && secondType is Type.BoolT)
                     compileInstruction(mv, instruction.first, stackMap)
                     compileInstruction(mv, instruction.second, stackMap)
                     stackMap.pop(2)
@@ -858,23 +860,23 @@ fun compileComparison(
                     stackMap.generateFrame(mv)
                     mv.visitInsn(if (instruction.op == CompareOp.Eq) Opcodes.ICONST_0 else Opcodes.ICONST_1)
                     mv.visitLabel(end)
-                    stackMap.push(Type.BoolT)
+                    stackMap.push(Type.BoolUnknown)
                     stackMap.generateFrame(mv)
 
                 }
                 //is always true since Null is a singleton type
                 secondType == Type.Null && firstType == Type.Null -> {
-                    stackMap.push(Type.BoolT)
+                    stackMap.push(Type.BoolUnknown)
                     mv.visitInsn(if (instruction.op == CompareOp.Eq) Opcodes.ICONST_1 else Opcodes.ICONST_0)
                 }
                 //unboxed primitives can never be null
                 secondType == Type.Null && firstType.isUnboxedPrimitive()-> {
-                    stackMap.push(Type.BoolT)
+                    stackMap.push(Type.BoolUnknown)
                     mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_1 else Opcodes.ICONST_0)
                 }
                 //unboxed primitives can never be null
                 firstType == Type.Null && secondType.isUnboxedPrimitive()-> {
-                    stackMap.push(Type.BoolT)
+                    stackMap.push(Type.BoolUnknown)
                     mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_1 else Opcodes.ICONST_0)
                 }
                 secondType == Type.Null -> {
@@ -889,7 +891,7 @@ fun compileComparison(
                     stackMap.generateFrame(mv)
                     mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_0 else Opcodes.ICONST_1)
                     mv.visitLabel(end)
-                    stackMap.push(Type.BoolT)
+                    stackMap.push(Type.BoolUnknown)
                     stackMap.generateFrame(mv)
                 }
                 firstType == Type.Null -> {
@@ -904,7 +906,7 @@ fun compileComparison(
                     stackMap.generateFrame(mv)
                     mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_0 else Opcodes.ICONST_1)
                     mv.visitLabel(end)
-                    stackMap.push(Type.BoolT)
+                    stackMap.push(Type.BoolUnknown)
                     stackMap.generateFrame(mv)
                 }
                 //complex objects so we have a .equals method
@@ -923,7 +925,7 @@ fun compileComparison(
                         false
                     )
                     stackMap.pop(2)
-                    stackMap.push(Type.BoolT)
+                    stackMap.push(Type.BoolUnknown)
                     if (instruction.op == CompareOp.Neq) {
                         val toFalse = Label()
                         val end = Label()
@@ -1023,13 +1025,13 @@ private fun compileNumberComparison(
     //mv.visitFrame(Opcodes.F_APPEND, 0, emptyArray(), 1, arrayOf(Opcodes.INTEGER))
     mv.visitInsn(Opcodes.ICONST_0)
     mv.visitLabel(end)
-    stackMap.push(Type.BoolT)
+    stackMap.push(Type.BoolUnknown)
     stackMap.generateFrame(mv)
 
 }
 
 fun Type.asUnboxed() = when (this) {
-    Type.BoolT, Type.Bool-> Type.BoolT
+    is Type.BoolT, Type.Bool-> Type.BoolUnknown
     Type.DoubleT, Type.Double -> Type.DoubleT
     Type.IntT, Type.Int -> Type.IntT
     else -> error("Cannot unbox $this")

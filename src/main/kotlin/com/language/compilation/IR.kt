@@ -236,7 +236,7 @@ sealed class Instruction {
                     when(arrayType) {
                         ArrayType.Int -> if (!itemType.isContainedOrEqualTo(Type.IntT)) error("Type Error Primitive Int array can only hold IntT")
                         ArrayType.Double -> if (!itemType.isContainedOrEqualTo(Type.DoubleT)) error("Type Error Primitive Int array can only hold DoubleT")
-                        ArrayType.Bool -> if (!itemType.isContainedOrEqualTo(Type.BoolT)) error("Type Error Primitive Int array can only hold BoolT")
+                        ArrayType.Bool -> if (!itemType.isContainedOrEqualTo(Type.BoolUnknown)) error("Type Error Primitive Int array can only hold BoolT")
                         ArrayType.Object -> {}
                     }
                     return TypedInstruction.LoadArray(typedItems, arrayType, itemType, indexStorage.id, arrayStorage.id)
@@ -303,7 +303,7 @@ sealed class Instruction {
     data class If(val cond: Instruction, val body: Instruction, val elseBody: Instruction?) : Instruction() {
         override suspend fun inferTypes(variables: VariableMapping, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction = coroutineScope {
             val cond = cond.inferTypes(variables, lookup, handle)
-            if (cond.type != Type.BoolT) {
+            if (cond.type !is Type.BoolT) {
                 error("Condition must be of type boolean but was ${cond.type}")
             }
             val bodyVars = variables.clone()
@@ -365,7 +365,7 @@ sealed class Instruction {
     data class While(val cond: Instruction, val body: Instruction) : Instruction() {
         override suspend fun inferTypes(variables: VariableMapping, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
             val cond = cond.inferTypes(variables, lookup, handle)
-            if (cond.type != Type.BoolT) {
+            if (cond.type !is Type.BoolT) {
                 error("Condition must be of type boolean vzt us")
             }
             val bodyScope = variables.clone()
@@ -782,7 +782,7 @@ enum class ArrayType {
 }
 
 
-fun Type.isCollectable(lookup: IRLookup): Boolean {
+suspend fun Type.isCollectable(lookup: IRLookup): Boolean {
     return this is Type.Array || lookup.typeHasInterface(this, SignatureString("java::util::Collection"))
 }
 
@@ -799,6 +799,9 @@ sealed interface Type {
         val Double = BasicJvmType(SignatureString("java::lang::Double"))
         val Bool = BasicJvmType(SignatureString("java::lang::Boolean"))
         val Object = BasicJvmType(SignatureString("java::lang::Object"))
+        val BoolTrue = BoolT(true)
+        val BoolFalse = BoolT(false)
+        val BoolUnknown = BoolT(null)
     }
     sealed interface JvmType : Type {
         val signature: SignatureString
@@ -819,8 +822,17 @@ sealed interface Type {
         override val size: Int = 1
     }
 
-    data object BoolT : Type {
-        override val size: Int = 1
+    data class BoolT(val boolValue: Boolean?) : Type {
+        override val size: Int
+            get() = 1
+
+        override fun equals(other: Any?): Boolean {
+            return other is BoolT && if (boolValue != null) other.boolValue == boolValue else true
+        }
+
+        override fun hashCode(): Int {
+            return boolValue?.hashCode() ?: 0
+        }
     }
 
     data object IntT : Type {
@@ -839,6 +851,10 @@ sealed interface Type {
 
     //this is not null but represents an instruction not producing a value on the stack whatsoever
     data object Nothing : Type {
+        override val size: Int = 0
+    }
+
+    data object Never : Type {
         override val size: Int = 0
     }
 
@@ -880,13 +896,15 @@ fun Type.assertIsInstanceOf(other: Type) {
 
 fun Type.join(other: Type): Type {
     val result = when {
+        other == Type.Never -> this
+        this == Type.Never -> other
         this is Type.Union && other is Type.Union -> Type.Union((entries.toList() + other.entries.toList()).toSet())
         this is Type.Union -> Type.Union((entries.toList() + other).toSet())
         other is Type.Union -> Type.Union((other.entries.toList() + this).toSet())
         else -> Type.Union(setOf(this, other))
     }
     return when {
-        result.entries.size == 1 -> result.entries.first()
+        result is Type.Union && result.entries.size == 1 -> result.entries.first()
         else -> result
     }
 }
@@ -975,13 +993,13 @@ data class IRFunction(val args: List<String>, val body: Instruction, val imports
 fun Type.isNumType() = isInt() || isDouble()
 fun Type.isInt() = this == Type.Int || this == Type.IntT
 fun Type.isDouble() = this == Type.Double || this == Type.DoubleT
-fun Type.isBoolean() = this == Type.Bool || this == Type.BoolT
+fun Type.isBoolean() = this == Type.Bool || this is Type.BoolT
 fun Type.isBoxedPrimitive() = this == Type.Int || this == Type.Double || this == Type.Bool
-fun Type.isUnboxedPrimitive() = this == Type.IntT || this == Type.BoolT || this == Type.DoubleT
+fun Type.isUnboxedPrimitive() = this == Type.IntT || this is Type.BoolT || this == Type.DoubleT
 fun Type.asBoxed(): Type = when(this) {
     Type.IntT -> Type.Int
     Type.DoubleT -> Type.Double
-    Type.BoolT -> Type.Bool
+    is Type.BoolT -> Type.Bool
     is Type.Union -> Type.Union(entries.map { it.asBoxed() }.toSet())
     else -> this
 }

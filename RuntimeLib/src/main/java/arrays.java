@@ -1,4 +1,8 @@
+import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.NotNull;
+
 import java.util.Arrays;
+import java.util.Objects;
 
 public class arrays {
 
@@ -6,19 +10,22 @@ public class arrays {
         return array.length;
     }
 
-    public static Object get(Object[] array, int index) {
+    @Contract(pure = true)
+    public static @NotNull Object get(@NotNull Object[] array, int index) {
         return array[index];
     }
 
-    public static int get(int[] array, int index) {
+    @Contract(pure = true)
+    public static int get(int @NotNull [] array, int index) {
         return array[index];
     }
 
-    public static double get(double[] array, int index) {
+    @Contract(pure = true)
+    public static double get(double @NotNull [] array, int index) {
         return array[index];
     }
 
-    public static boolean get(boolean[] array, int index) {
+    public static boolean get(boolean @NotNull [] array, int index) {
         return array[index];
     }
 

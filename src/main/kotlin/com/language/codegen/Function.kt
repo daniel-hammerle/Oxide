@@ -33,10 +33,11 @@ suspend fun compileCheckedFunction(
     //return
     when(body.type) {
         is Type.JvmType, Type.Null, is Type.Union -> mv.visitInsn(Opcodes.ARETURN)
-        Type.IntT, Type.BoolT -> mv.visitInsn(Opcodes.IRETURN)
+        Type.IntT,is Type.BoolT -> mv.visitInsn(Opcodes.IRETURN)
         Type.DoubleT -> mv.visitInsn(Opcodes.DRETURN)
         Type.Nothing -> mv.visitInsn(Opcodes.RETURN)
         is Type.Array -> mv.visitInsn(Opcodes.ARETURN)
+        Type.Never -> error("Never Return branch cannot be reached")
     }
 }
 
@@ -50,11 +51,12 @@ fun Type.BroadType.toFunctionNameNotation() = when(this) {
 }
 
 fun Type.toFunctionNameNotation(): String = when(this) {
-    Type.BoolT -> "z"
+    is Type.BoolT -> "z"
     Type.DoubleT -> "d"
     Type.IntT -> "i"
     is Type.BasicJvmType -> "${signature.toJvmNotation()}${genericTypes.values.joinToString("") { it.toFunctionNameNotation() }}"
     Type.Nothing -> "v"
+    Type.Never -> "v"
     Type.Null -> "n"
     is Type.Array -> "${itemType.toJVMDescriptor().removeSuffix(";").removePrefix("L")}]"
     is Type.Union -> "u(${entries.joinToString("") { it.toFunctionNameNotation() }})"

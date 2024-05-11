@@ -17,7 +17,7 @@ sealed interface TypedInstruction {
         override val type: Type = Type.DoubleT
     }
     data class LoadConstBoolean(val value: Boolean): TypedInstruction {
-        override val type: Type = Type.BoolT
+        override val type: Type = if(value) Type.BoolTrue else Type.BoolFalse
     }
 
     data class Try(val parent: TypedInstruction, val errorTypes: List<SignatureString>): TypedInstruction {
@@ -100,7 +100,7 @@ sealed interface TypedInstruction {
         val second: TypedInstruction,
         val op: CompareOp
     ) : TypedInstruction {
-        override val type: Type = Type.BoolT
+        override val type: Type = Type.BoolUnknown
     }
 
     data class ConstructorCall(

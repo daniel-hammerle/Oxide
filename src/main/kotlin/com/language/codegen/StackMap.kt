@@ -200,9 +200,10 @@ data class StackFrame(val variables: List<Type?>, val stack: Array<Type?>) {
 }
 
 fun Type.toFrameSignature(): Any = when(this) {
-    Type.BoolT -> Opcodes.INTEGER
+    is Type.BoolT -> Opcodes.INTEGER
     Type.DoubleT -> Opcodes.DOUBLE
     Type.IntT -> Opcodes.INTEGER
+    Type.Never -> error("Never can't be on a stack")
     is Type.BasicJvmType -> signature.toJvmNotation()
     Type.Nothing -> error("Nothing can't be on a stack")
     Type.Null -> "java/lang/Object"
