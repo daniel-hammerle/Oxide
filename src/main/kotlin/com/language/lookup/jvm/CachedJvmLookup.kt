@@ -51,5 +51,9 @@ class CachedJvmLookup(
         return getClass(className).lookupConstructor(argTypes)
     }
 
+    override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int>? {
+        TODO("Not yet implemented")
+    }
+
 
 }

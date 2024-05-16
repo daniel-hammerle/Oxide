@@ -97,7 +97,7 @@ fun Type.toJVMDescriptor(): String = when(this) {
     is Type.BoolT -> "Z"
     is Type.JvmType -> "L${signature.toJvmNotation()};"
     Type.Nothing, Type.Never -> "V"
-    is Type.Array -> "[${if (this.itemType.isUnboxedPrimitive()) itemType.toJVMDescriptor() else Type.Object.toJVMDescriptor()}"
+    is Type.Array -> "[${if (this.itemType.getOrDefault(Type.Object).isUnboxedPrimitive()) itemType.getOrDefault(Type.Object).toJVMDescriptor() else Type.Object.toJVMDescriptor()}"
     //null has to be of some type, so we'll just make it object
     Type.Null -> "Ljava/lang/Object;"
     //unions will just be Objects

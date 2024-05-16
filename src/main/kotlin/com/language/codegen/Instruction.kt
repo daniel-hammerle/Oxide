@@ -512,7 +512,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 }
 
             }
-            stackMap.push(Type.Array(instruction.type))
+            stackMap.push(Type.Array(instruction.itemType))
         }
 
         is TypedInstruction.ForLoop -> {

@@ -32,20 +32,21 @@ sealed interface TypedInstruction {
         )
     }
 
-    data class LoadArray(val items: List<TypedConstructingArgument>, val arrayType: ArrayType, val itemType: Type, val tempIndexVarId: Int, val tempArrayVarId: Int) : TypedInstruction {
+    data class LoadArray(val items: List<TypedConstructingArgument>, val arrayType: ArrayType, val itemType: Type.BroadType, val tempIndexVarId: Int, val tempArrayVarId: Int) : TypedInstruction {
         override val type: Type = when(arrayType) {
-            ArrayType.Object -> Type.Array(itemType.asBoxed())
+            ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
             else -> Type.Array(itemType)
         }
     }
+
 
     data class ForLoop(val parent: TypedInstruction, val itemId: Int, val hasNextCall: FunctionCandidate, val nextCall: FunctionCandidate, val body: TypedInstruction) : TypedInstruction {
         override val type: Type = Type.Nothing
     }
 
-    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type) : TypedInstruction {
+    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.BroadType) : TypedInstruction {
         override val type: Type = when(arrayType) {
-            ArrayType.Object -> Type.Array(itemType.asBoxed())
+            ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
             else -> Type.Array(itemType)
         }
     }

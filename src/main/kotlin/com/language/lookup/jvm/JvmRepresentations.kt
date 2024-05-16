@@ -91,7 +91,7 @@ data class JvmClassRepresentation(
 
     private fun toType() = Type.BasicJvmType(
         SignatureString.fromDotNotation(clazz.name),
-        clazz.typeParameters.associate { it.name to Type.BroadType.Unknown } as LinkedHashMap<String, Type.BroadType>
+        clazz.typeParameters.associate { it.name to Type.BroadType.Unset } as LinkedHashMap<String, Type.BroadType>
     )
 
     fun lookupConstructor(argTypes: List<Type>): FunctionCandidate? {
@@ -118,7 +118,7 @@ fun Field.toType(generics: Map<String, Type.BroadType>) = genericType.toType(gen
 
 fun ReflectType.toType(generics: Map<String, Type.BroadType>) = when(val tp = generics[typeName]) {
     is Type.BroadType.Known -> tp.type
-    Type.BroadType.Unknown -> Type.Object
+    Type.BroadType.Unset -> Type.Object
     null -> null
 }
 

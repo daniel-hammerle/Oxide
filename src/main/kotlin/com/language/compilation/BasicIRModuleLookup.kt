@@ -234,7 +234,7 @@ class BasicIRModuleLookup(
                 val method = loadMethod(instance.signature, funcName, argTypes)
 
                 val returnType = when (val tp = instance.genericTypes[method.genericReturnType.typeName]) {
-                    is Type.BroadType.Unknown -> Type.Object
+                    is Type.BroadType.Unset -> Type.Object
                     is Type.BroadType.Known -> tp.type
                     else -> method.returnType.toType()
                 }
@@ -393,8 +393,8 @@ class BasicIRModuleLookup(
         return externalJars.loadClass(type.signature.toDotNotation())
     }
 
-    override suspend fun TemplatedType.populate(generics: LinkedHashMap<String, Type>): Type = when(this) {
-        is TemplatedType.Array -> Type.Array(itemType.populate(generics))
+    override suspend fun TemplatedType.populate(generics: Map<String, Type>): Type = when(this) {
+        is TemplatedType.Array -> Type.Array(Type.BroadType.Known(itemType.populate(generics)))
         is TemplatedType.Complex -> {
             val availableGenerics = signatureGetGenerics(signatureString)
             val entries = availableGenerics.toList().mapIndexed { index, s ->
@@ -421,9 +421,9 @@ fun Class<*>.toType(): Type {
         "boolean" -> Type.BoolUnknown
         else -> {
             if (name.startsWith("[")) {
-                return Type.Array(Class.forName(name.removePrefix("[L").removeSuffix(";")).toType())
+                return Type.Array(Type.BroadType.Known(Class.forName(name.removePrefix("[L").removeSuffix(";")).toType()))
             }
-            val generics = linkedMapOf(*typeParameters.map { it.typeName to Type.BroadType.Unknown as Type.BroadType }.toTypedArray())
+            val generics = linkedMapOf(*typeParameters.map { it.typeName to Type.BroadType.Unset as Type.BroadType }.toTypedArray())
             Type.BasicJvmType(SignatureString.fromDotNotation(name), generics)
         }
     }

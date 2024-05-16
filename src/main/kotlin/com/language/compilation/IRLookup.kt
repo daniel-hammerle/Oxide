@@ -80,5 +80,5 @@ interface IRLookup {
 
     suspend fun satisfiesModifiers(instance: Type, modifiers: Modifiers): Boolean
 
-    suspend fun TemplatedType.populate(generics: LinkedHashMap<String, Type>): Type
+    suspend fun TemplatedType.populate(generics: Map<String, Type>): Type
 }

@@ -31,7 +31,7 @@ fun evaluateReturnType(arguments: List<Type>, generics: Map<String, Type.BroadTy
 
     val normalReturnType = when(val tp = generics[method.genericReturnType.typeName]) {
         is Type.BroadType.Known -> tp.type
-        Type.BroadType.Unknown -> Type.Object
+        Type.BroadType.Unset -> Type.Object
         null -> method.returnType.toType()
     }
 

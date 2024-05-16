@@ -208,5 +208,5 @@ fun Type.toFrameSignature(): Any = when(this) {
     Type.Nothing -> error("Nothing can't be on a stack")
     Type.Null -> "java/lang/Object"
     is Type.Union -> "java/lang/Object"
-    is Type.Array -> "[${itemType.toJVMDescriptor()}"
+    is Type.Array -> "[${itemType.getOrDefault(Type.Object).toJVMDescriptor()}"
 }

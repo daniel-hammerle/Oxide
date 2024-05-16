@@ -224,22 +224,31 @@ sealed class Instruction {
 
         private suspend fun constArray(variables: VariableMapping, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction.LoadConstArray {
             val typedItems = items.map { (it as ConstructingArgument.Normal).item.inferTypes(variables, lookup, handle) }
-            val itemType = typedItems.map { it.type }.reduce { acc, type -> acc.join(type) }
-            return TypedInstruction.LoadConstArray(typedItems, arrayType, itemType)
+            val itemType = typedItems.map { it.type }.reduceOrNull { acc, type -> acc.join(type) }
+            val broadType = itemType
+                ?.let { Type.BroadType.Known(it) }
+                ?: Type.BroadType.Unset
+            return TypedInstruction.LoadConstArray(typedItems, arrayType, broadType)
         }
 
         private suspend fun notConstArray(variables: VariableMapping, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction.LoadArray {
             TempVariable(variables, Type.IntT).use { indexStorage ->
                 val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
-                val itemType = typedItems.map { it.type }.reduce { acc, type -> acc.join(type) }
-                TempVariable(variables, Type.Array(itemType)).use { arrayStorage ->
+                val itemType = typedItems
+                    .map { it.type }
+                    .reduceOrNull { acc, type -> acc.join(type) }
+
+                val broadType = itemType
+                    ?.let { Type.BroadType.Known(it) }
+                    ?: Type.BroadType.Unset
+                TempVariable(variables, Type.Array(broadType)).use { arrayStorage ->
                     when(arrayType) {
-                        ArrayType.Int -> if (!itemType.isContainedOrEqualTo(Type.IntT)) error("Type Error Primitive Int array can only hold IntT")
-                        ArrayType.Double -> if (!itemType.isContainedOrEqualTo(Type.DoubleT)) error("Type Error Primitive Int array can only hold DoubleT")
-                        ArrayType.Bool -> if (!itemType.isContainedOrEqualTo(Type.BoolUnknown)) error("Type Error Primitive Int array can only hold BoolT")
+                        ArrayType.Int -> if (itemType?.isContainedOrEqualTo(Type.IntT) != true) error("Type Error Primitive Int array can only hold IntT")
+                        ArrayType.Double -> if (itemType?.isContainedOrEqualTo(Type.DoubleT) != true) error("Type Error Primitive Int array can only hold DoubleT")
+                        ArrayType.Bool -> if (itemType?.isContainedOrEqualTo(Type.BoolUnknown) != true) error("Type Error Primitive Int array can only hold BoolT")
                         ArrayType.Object -> {}
                     }
-                    return TypedInstruction.LoadArray(typedItems, arrayType, itemType, indexStorage.id, arrayStorage.id)
+                    return TypedInstruction.LoadArray(typedItems, arrayType, broadType, indexStorage.id, arrayStorage.id)
                 }
             }
         }
@@ -745,6 +754,10 @@ sealed interface IRPattern {
     }
 }
 
+inline fun Type.BroadType.mapKnown(closure: (tp: Type) -> Type) = when(this) {
+    is Type.BroadType.Known -> Type.BroadType.Known(closure(type))
+    Type.BroadType.Unset -> this
+}
 
 
 fun Type.intersectsWith(other: Type): Boolean = when {
@@ -757,8 +770,8 @@ fun Type.intersectsWith(other: Type): Boolean = when {
 
 fun Type.BroadType.isContainedOrEqualTo(other: Type.BroadType) = when {
     this == other -> true
-    this is Type.BroadType.Unknown && other is Type.BroadType.Known -> false
-    other is Type.BroadType.Unknown && this is Type.BroadType.Known -> false
+    this is Type.BroadType.Unset && other is Type.BroadType.Known -> false
+    other is Type.BroadType.Unset && this is Type.BroadType.Known -> false
     this is Type.BroadType.Known && other is Type.BroadType.Known -> type.isContainedOrEqualTo(other.type)
     else -> error("Unreachable")
 }
@@ -805,20 +818,20 @@ sealed interface Type {
     }
     sealed interface JvmType : Type {
         val signature: SignatureString
-        val genericTypes: LinkedHashMap<String, BroadType>
+        val genericTypes: Map<String, BroadType>
     }
 
     sealed interface BroadType {
-        data object Unknown : BroadType
+        data object Unset : BroadType
         data class Known(val type: Type): BroadType
     }
 
 
-    data class BasicJvmType(override val signature: SignatureString, override val genericTypes: LinkedHashMap<String, BroadType> = linkedMapOf()): JvmType {
+    data class BasicJvmType(override val signature: SignatureString, override val genericTypes: Map<String, BroadType> = mapOf()): JvmType {
         override val size: Int = 1
     }
 
-    data class Array(val itemType: Type) : Type {
+    data class Array(val itemType: BroadType) : Type {
         override val size: Int = 1
     }
 
@@ -861,10 +874,10 @@ sealed interface Type {
 }
 
 fun Type.JvmType.extendGeneric(name: String, type: Type): Type.JvmType {
-    val generics = genericTypes
+    val generics = genericTypes.toMutableMap()
     when (val tp = generics[name]) {
         is Type.BroadType.Known -> generics[name] = Type.BroadType.Known(tp.type.join(type))
-        Type.BroadType.Unknown -> generics[name] = Type.BroadType.Known(type)
+        Type.BroadType.Unset -> generics[name] = Type.BroadType.Known(type)
         null -> error("No generic type $name")
     }
 

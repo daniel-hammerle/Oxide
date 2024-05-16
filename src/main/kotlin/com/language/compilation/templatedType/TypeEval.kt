@@ -37,7 +37,7 @@ suspend fun TemplatedType.matches(
             }
             type.genericTypes.entries.zip(this.generics).forEach { (entry, template) ->
                 when(val v = entry.value) {
-                    is Type.BroadType.Unknown -> error("UNknwown type")
+                    is Type.BroadType.Unset -> error("UNknwown type")
                     is Type.BroadType.Known -> when (template.matches(v.type, generics, modifiers, lookup)) {
                         false-> return false
                         else -> {}
@@ -56,11 +56,25 @@ suspend fun TemplatedType.matches(
             generics.apply { put(name, get(name)?.join(type) ?: type) }
             true
         }
-        is TemplatedType.Array ->type is Type.Array
+        is TemplatedType.Array -> {
+            type is Type.Array && itemType.matches(type.itemType, generics, modifiers, lookup)
+        }
         TemplatedType.BoolT ->type is Type.BoolT
         TemplatedType.DoubleT ->type == Type.DoubleT
         TemplatedType.IntT -> type == Type.IntT
         TemplatedType.Null -> type == Type.Null
+    }
+}
+
+suspend fun TemplatedType.matches(
+    type: Type.BroadType,
+    generics: MutableMap<String, Type> = mutableMapOf(),
+    modifiers: Map<String, Modifiers>,
+    lookup: IRLookup
+): Boolean {
+    return when(type) {
+        is Type.BroadType.Known -> matches(type.type, generics, modifiers, lookup)
+        Type.BroadType.Unset -> error("")
     }
 }
 

@@ -1,7 +1,6 @@
 package com.language.codegen
 
 import com.language.compilation.*
-import com.language.compilation.metadata.MetaDataHandle
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
@@ -47,7 +46,12 @@ fun jvmName(name: String, argTypes: List<Type>): String {
 
 fun Type.BroadType.toFunctionNameNotation() = when(this) {
     is Type.BroadType.Known -> type.toFunctionNameNotation()
-    Type.BroadType.Unknown -> "unknown"
+    Type.BroadType.Unset -> "unknown"
+}
+
+fun Type.BroadType.getOrDefault(type: Type): Type = when(this) {
+    is Type.BroadType.Known -> this.type
+    Type.BroadType.Unset -> type
 }
 
 fun Type.toFunctionNameNotation(): String = when(this) {
@@ -58,6 +62,6 @@ fun Type.toFunctionNameNotation(): String = when(this) {
     Type.Nothing -> "v"
     Type.Never -> "v"
     Type.Null -> "n"
-    is Type.Array -> "${itemType.toJVMDescriptor().removeSuffix(";").removePrefix("L")}]"
+    is Type.Array -> "${itemType.getOrDefault(Type.Object).toJVMDescriptor().removeSuffix(";").removePrefix("L")}]"
     is Type.Union -> "u(${entries.joinToString("") { it.toFunctionNameNotation() }})"
 }
