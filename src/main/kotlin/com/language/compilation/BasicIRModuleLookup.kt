@@ -4,13 +4,14 @@ import com.language.TemplatedType
 import com.language.codegen.toJVMDescriptor
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.templatedType.matches
+import com.language.lookup.IRLookup
 import org.objectweb.asm.Opcodes
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
 class BasicIRModuleLookup(
-    override val nativeModules: Set<IRModule>,
+    val nativeModules: Set<IRModule>,
     private val externalJars: ClassLoader,
     private val allowedImplBlocks: Map<TemplatedType, Set<IRImpl>> = emptyMap()
 ) : IRLookup {

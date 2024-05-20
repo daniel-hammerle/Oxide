@@ -12,9 +12,6 @@ class IRModuleLookup(
     private val oxideLookup: OxideLookup
 ) : IRLookup {
 
-    override val nativeModules: Set<IRModule>
-        get() = TODO("Not yet implemented")
-
     override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int> {
         return oxideLookup.lookUpGenericTypes(instance, funcName, argTypes)
             ?: jvmLookup.lookUpGenericTypes(instance, funcName, argTypes)
@@ -66,7 +63,7 @@ class IRModuleLookup(
     }
 
     override suspend fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate {
-        return oxideLookup.lookupConstructor(className, argTypes, this)
+        return runCatching { oxideLookup.lookupConstructor(className, argTypes, this) }.getOrNull()
             ?: jvmLookup.lookupConstructor(className, argTypes)
             ?: error("NO constructor found for $className($argTypes)")
     }
@@ -106,7 +103,7 @@ class IRModuleLookup(
 
 
     private suspend fun getStructGenerics(structSig: SignatureString): Map<String, Modifiers> {
-        return oxideLookup.lookupStructGenericModifiers(structSig)
+        return runCatching { oxideLookup.lookupStructGenericModifiers(structSig) }.getOrNull() ?: emptyMap()
     }
 
     override suspend fun TemplatedType.populate(generics: Map<String, Type>): Type = when(this) {

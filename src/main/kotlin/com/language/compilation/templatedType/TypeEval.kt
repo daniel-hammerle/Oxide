@@ -1,7 +1,7 @@
 package com.language.compilation.templatedType
 
 import com.language.TemplatedType
-import com.language.compilation.IRLookup
+import com.language.lookup.IRLookup
 import com.language.compilation.Type
 import com.language.compilation.join
 import com.language.compilation.modifiers.Modifiers

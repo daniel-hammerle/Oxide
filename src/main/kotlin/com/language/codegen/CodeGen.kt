@@ -7,10 +7,10 @@ import kotlinx.coroutines.sync.withLock
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
-suspend fun compileProject(lookup: IRLookup): Map<SignatureString, ByteArray> = coroutineScope {
+suspend fun compileProject(modules: Set<IRModule>): Map<SignatureString, ByteArray> = coroutineScope {
     val mutex = Mutex()
     val entries = mutableMapOf<SignatureString, ByteArray>()
-    lookup.nativeModules.map { module ->
+    modules.map { module ->
         launch {
             val modPath = module.name
             val (modCode, structCode, implBlocks)  = compileModule(module)

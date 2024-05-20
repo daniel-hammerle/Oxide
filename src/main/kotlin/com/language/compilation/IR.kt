@@ -10,6 +10,7 @@ import com.language.compilation.metadata.FunctionMetaDataHandle
 import com.language.compilation.metadata.MetaDataHandle
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
+import com.language.lookup.IRLookup
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex

@@ -1,11 +1,13 @@
-package com.language.compilation
+package com.language.lookup
 
 import com.language.TemplatedType
+import com.language.compilation.FunctionCandidate
+import com.language.compilation.SignatureString
+import com.language.compilation.Type
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 
 interface IRLookup {
-    val nativeModules: Set<IRModule>
 
     /**
      * It looks up what arguments of a function are generic and returns a map

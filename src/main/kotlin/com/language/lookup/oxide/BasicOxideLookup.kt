@@ -4,15 +4,16 @@ import com.language.TemplatedType
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.templatedType.matches
+import com.language.lookup.IRLookup
 import org.objectweb.asm.Opcodes
 
 class BasicOxideLookup(
-    val modules: Map<SignatureString, IRModule>,
-    val allowedImplBlocks: Map<TemplatedType, Set<IRImpl>>
+    private val modules: Map<SignatureString, IRModule>,
+    private val allowedImplBlocks: Map<TemplatedType, Set<IRImpl>>
 ) : OxideLookup {
     override fun newModFrame(modNames: Set<SignatureString>): OxideLookup {
         val newImplBlocks: MutableMap<TemplatedType, MutableSet<IRImpl>> = mutableMapOf()
-        modules.filter { it.key in modNames }.forEach { (name, mod) ->
+        modules.filter { it.key in modNames }.forEach { (_, mod) ->
             mod.implBlocks.forEach { (type, block) ->
                 newImplBlocks[type]?.addAll(block) ?: newImplBlocks.put(type, block.toMutableSet())
             }
@@ -34,7 +35,7 @@ class BasicOxideLookup(
     ): FunctionCandidate {
         val mod = modules[module] ?: error("No Module found with name `$module`")
         val func = mod.functions[funcName] ?: error("No Function `$funcName` on module `$module`")
-        val returnType = func.inferTypes(args, lookup, emptyMap())
+        val returnType = runCatching { func.inferTypes(args, lookup, emptyMap()) }.getOrElse { it.printStackTrace(); throw it }
 
         return FunctionCandidate(
             oxideArgs = args,
@@ -55,18 +56,18 @@ class BasicOxideLookup(
             blocks.forEach { impl ->
                 if (funcName in impl.methods && template.matches(instance, generics, impl.genericModifiers, lookup)) {
                     val func = impl.methods[funcName]!!
-                    val returnType = func.inferTypes(args, lookup, generics)
+                    val returnType = func.inferTypes(listOf(instance) + args, lookup, generics)
 
                     return FunctionCandidate(
-                        oxideArgs = args,
-                        jvmArgs = args.map { it.toActualJvmType() },
+                        oxideArgs = listOf(instance) + args,
+                        jvmArgs = listOf(instance) + args.map { it.toActualJvmType() },
                         jvmReturnType = returnType.toActualJvmType(),
                         oxideReturnType = returnType,
                         Opcodes.INVOKESTATIC,
                         impl.fullSignature,
                         funcName,
                         obfuscateName = true,
-                        requireDispatch = instance is Type.Union
+                        requireDispatch = false
                     )
                 }
             }
@@ -101,7 +102,7 @@ class BasicOxideLookup(
                 }
             }
         }
-        error("No asssociated function found method found")
+        error("No associated function found method found")
     }
 
     override suspend fun lookupConstructor(structName: SignatureString, args: List<Type>, lookup: IRLookup): FunctionCandidate {
@@ -173,8 +174,10 @@ class BasicOxideLookup(
 
 
 suspend fun IRStruct.getDefaultVariant(lookup: IRLookup): Map<String, Type> {
-    val defaultGenerics = generics.mapValues { _ -> Type.Object  }
-    return defaultVariant ?: fields
-        .mapValues { (_, tp) -> with(lookup) { tp.populate(defaultGenerics) } }
-        .also { setDefaultVariant(it) }
+    kotlin.runCatching {
+        val defaultGenerics = generics.mapValues { _ -> Type.Object  }
+        return defaultVariant ?: fields
+            .mapValues { (_, tp) -> with(lookup) { tp.populate(defaultGenerics) } }
+            .also { setDefaultVariant(it) }
+    }.getOrElse { it.printStackTrace(); throw it }
 }

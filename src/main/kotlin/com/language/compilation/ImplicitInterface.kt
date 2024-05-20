@@ -1,5 +1,7 @@
 package com.language.compilation
 
+import com.language.lookup.IRLookup
+
 interface ImplicitInterface {
     val functions: Map<String, Pair<List<Type>, suspend (type: Type, lookUp: IRLookup) -> Boolean>>
 

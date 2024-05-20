@@ -3,6 +3,9 @@ package com.language.controlflow
 import com.language.compilation.*
 import com.language.createZipFile
 import com.language.lexer.lexCode
+import com.language.lookup.IRModuleLookup
+import com.language.lookup.jvm.CachedJvmLookup
+import com.language.lookup.oxide.BasicOxideLookup
 import com.language.parser.parse
 import kotlinx.coroutines.*
 import java.io.File
@@ -33,7 +36,7 @@ fun compileProject(fileName: String) {
         val lookup = BasicModuleLookup(module, SignatureString("main"), mapOf(SignatureString("main") to module), extensionClassLoader)
 
         val result = compile(lookup)
-        val irLookup =  BasicIRModuleLookup(setOf(result), extensionClassLoader)
+        val irLookup =  IRModuleLookup(CachedJvmLookup(extensionClassLoader), BasicOxideLookup(mapOf(result.name to result), emptyMap()))
 
         val (type, typeCheckingTime) = measureTime {
             runBlocking {
@@ -47,7 +50,7 @@ fun compileProject(fileName: String) {
         val (project, compilationTime) = measureTime {
             runBlocking {
                 scope.async {
-                    com.language.codegen.compileProject(irLookup)
+                    com.language.codegen.compileProject(setOf(result))
                 }.await()
             }
         }

@@ -2,7 +2,7 @@ package com.language.lookup.oxide
 
 import com.language.TemplatedType
 import com.language.compilation.FunctionCandidate
-import com.language.compilation.IRLookup
+import com.language.lookup.IRLookup
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
 import com.language.compilation.modifiers.Modifiers
