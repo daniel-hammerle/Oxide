@@ -44,6 +44,15 @@ sealed interface TypedInstruction {
         override val type: Type = Type.Nothing
     }
 
+    data class Keep(
+        val value: TypedInstruction,
+        val fieldName: String,
+        val parentName: SignatureString
+    ): TypedInstruction {
+        override val type: Type
+            get() = value.type.asBoxed()
+    }
+
     data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.BroadType) : TypedInstruction {
         override val type: Type = when(arrayType) {
             ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })

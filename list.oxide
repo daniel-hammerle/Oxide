@@ -1,6 +1,7 @@
 use java::util::{ArrayList, HashMap}
 use java::lang::System
 
+
 func main {
     input = input()
     bool = input.try_bool().orDefault(false)

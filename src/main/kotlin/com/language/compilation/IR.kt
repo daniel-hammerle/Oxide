@@ -214,6 +214,23 @@ sealed class Instruction {
         }
     }
 
+    data class Keep(val value: Instruction, val name: String, val ownerSig: SignatureString): Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableMapping,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
+            val valueIns = value.inferTypes(variables, lookup, handle)
+            when (valueIns.type) {
+                Type.Nothing -> error("Cannot keep instance of nothing")
+                else -> {}
+            }
+            handle.appendKeepBlock(name, valueIns.type)
+            return TypedInstruction.Keep(valueIns, name, ownerSig)
+        }
+
+    }
+
     data class ConstArray(val arrayType: ArrayType, val items: List<ConstructingArgument>) : Instruction() {
 
         override suspend fun inferTypes(variables: VariableMapping, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
@@ -977,6 +994,8 @@ data class IRFunction(val args: List<String>, val body: Instruction, val imports
     private val mutex = Mutex()
     private val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, FunctionMetaData>> = mutableMapOf()
 
+    val keepBlocks: MutableMap<String, Type> = mutableMapOf()
+
     fun checkedVariantsUniqueJvm(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>> {
         return checkedVariants
     }
@@ -997,6 +1016,7 @@ data class IRFunction(val args: List<String>, val body: Instruction, val imports
         val returnType = if (requireImplicitNull) Type.Null else result.type
         metaDataHandle.issueReturnTypeAppend(returnType)
         mutex.withLock {
+            keepBlocks.putAll(metaDataHandle.keepBlocks)
             checkedVariants[argTypes] = (if (requireImplicitNull) TypedInstruction.MultiInstructions(listOf(result, TypedInstruction.Null), variables.toVarFrame()) else result) to metaDataHandle.apply { varCount = variables.varCount() }.toMetaData()
         }
         return returnType

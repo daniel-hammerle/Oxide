@@ -559,6 +559,33 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 stackMap.generateFrame(mv)
             }
         }
+
+        is TypedInstruction.Keep -> {
+            mv.visitFieldInsn(
+                Opcodes.GETSTATIC,
+                instruction.parentName.toJvmNotation(),
+                instruction.fieldName,
+                instruction.type.toJVMDescriptor()
+            )
+            stackMap.push(instruction.value.type)
+            val skip = Label()
+            mv.visitInsn(Opcodes.DUP)
+            mv.visitJumpInsn(Opcodes.IFNONNULL, skip)
+            mv.visitInsn(Opcodes.POP)
+            stackMap.pop()
+
+            compileInstruction(mv, instruction.value, stackMap)
+            boxOrIgnore(mv, instruction.type)
+            mv.visitInsn(Opcodes.DUP)
+            mv.visitFieldInsn(
+                Opcodes.PUTSTATIC,
+                instruction.parentName.toJvmNotation(),
+                instruction.fieldName,
+                instruction.type.toJVMDescriptor()
+            )
+            stackMap.generateFrame(mv)
+            mv.visitLabel(skip)
+        }
     }
 }
 

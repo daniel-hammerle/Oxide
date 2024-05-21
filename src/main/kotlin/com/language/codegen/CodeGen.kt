@@ -81,6 +81,15 @@ suspend fun compileModule(module: IRModule): CompiledModuleOutput = coroutineSco
     )
 
     module.functions.flatMap { (name, function) ->
+        function.keepBlocks.forEach { (name, type) ->
+            cw.visitField(
+                Opcodes.ACC_STATIC or Opcodes.ACC_PRIVATE,
+                name,
+                type.toJVMDescriptor(),
+                null,
+                null
+            )
+        }
         function.checkedVariantsUniqueJvm().map { (argTypes, body) ->
             compileCheckedFunction(cw, name, body.first, body.second, argTypes)
         }

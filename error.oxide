@@ -1,7 +1,16 @@
 func main {
+    input()
     bool = tryBool("tfrue").orDefault(false)
     print(bool)
 }
+
+use java::util::Random
+func randBool {
+    random = keep { Random() }
+    random.nextBoolean()
+}
+
+
 
 error struct ConversionError {
     message str
@@ -37,6 +46,15 @@ impl<error E, T> E | T {
 }
 
 use java::lang::System
+use java::util::Scanner
+func input {
+    scanner = keep {
+        in = System.in
+        Scanner(in)
+    }
+    scanner.nextLine()
+}
+
 func panic(message) {
     print(message)
     System.exit(1)

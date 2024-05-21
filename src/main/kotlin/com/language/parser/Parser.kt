@@ -388,6 +388,12 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
                 }
             }
         }
+        is Token.Keep -> {
+            tokens.expect<Token.Keep>()
+            //the value that should be kept
+            val value = parseExpression(tokens, variables)
+            Expression.Keep(value)
+        }
         is Token.OpenSquare -> {
             tokens.expect<Token.OpenSquare>()
             parseArray(ArrayType.Implicit, tokens, variables)

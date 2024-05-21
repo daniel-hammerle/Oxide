@@ -10,6 +10,7 @@ sealed interface Token {
     data object Else : KeyWord
     data object Func : KeyWord
     data object Use : KeyWord
+    data object Keep : KeyWord
     data object Struct : KeyWord
     data object In : KeyWord, Identifier {
         override val name: String = "in"
@@ -109,6 +110,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "_arrow" -> Token.Arrow
         "_collector" -> Token.Collector
         "error" -> Token.Error
+        "keep" -> Token.Keep
         "impl" -> Token.Impl
         "for" -> Token.For
         "in" -> Token.In

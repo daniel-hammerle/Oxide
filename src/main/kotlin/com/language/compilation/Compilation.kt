@@ -76,7 +76,7 @@ fun TemplatedType.exists(module: ModuleLookup): Boolean = when(this) {
 
 fun compileFunction(function: Function, module: ModuleLookup): IRFunction {
 
-    val body = compileExpression(function.body, module)
+    val body = compileExpression(function.body, module, true)
 
     return IRFunction(
         function.args,
@@ -85,14 +85,14 @@ fun compileFunction(function: Function, module: ModuleLookup): IRFunction {
     )
 }
 
-fun compileStatements(statements: List<Statement>, module: ModuleLookup): List<Instruction> {
-    return statements.mapIndexed { i, it -> compileStatement(it, module) }
+fun compileStatements(statements: List<Statement>, module: ModuleLookup, uctl: Boolean): List<Instruction> {
+    return statements.mapIndexed { i, it -> compileStatement(it, module, uctl) }
 }
 
-fun compileStatement(statement: Statement, module: ModuleLookup): Instruction {
+fun compileStatement(statement: Statement, module: ModuleLookup, uctl: Boolean): Instruction {
     return when(statement) {
         is Statement.Assign -> {
-            val value = compileExpression(statement.value, module)
+            val value = compileExpression(statement.value, module, uctl)
 
             Instruction.StoreVar(
                 statement.name,
@@ -101,22 +101,22 @@ fun compileStatement(statement: Statement, module: ModuleLookup): Instruction {
         }
         is Statement.For -> {
             Instruction.For(
-                parent = compileExpression(statement.parent, module),
+                parent = compileExpression(statement.parent, module, uctl),
                 name = statement.itemName,
-                body = compileExpression(statement.body, module)
+                body = compileExpression(statement.body, module, false)
             )
         }
-        is Statement.Expr -> compileExpression(expression = statement.expression, module)
+        is Statement.Expr -> compileExpression(expression = statement.expression, module, uctl)
         is Statement.While -> Instruction.While(
-            cond = compileExpression(statement.condition, module),
-            body = compileExpression(statement.body, module)
+            cond = compileExpression(statement.condition, module, uctl),
+            body = compileExpression(statement.body, module, false)
         )
 
         is Statement.AssignProperty -> {
             Instruction.DynamicPropertyAssignment(
-                parent = compileExpression(statement.parent, module),
+                parent = compileExpression(statement.parent, module, uctl),
                 name = statement.name,
-                value = compileExpression(statement.value, module)
+                value = compileExpression(statement.value, module, uctl)
             )
         }
     }
@@ -124,12 +124,12 @@ fun compileStatement(statement: Statement, module: ModuleLookup): Instruction {
 
 fun compileConstructingArg(arg: ConstructingArgument, module: ModuleLookup): Instruction.ConstructingArgument {
     return when(arg) {
-        is ConstructingArgument.Collect -> Instruction.ConstructingArgument.Collected(compileExpression(arg.expression, module))
-        is ConstructingArgument.Normal -> Instruction.ConstructingArgument.Normal(compileExpression(arg.expression, module))
+        is ConstructingArgument.Collect -> Instruction.ConstructingArgument.Collected(compileExpression(arg.expression, module, false))
+        is ConstructingArgument.Normal -> Instruction.ConstructingArgument.Normal(compileExpression(arg.expression, module, false))
     }
 }
 
-fun compileExpression(expression: Expression, module: ModuleLookup): Instruction {
+fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolean): Instruction {
     return when(expression) {
         is Expression.ConstBool -> Instruction.LoadConstBool(expression.bool)
         is Expression.ConstNum -> if (expression.num == expression.num.toInt().toDouble())
@@ -138,9 +138,9 @@ fun compileExpression(expression: Expression, module: ModuleLookup): Instruction
             Instruction.LoadConstDouble(expression.num)
         is Expression.ConstStr -> Instruction.LoadConstString(expression.str)
         is Expression.IfElse -> Instruction.If(
-            cond = compileExpression(expression.condition, module),
-            body = compileExpression(expression.body, module),
-            elseBody = expression.elseBody?.let { compileExpression(it, module) }
+            cond = compileExpression(expression.condition, module, uctl),
+            body = compileExpression(expression.body, module, false),
+            elseBody = expression.elseBody?.let { compileExpression(it, module, false) }
         )
         is Expression.ConstNull -> Instruction.Null
         is Expression.ConstArray -> {
@@ -153,23 +153,23 @@ fun compileExpression(expression: Expression, module: ModuleLookup): Instruction
                 ArrayType.List -> Instruction.ConstArrayList(items)
             }
         }
-        is Expression.Invoke -> compileInvoke(expression, module)
+        is Expression.Invoke -> compileInvoke(expression, module, uctl)
         is Expression.Math -> Instruction.Math(
             op = expression.op,
-            first = compileExpression(expression.first, module),
-            second = compileExpression(expression.second, module)
+            first = compileExpression(expression.first, module, uctl),
+            second = compileExpression(expression.second, module, uctl)
         )
         is Expression.Match -> {
-            val parent = compileExpression(expression.matchable, module)
+            val parent = compileExpression(expression.matchable, module, uctl)
             val branches = expression.branches.map { (pattern, body) ->
-                compilePattern(pattern, module) to compileExpression(body, module)
+                compilePattern(pattern, module) to compileExpression(body, module, false)
             }
 
             Instruction.Match(parent, branches)
         }
         is Expression.UnknownSymbol -> error("Unknown symbol `${expression.name}`")
         is Expression.VariableSymbol -> Instruction.LoadVar(expression.name)
-        is Expression.ReturningScope -> Instruction.MultiInstructions(compileStatements(expression.expressions, module))
+        is Expression.ReturningScope -> Instruction.MultiInstructions(compileStatements(expression.expressions, module, uctl))
         is Expression.AccessProperty -> {
             when(val parent = expression.parent) {
                 //static property access
@@ -183,18 +183,28 @@ fun compileExpression(expression: Expression, module: ModuleLookup): Instruction
                 }
                 //dynamic property access
                 else -> {
-                    Instruction.DynamicPropertyAccess(compileExpression(expression.parent, module), expression.name)
+                    Instruction.DynamicPropertyAccess(compileExpression(expression.parent, module, uctl), expression.name)
                 }
             }
         }
 
         is Expression.Comparing -> Instruction.Comparing(
-            first = compileExpression(expression.first, module),
-            second = compileExpression(expression.second, module),
+            first = compileExpression(expression.first, module, uctl),
+            second = compileExpression(expression.second, module, uctl),
             op = expression.op
         )
 
-        is Expression.Try -> Instruction.Try(compileExpression(expression.expression, module))
+        is Expression.Try -> Instruction.Try(compileExpression(expression.expression, module, uctl))
+        is Expression.Keep -> {
+            if (!uctl) error("Keep expression must be within the unconditional top level scope of a function!")
+
+            //uctl is false
+            // because keep is indeed conditional,
+            // since it only runs the first time
+            val value = compileExpression(expression.value, module, uctl = false)
+
+            Instruction.Keep(value, generateName().lowercase(), module.localName)
+        }
     }
 }
 
@@ -204,11 +214,11 @@ fun compilePattern(pattern: Pattern, module: ModuleLookup): IRPattern {
         is Pattern.Binding -> IRPattern.Binding(pattern.name)
         is Pattern.Conditional -> IRPattern.Condition(
             parent = compilePattern(pattern.parent, module),
-            condition = compileExpression(pattern.condition, module)
+            condition = compileExpression(pattern.condition, module, false)
         )
         is Pattern.Const -> IRPattern.Condition(
             parent = IRPattern.Binding("_"),
-            condition = Instruction.Comparing(Instruction.LoadVar("_"), compileExpression(pattern.value, module), CompareOp.Eq)
+            condition = Instruction.Comparing(Instruction.LoadVar("_"), compileExpression(pattern.value, module, false), CompareOp.Eq)
         )
         is Pattern.Destructuring -> {
             when {
@@ -232,8 +242,8 @@ fun compilePattern(pattern: Pattern, module: ModuleLookup): IRPattern {
     }
 }
 
-fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup): Instruction {
-    val args =  invoke.args.values.map { compileExpression(it, module) }
+fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup, uctl: Boolean): Instruction {
+    val args =  invoke.args.values.map { compileExpression(it, module, uctl) }
     return when(val parent = invoke.parent) {
         //dot call or module call
         is Expression.AccessProperty -> {
@@ -269,7 +279,7 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup): Instruction 
                 }
                 else -> {
                     //dot call
-                    val instance = compileExpression(parent.parent, module)
+                    val instance = compileExpression(parent.parent, module, uctl)
                     Instruction.DynamicCall(
                         parent = instance,
                         name = parent.name,
@@ -284,6 +294,7 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup): Instruction 
         //call in the same module
         // foo()
         is Expression.UnknownSymbol -> {
+            val fullName = populateSignature(SignatureString(parent.name), module)
             when {
                 module.localGetFunction(parent.name) is Function -> {
                     Instruction.ModuleCall(
@@ -298,9 +309,9 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup): Instruction 
                         args = args
                     )
                 }
-                module.hasModule(SignatureString(parent.sigName)) || module.hasStruct(SignatureString(parent.sigName)) -> {
+                module.hasModule(fullName) || module.hasStruct(fullName) -> {
                     Instruction.ConstructorCall(
-                        className = SignatureString(parent.sigName),
+                        className = fullName,
                         args = args
                     )
                 }

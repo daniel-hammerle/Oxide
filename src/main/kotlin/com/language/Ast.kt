@@ -34,6 +34,7 @@ sealed interface Expression {
     data class ReturningScope(val expressions: List<Statement>) : Expression
     data class IfElse(val condition: Expression, val body: Expression, val elseBody: Expression?) : Expression
     data class Match(val matchable: Expression, val branches: List<Pair<Pattern, Expression>>) : Expression
+    data class Keep(val value: Expression): Expression
 }
 
 sealed interface ConstructingArgument {
