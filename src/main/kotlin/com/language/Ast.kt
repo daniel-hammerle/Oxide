@@ -1,5 +1,6 @@
 package com.language
 
+import com.language.compilation.GenericType
 import com.language.compilation.SignatureString
 import com.language.compilation.modifiers.Modifiers
 
@@ -47,6 +48,7 @@ sealed interface TemplatedType {
     data object DoubleT : TemplatedType
     data object BoolT: TemplatedType
     data object Null : TemplatedType
+    data object Nothing : TemplatedType
     companion object {
         val String = Complex(SignatureString("java::lang::String"), emptyList())
     }
@@ -98,13 +100,13 @@ sealed interface ModuleChild {
 
 data class Function(val args: List<String>, val body: Expression, override val modifiers: Modifiers) : ModuleChild
 
-data class Struct(val args: Map<String, TemplatedType>, val generics: Map<String, Modifiers>, override val modifiers: Modifiers) : ModuleChild
+data class Struct(val args: Map<String, TemplatedType>, val generics: Map<String, GenericType>, override val modifiers: Modifiers) : ModuleChild
 
 data class Impl(
     val type: TemplatedType,
     val methods: Map<String, Function>,
     val associatedFunctions: Map<String, Function>,
-    val generics: Map<String, Modifiers>,
+    val generics: Map<String, GenericType>,
     override val modifiers: Modifiers
 ) : ModuleChild
 

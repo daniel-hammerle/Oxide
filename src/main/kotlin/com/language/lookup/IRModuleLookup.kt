@@ -21,7 +21,7 @@ class IRModuleLookup(
     override suspend fun hasGenericReturnType(instance: Type, funcName: String, argTypes: List<Type>): Boolean {
         //NOTE since oxide generics are implemented differently, this can only be true for jvm functions
         return when(instance) {
-            is Type.JvmType -> jvmLookup.hasGenericReturnType(instance, funcName, argTypes)
+            is Type.JvmType -> jvmLookup.hasGenericReturnType(instance, funcName, argTypes, this)
             else -> false
         }
     }
@@ -38,14 +38,14 @@ class IRModuleLookup(
             oxideLookup.lookupAssociatedExtensionFunction(modName, funcName, argTypes, this)
         }.map { return it }
 
-        return jvmLookup.lookUpAssociatedFunction(modName, funcName, argTypes) ?: error("NO method found $modName.$funcName($argTypes)")
+        return jvmLookup.lookUpAssociatedFunction(modName, funcName, argTypes, this) ?: error("NO method found $modName.$funcName($argTypes)")
     }
 
     override suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate {
         val candidate = runCatching { oxideLookup.lookupExtensionMethod(instance, funcName, argTypes, this) }.getOrNull()
         if (candidate != null) return candidate
         return when(instance) {
-            is Type.JvmType -> jvmLookup.lookUpMethod(instance, funcName, argTypes) ?: error("No Method found on $instance.$funcName($argTypes)")
+            is Type.JvmType -> jvmLookup.lookUpMethod(instance, funcName, argTypes, this) ?: error("No Method found on $instance.$funcName($argTypes)")
             else -> error("No Method found on $instance.$funcName($argTypes)")
         }
     }
@@ -64,14 +64,14 @@ class IRModuleLookup(
 
     override suspend fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate {
         return runCatching { oxideLookup.lookupConstructor(className, argTypes, this) }.getOrNull()
-            ?: jvmLookup.lookupConstructor(className, argTypes)
+            ?: jvmLookup.lookupConstructor(className, argTypes, this)
             ?: error("NO constructor found for $className($argTypes)")
     }
 
     override suspend fun lookUpFieldType(instance: Type, fieldName: String): Type {
         runCatching { oxideLookup.lookupMemberField(instance, fieldName, this) }.map { return it }
         return when(instance) {
-            is Type.JvmType -> jvmLookup.lookUpField(instance, fieldName)
+            is Type.JvmType -> jvmLookup.lookUpField(instance, fieldName, this)
             else -> null
         } ?: error("No field $instance.$fieldName")
     }
@@ -115,6 +115,7 @@ class IRModuleLookup(
             }.toTypedArray()
             Type.BasicJvmType(signatureString, linkedMapOf(*entries))
         }
+        TemplatedType.Nothing -> Type.Nothing
         is TemplatedType.Generic -> generics[name]!!
         TemplatedType.IntT -> Type.IntT
         TemplatedType.DoubleT -> Type.DoubleT

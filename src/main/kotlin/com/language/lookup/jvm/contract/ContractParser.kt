@@ -21,7 +21,7 @@ class ContractLexerIterator(private val baseString: String) {
         index+=n
     }
 
-    fun hasNext() = index <= baseString.length
+    fun hasNext() = index < baseString.length
 
     fun next() = baseString[index++]
 }
@@ -55,8 +55,14 @@ fun lexContractString(contractString: String): List<Token> = mutableListOf<Token
             'f' -> {
                 iter.skip(1)
                 when (iter.next()) {
-                    'l' -> add(Token.False)
-                    'i' -> add(Token.Fail)
+                    'l' -> {
+                        add(Token.False)
+                        iter.skip(2)
+                    }
+                    'i' -> {
+                        add(Token.Fail)
+                        iter.skip(1)
+                    }
                     else -> error("Invalid character expected `fail` or `false`")
                 }
             }
@@ -112,8 +118,6 @@ fun parseContractCondition(tokens: Tokens): List<ContractItem> {
             else -> error("Invalid token expected `,` or `->` but got $tk")
         }
     }
-    //arrow token
-    tokens.next()
     return arguments
 }
 

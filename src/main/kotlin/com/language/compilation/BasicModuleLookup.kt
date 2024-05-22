@@ -9,12 +9,16 @@ data class BasicModuleLookup(
     val current: Module,
     override val localName: SignatureString,
     val modules: Map<SignatureString, Module>,
-    val externalJars: ClassLoader
+    val externalJars: ClassLoader, override val containerName: SignatureString
 ) : ModuleLookup {
     override fun localGetFunction(name: String): Function? = current.children[name] as? Function
 
     override val localSymbols: Map<String, ModuleChild>
         get() = current.children
+
+    override fun withNewContainer(newContainerName: SignatureString): ModuleLookup {
+        return BasicModuleLookup(current, localName, modules, externalJars, newContainerName)
+    }
 
     override fun getImport(name: String): SignatureString? {
         return current.imports[name]

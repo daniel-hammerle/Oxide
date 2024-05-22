@@ -1,15 +1,26 @@
 package com.language.compilation.templatedType
 
 import com.language.TemplatedType
+import com.language.compilation.GenericType
 import com.language.lookup.IRLookup
 import com.language.compilation.Type
 import com.language.compilation.join
 import com.language.compilation.modifiers.Modifiers
+import com.language.lookup.oxide.lazyTransform
+
+suspend fun Iterable<TemplatedType>.matches(
+    other: Iterable<Type>,
+    generics: MutableMap<String, Type> = mutableMapOf(),
+    modifiers: Map<String, GenericType>,
+    lookup: IRLookup
+) : Boolean {
+    return this.zip(other).all { (first, second) -> first.matches(second, generics, modifiers, lookup) }
+}
 
 suspend fun TemplatedType.matches(
     type: Type,
     generics: MutableMap<String, Type> = mutableMapOf(),
-    modifiers: Map<String, Modifiers>,
+    modifiers: Map<String, GenericType>,
     lookup: IRLookup
 ): Boolean {
     return when(this) {
@@ -23,7 +34,7 @@ suspend fun TemplatedType.matches(
                 entries.remove(entry)
             }
             if (entries.isNotEmpty()) {
-                val wildcard = types.find { it.isWildCard(modifiers) } as? TemplatedType.Generic
+                val wildcard = types.find { it.isWildCard(modifiers.lazyTransform { t -> t.modifiers }) } as? TemplatedType.Generic
                 if (wildcard == null) {
                     return false
                 }
@@ -48,7 +59,7 @@ suspend fun TemplatedType.matches(
         }
         is TemplatedType.Generic -> {
             when {
-                modifiers[name] is Modifiers && modifiers[name] != Modifiers.Empty && !lookup.satisfiesModifiers(type, modifiers[name]!!) -> {
+                modifiers[name]?.modifiers is Modifiers && modifiers[name]?.modifiers != Modifiers.Empty && !lookup.satisfiesModifiers(type, modifiers[name]?.modifiers!!) -> {
                     return false
                 }
             }
@@ -63,13 +74,14 @@ suspend fun TemplatedType.matches(
         TemplatedType.DoubleT ->type == Type.DoubleT
         TemplatedType.IntT -> type == Type.IntT
         TemplatedType.Null -> type == Type.Null
+        TemplatedType.Nothing -> type == Type.Nothing
     }
 }
 
 suspend fun TemplatedType.matches(
     type: Type.BroadType,
     generics: MutableMap<String, Type> = mutableMapOf(),
-    modifiers: Map<String, Modifiers>,
+    modifiers: Map<String, GenericType>,
     lookup: IRLookup
 ): Boolean {
     return when(type) {

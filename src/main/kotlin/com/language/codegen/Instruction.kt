@@ -4,6 +4,7 @@ import com.language.CompareOp
 import com.language.MathOp
 import com.language.Pattern
 import com.language.compilation.*
+import org.jetbrains.annotations.Contract
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
@@ -612,17 +613,33 @@ fun compileMatch(
         //mv.visitInsn(Opcodes.POP)
         //stackMap.pop()
         compileInstruction(mv, body, stackMap)
+        if (body.type == Type.Never) {
+            mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException")
+            mv.visitInsn(Opcodes.DUP)
+            mv.visitLdcInsn("@Contract(fail) broken")
+            mv.visitMethodInsn(
+                Opcodes.INVOKESPECIAL,
+                "java/lang/IllegalStateException",
+                "<init>",
+                "(Ljava/lang/String;)V",
+                false
+            )
+            mv.visitInsn(Opcodes.ATHROW)
+        }
+        @Contract
         if (instruction.type != body.type) {
             boxOrIgnore(mv, body.type)
             unboxOrIgnore(mv, body.type)
         }
         if (idx != instruction.patterns.lastIndex) {
-            if (body.type != Type.Nothing) {
+            if (body.type !in listOf(Type.Nothing, Type.Never)) {
                 mv.visitInsn(Opcodes.SWAP)
             }
-            mv.visitInsn(Opcodes.POP)
+            if (body.type != Type.Never)
+                mv.visitInsn(Opcodes.POP)
         }
-        mv.visitJumpInsn(Opcodes.GOTO, end)
+        if (body.type != Type.Never)
+            mv.visitJumpInsn(Opcodes.GOTO, end)
 
         if (body.type != Type.Nothing) {
             //we pop the value produced by the body in this loop since we dont need it rn

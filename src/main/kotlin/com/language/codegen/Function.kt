@@ -36,7 +36,7 @@ suspend fun compileCheckedFunction(
         Type.DoubleT -> mv.visitInsn(Opcodes.DRETURN)
         Type.Nothing -> mv.visitInsn(Opcodes.RETURN)
         is Type.Array -> mv.visitInsn(Opcodes.ARETURN)
-        Type.Never -> error("Never Return branch cannot be reached")
+        Type.Never -> mv.visitInsn(Opcodes.RETURN)
     }
 }
 

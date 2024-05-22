@@ -6,6 +6,7 @@ import com.language.Module
 import com.language.ModuleChild
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
+import com.language.lookup.jvm.RawClassLoader
 import java.io.IOException
 import java.lang.reflect.Modifier
 import java.util.jar.JarEntry
@@ -15,9 +16,9 @@ import java.util.jar.JarFile
 class ExtensionClassLoader(
     jarPath: String,
     private val parent: ClassLoader
-) : ClassLoader() {
+) : RawClassLoader(null) {
 
-    private val loadedClasses: MutableMap<String, Class<*>> = mutableMapOf()
+    private val loadedClasses: MutableMap<String, Pair<Class<*>,ByteArray>> = mutableMapOf()
 
     init {
         loadClassesFromJar(jarPath)
@@ -32,7 +33,7 @@ class ExtensionClassLoader(
 
                     val classBytes: ByteArray = jarFile.getInputStream(entry).readAllBytes()
                     val clazz = defineClass(className, classBytes, 0, classBytes.size)
-                    loadedClasses[className] = clazz
+                    loadedClasses[className] = clazz to classBytes
                 }
             }
         } catch (e: IOException) {
@@ -41,18 +42,19 @@ class ExtensionClassLoader(
     }
 
     fun createModuleTree(): Map<SignatureString, Module> = loadedClasses
-        .map { (name, clazz) -> SignatureString.fromDotNotation(name) to clazz.toModule() }
+        .map { (name, clazz) -> SignatureString.fromDotNotation(name) to clazz.first.toModule() }
         .toMap()
 
+    override fun getBytes(name: String): ByteArray? = loadedClasses[name]?.second
 
     override fun loadClass(name: String): Class<*> {
         val name = SignatureString.fromDotNotation(name)
-        return loadedClasses[name.toDotNotation()] ?: parent.loadClass(name.toDotNotation())
+        return loadedClasses[name.toDotNotation()]?.first ?: parent.loadClass(name.toDotNotation())
     }
 
     override fun findClass(name: String): Class<*> {
         val name = SignatureString.fromDotNotation(name)
-        return loadedClasses[name.toDotNotation()]  ?: parent.loadClass(name.toDotNotation())
+        return loadedClasses[name.toDotNotation()]?.first  ?: parent.loadClass(name.toDotNotation())
     }
 }
 

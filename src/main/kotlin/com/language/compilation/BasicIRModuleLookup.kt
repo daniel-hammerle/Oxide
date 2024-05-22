@@ -375,13 +375,13 @@ class BasicIRModuleLookup(
         else -> error("Not eonough information to know type!")
     }
 
-    private fun signatureGetGenerics(signatureString: SignatureString): Map<String, Modifiers> {
+    private fun signatureGetGenerics(signatureString: SignatureString): Map<String, GenericType> {
         when(val struct = getStruct(signatureString)) {
             is IRStruct -> {
                 return struct.generics
             }
         }
-        return externalJars.loadClass(signatureString.toDotNotation()).typeParameters.associate { it.name  to Modifiers.Empty}
+        return externalJars.loadClass(signatureString.toDotNotation()).typeParameters.associate { it.name  to GenericType(Modifiers.Empty, emptyList())}
     }
 
     override suspend fun lookUpFieldType(modName: SignatureString, fieldName: String): Type {
@@ -403,6 +403,7 @@ class BasicIRModuleLookup(
             }.toTypedArray()
             Type.BasicJvmType(signatureString, linkedMapOf(*entries))
         }
+        is TemplatedType.Nothing -> Type.Nothing
         is TemplatedType.Generic -> generics[name]!!
         TemplatedType.IntT -> Type.IntT
         TemplatedType.DoubleT -> Type.DoubleT

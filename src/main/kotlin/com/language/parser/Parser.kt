@@ -2,6 +2,7 @@ package com.language.parser
 
 import com.language.*
 import com.language.Function
+import com.language.compilation.GenericType
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
 import com.language.compilation.modifiers.Modifiers
@@ -562,15 +563,15 @@ private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
 
 }
 
-private fun parseGenericDefinition(tokens: Tokens): Map<String, Modifiers> {
+private fun parseGenericDefinition(tokens: Tokens): Map<String, GenericType> {
     if (tokens.visitNext() != Token.St) {
         return emptyMap()
     }
     tokens.expect<Token.St>()
-    val generics = mutableMapOf<String, Modifiers>()
+    val generics = mutableMapOf<String, GenericType>()
     while(true) {
         val modifiers = parseModifiers(tokens)
-        generics+=tokens.expect<Token.Identifier>().name to modifiers
+        generics+=tokens.expect<Token.Identifier>().name to GenericType(modifiers, emptyList())
         when(val tk = tokens.next()) {
             is Token.Gt -> return generics
             is Token.Comma -> continue

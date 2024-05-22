@@ -9,8 +9,11 @@ interface ModuleLookup {
     fun localGetSymbol(name: String): ModuleChild?
 
     val localName: SignatureString
+    val containerName: SignatureString
     val localImports: Map<String, SignatureString>
     val localSymbols: Map<String, ModuleChild>
+
+    fun withNewContainer(newContainerName: SignatureString): ModuleLookup
 
     fun getImport(name: String): SignatureString?
 

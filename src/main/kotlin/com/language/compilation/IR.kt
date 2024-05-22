@@ -1070,7 +1070,9 @@ value class SignatureString(val value: String) {
     operator fun plus(other: SignatureString) = SignatureString("$value::${other.value}")
 }
 
-data class IRStruct(val fields: Map<String, TemplatedType>, val generics: Map<String, Modifiers>, val modifiers: Modifiers) {
+data class GenericType(val modifiers: Modifiers, val upperBounds: List<SignatureString>)
+
+data class IRStruct(val fields: Map<String, TemplatedType>, val generics: Map<String, GenericType>, val modifiers: Modifiers) {
     private val mutex = Mutex()
 
     var defaultVariant: Map<String, Type>? = null
@@ -1087,7 +1089,7 @@ data class IRImpl(
     val fullSignature: SignatureString,
     val methods: Map<String, IRFunction>,
     val associatedFunctions: Map<String, IRFunction>,
-    val genericModifiers: Map<String, Modifiers>
+    val genericModifiers: Map<String, GenericType>
 )
 
 data class IRModule(

@@ -4,23 +4,24 @@ import com.language.compilation.FunctionCandidate
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
 import com.language.compilation.modifiers.Modifiers
+import com.language.lookup.IRLookup
 
 interface JvmLookup {
-    suspend fun lookUpMethod(instance: Type.JvmType, functionName: String, argTypes: List<Type>): FunctionCandidate?
+    suspend fun lookUpMethod(instance: Type.JvmType, functionName: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
 
-    suspend fun lookUpAssociatedFunction(className: SignatureString, functionName: String, argTypes: List<Type>): FunctionCandidate?
+    suspend fun lookUpAssociatedFunction(className: SignatureString, functionName: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
 
-    suspend fun lookUpField(instance: Type.JvmType, fieldName: String): Type?
+    suspend fun lookUpField(instance: Type.JvmType, fieldName: String, lookup: IRLookup): Type?
 
     suspend fun lookUpAssociatedField(className: SignatureString, fieldName: String): Type?
 
-    suspend fun hasGenericReturnType(instance: Type.JvmType, functionName: String, argTypes: List<Type>): Boolean
+    suspend fun hasGenericReturnType(instance: Type.JvmType, functionName: String, argTypes: List<Type>, lookup: IRLookup): Boolean
 
     suspend fun typeHasInterface(type: Type.JvmType, interfaceType: SignatureString): Boolean
 
     suspend fun getModifiers(className: SignatureString): Modifiers
 
-    suspend fun lookupConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate?
+    suspend fun lookupConstructor(className: SignatureString, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
 
     suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int>?
 

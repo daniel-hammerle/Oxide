@@ -49,11 +49,13 @@ fun compileImplBlock(implBlock: Impl, module: ModuleLookup): IRImpl {
     if (!implBlock.type.exists(module)) {
         error("Invalid type ${implBlock.type}")
     }
+    val fullImplSignature = module.localName +  generateName()
+    val implBlockLookup = module.withNewContainer(fullImplSignature)
 
-    val methods = implBlock.methods.mapValues { (_, function) -> compileFunction(function, module) }
-    val associatedFunctions = implBlock.associatedFunctions.mapValues { (_, function) -> compileFunction(function, module) }
+    val methods = implBlock.methods.mapValues { (_, function) -> compileFunction(function, implBlockLookup) }
+    val associatedFunctions = implBlock.associatedFunctions.mapValues { (_, function) -> compileFunction(function, implBlockLookup) }
 
-    return IRImpl(module.localName +  generateName(), methods, associatedFunctions, implBlock.generics)
+    return IRImpl(fullImplSignature, methods, associatedFunctions, implBlock.generics)
 }
 
 fun generateName(): String = Base32().encodeToString(UUID.randomUUID().encodeUUID())
@@ -69,6 +71,7 @@ fun TemplatedType.exists(module: ModuleLookup): Boolean = when(this) {
     is TemplatedType.Complex -> module.hasStruct(populateSignature(signatureString, module)) || module.hasModule(populateSignature(signatureString, module))
     TemplatedType.IntT, TemplatedType.DoubleT, TemplatedType.BoolT -> true
     is TemplatedType.Generic -> true
+    is TemplatedType.Nothing -> true
     is TemplatedType.Union -> types.all { it.exists(module) }
     TemplatedType.Null -> true
     is TemplatedType.Array -> itemType.exists(module)
@@ -203,7 +206,7 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
             // since it only runs the first time
             val value = compileExpression(expression.value, module, uctl = false)
 
-            Instruction.Keep(value, generateName().lowercase(), module.localName)
+            Instruction.Keep(value, generateName().lowercase(), module.containerName)
         }
     }
 }

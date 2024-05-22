@@ -1,6 +1,7 @@
 func main {
-    input()
-    bool = tryBool("tfrue").orDefault(false)
+    print("Enter a boolean >")
+    i = input()
+    bool = tryBool(i).unwrap("Failed")
     print(bool)
 }
 
@@ -9,8 +10,6 @@ func randBool {
     random = keep { Random() }
     random.nextBoolean()
 }
-
-
 
 error struct ConversionError {
     message str
@@ -45,6 +44,7 @@ impl<error E, T> E | T {
     }
 }
 
+
 use java::lang::System
 use java::util::Scanner
 func input {
@@ -57,7 +57,7 @@ func input {
 
 func panic(message) {
     print(message)
-    System.exit(1)
+    control.exit(1)
 }
 
 func print(value) System.out.println(value)

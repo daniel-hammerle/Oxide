@@ -168,7 +168,7 @@ class BasicOxideLookup(
     }
 
     override suspend fun lookupStructGenericModifiers(structSig: SignatureString): Map<String, Modifiers> {
-        return getStruct(structSig)?.generics ?: error("Cannot find struct $structSig")
+        return getStruct(structSig)?.generics?.lazyTransform { it.modifiers } ?: error("Cannot find struct $structSig")
     }
 }
 
