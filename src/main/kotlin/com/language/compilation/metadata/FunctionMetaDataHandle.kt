@@ -1,11 +1,8 @@
 package com.language.compilation.metadata
 
-import com.language.compilation.FunctionMetaData
-import com.language.compilation.SignatureString
-import com.language.compilation.Type
-import com.language.compilation.join
+import com.language.compilation.*
 
-class FunctionMetaDataHandle(override val inheritedGenerics: Map<String, Type>) : MetaDataHandle {
+class FunctionMetaDataHandle(override val inheritedGenerics: Map<String, Type>, private val appender: LambdaAppender) : MetaDataHandle {
     lateinit var returnType: Type
         private set
 
@@ -25,6 +22,16 @@ class FunctionMetaDataHandle(override val inheritedGenerics: Map<String, Type>) 
 
     override fun appendKeepBlock(name: String, type: Type) {
         keepBlocks[name] = type
+    }
+
+    override suspend fun addLambda(
+        argNames: List<String>,
+        captures: Map<String, Type>,
+        body: Instruction,
+        generics: Map<String, Type>,
+        imports: Set<SignatureString>
+    ): SignatureString {
+        return appender.addLambda(argNames, captures, body, generics, imports)
     }
 
     fun toMetaData() = FunctionMetaData(returnType, varCount)

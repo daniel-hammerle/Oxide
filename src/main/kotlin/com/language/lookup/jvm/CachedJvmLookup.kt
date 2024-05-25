@@ -35,7 +35,7 @@ class CachedJvmLookup(
         }
 
     override suspend fun lookUpMethod(instance: Type.JvmType, functionName: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
-        return getClass(instance.signature).lookupMethod(functionName, instance.genericTypes, argTypes, lookup)
+        return getClass(instance.signature).lookupMethod(functionName, instance, instance.genericTypes, argTypes, lookup)
     }
 
     override suspend fun lookUpAssociatedFunction(

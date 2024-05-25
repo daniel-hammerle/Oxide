@@ -135,6 +135,14 @@ sealed interface TypedInstruction {
 
     }
 
+    data class Lambda(
+        val captures: Map<String, Pair<Int, Type>>,
+        val signatureString: SignatureString,
+        val candidate: FunctionCandidate
+    ): TypedInstruction {
+        override val type: Type = Type.Lambda(signatureString)
+    }
+
     data class Match(
         val parent: TypedInstruction,
         val patterns: List<Triple<TypedIRPattern, TypedInstruction, VarFrame>>

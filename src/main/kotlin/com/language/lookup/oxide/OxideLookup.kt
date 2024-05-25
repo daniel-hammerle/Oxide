@@ -17,8 +17,12 @@ interface OxideLookup {
 
     suspend fun lookupMemberField(instance: Type, name: String, lookup: IRLookup): Type
 
+    suspend fun lookupLambdaInit(signatureString: SignatureString): FunctionCandidate
+    suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate
+
     suspend fun lookupConstructor(structName: SignatureString, args: List<Type>, lookup: IRLookup): FunctionCandidate
     suspend fun lookupModifiers(structName: Type): Modifiers
+
     fun lookupOrderedFields(structName: SignatureString): List<Pair<String, TemplatedType>>
 
     suspend fun lookupStructGenericModifiers(structSig: SignatureString): Map<String, Modifiers>

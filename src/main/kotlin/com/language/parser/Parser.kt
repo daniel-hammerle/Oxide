@@ -60,9 +60,9 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             val name = tokens.expect<Token.Identifier>().name
             val args = if (tokens.visitNext() == Token.OpenBracket) {
                 tokens.expect<Token.OpenBracket>()
-                parseFunctionArgs(tokens)
+                parseFunctionArgs(tokens, closingSymbol = Token.ClosingBracket)
             } else mutableListOf()
-            val body = parseExpression(tokens, Variables.withEntries(args.toSet()))
+            val body = parseExpression(tokens, BasicVariables.withEntries(args.toSet()))
             name to Function(args, body, modifiers)
         }
         Token.Struct -> {
@@ -169,17 +169,17 @@ fun parseSignature(tokens: Tokens): Pair<SignatureString, Boolean> {
 
 }
 
-fun parseFunctionArgs(tokens: Tokens): List<String> = mutableListOf<String>().apply {
-    if (tokens.visitNext() == Token.ClosingBracket) {
-        tokens.expect<Token.ClosingBracket>()
+fun parseFunctionArgs(tokens: Tokens, closingSymbol: Token): List<String> = mutableListOf<String>().apply {
+    if (tokens.visitNext() == closingSymbol) {
+        tokens.next()
         return@apply
     }
     while (true) {
         add(tokens.expect<Token.Identifier>().name)
         when(val token = tokens.next()) {
             Token.Comma -> continue
-            Token.ClosingBracket -> break
-            else -> error("Invalid token $token (expected `,` or `)`")
+            closingSymbol -> break
+            else -> error("Invalid token $token (expected `,` or `$closingSymbol`")
         }
     }
 }
@@ -401,6 +401,17 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
         }
         is Token.OpenCurly -> {
             tokens.expect<Token.OpenCurly>()
+            if (tokens.visitNext() == Token.Pipe) {
+                tokens.expect<Token.Pipe>()
+                val argumentNames = parseFunctionArgs(tokens, closingSymbol = Token.Pipe)
+                val scope = variables.monitoredChild()
+                argumentNames.forEach { scope.put(it) }
+
+                val statements = parseStatements(tokens, scope)
+                val capturedVariables = scope.usedParentVars()
+
+                return Expression.Lambda(argumentNames, Expression.ReturningScope(statements), capturedVariables)
+            }
             val statements = parseStatements(tokens, variables.child())
             Expression.ReturningScope(statements)
         }

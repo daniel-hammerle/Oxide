@@ -33,6 +33,7 @@ sealed interface Expression {
     data class Math(val first: Expression, val second: Expression, val op: MathOp) : Expression
     data class Comparing(val first: Expression, val second: Expression, val op: CompareOp) : Expression
     data class ReturningScope(val expressions: List<Statement>) : Expression
+    data class Lambda(val args: List<String>, val body: Expression, val capturedVariables: Set<String>): Expression
     data class IfElse(val condition: Expression, val body: Expression, val elseBody: Expression?) : Expression
     data class Match(val matchable: Expression, val branches: List<Pair<Pattern, Expression>>) : Expression
     data class Keep(val value: Expression): Expression

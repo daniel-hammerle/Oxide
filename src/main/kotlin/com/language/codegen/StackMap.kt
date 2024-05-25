@@ -203,6 +203,7 @@ fun Type.toFrameSignature(): Any = when(this) {
     is Type.BoolT -> Opcodes.INTEGER
     Type.DoubleT -> Opcodes.DOUBLE
     Type.IntT -> Opcodes.INTEGER
+    is Type.Lambda -> signature.toJvmNotation()
     Type.Never -> error("Never can't be on a stack")
     is Type.BasicJvmType -> signature.toJvmNotation()
     Type.Nothing -> error("Nothing can't be on a stack")

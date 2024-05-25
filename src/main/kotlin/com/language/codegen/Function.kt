@@ -31,7 +31,7 @@ suspend fun compileCheckedFunction(
 
     //return
     when(body.type) {
-        is Type.JvmType, Type.Null, is Type.Union -> mv.visitInsn(Opcodes.ARETURN)
+        is Type.JvmType, Type.Null, is Type.Union, is Type.Lambda -> mv.visitInsn(Opcodes.ARETURN)
         Type.IntT,is Type.BoolT -> mv.visitInsn(Opcodes.IRETURN)
         Type.DoubleT -> mv.visitInsn(Opcodes.DRETURN)
         Type.Nothing -> mv.visitInsn(Opcodes.RETURN)
@@ -58,6 +58,7 @@ fun Type.toFunctionNameNotation(): String = when(this) {
     is Type.BoolT -> "z"
     Type.DoubleT -> "d"
     Type.IntT -> "i"
+    is Type.Lambda -> "l"
     is Type.BasicJvmType -> "${signature.toJvmNotation()}${genericTypes.values.joinToString("") { it.toFunctionNameNotation() }}"
     Type.Nothing -> "v"
     Type.Never -> "v"

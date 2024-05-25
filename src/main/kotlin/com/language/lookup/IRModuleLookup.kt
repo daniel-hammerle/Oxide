@@ -101,6 +101,16 @@ class IRModuleLookup(
         }
     }
 
+    override suspend fun lookupLambdaInit(
+        signatureString: SignatureString,
+    ): FunctionCandidate {
+        return oxideLookup.lookupLambdaInit(signatureString)
+    }
+
+    override suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<Type>): FunctionCandidate {
+        return oxideLookup.lookupLambdaInvoke(signatureString, argTypes, this)
+    }
+
 
     private suspend fun getStructGenerics(structSig: SignatureString): Map<String, Modifiers> {
         return runCatching { oxideLookup.lookupStructGenericModifiers(structSig) }.getOrNull() ?: emptyMap()

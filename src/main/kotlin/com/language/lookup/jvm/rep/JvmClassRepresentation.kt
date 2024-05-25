@@ -16,7 +16,7 @@ import java.lang.reflect.Field
 interface JvmClassRepresentation {
     suspend fun methodHasGenericReturnType(name: String, argTypes: List<Type>, lookup: IRLookup): Boolean
 
-    suspend fun lookupMethod(name: String, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
+    suspend fun lookupMethod(name: String, type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
 
     suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
 
@@ -82,8 +82,8 @@ data class BasicJvmClassRepresentation(
         return rep
     }
 
-    override suspend fun lookupMethod(name: String, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? =
-        getMethod(name).lookupVariant(generics, argTypes)
+    override suspend fun lookupMethod(name: String, type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? =
+        getMethod(name).lookupVariant(type, generics, argTypes)
 
     override suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? =
         getAssociatedFunction(name).lookupVariant(argTypes)
@@ -154,6 +154,7 @@ data class JvmClassInfoRepresentation(
 
     override suspend fun lookupMethod(
         name: String,
+        type: Type,
         generics: Map<String, Type.BroadType>,
         argTypes: List<Type>,
         lookup: IRLookup,
@@ -164,7 +165,7 @@ data class JvmClassInfoRepresentation(
             evaluateReturnType(tp, argTypes, method)
         }
         val candidate = FunctionCandidate(
-            argTypes,
+            listOf(instanceType) + argTypes,
             method.args.map { it.defaultVariant() },
             method.returnType.defaultVariant(),
             oxideReturnType,
@@ -214,9 +215,10 @@ data class JvmClassInfoRepresentation(
         return signatureString in info.interfaces
     }
 
+    private val instanceType = Type.BasicJvmType(info.signature, info.generics.associate { it.name to Type.BroadType.Unset })
+
     override suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
         val constructor = info.constructors.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
-        val instanceType = Type.BasicJvmType(info.signature, info.generics.associate { it.name to Type.BroadType.Unset })
 
         val candidate = FunctionCandidate(
             argTypes,

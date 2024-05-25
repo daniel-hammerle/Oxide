@@ -4,6 +4,8 @@ import com.language.*
 import com.language.ArrayType
 import com.language.Function
 import com.language.codegen.compileInstruction
+import com.language.compilation.metadata.LambdaAppender
+import com.language.compilation.metadata.LambdaAppenderImpl
 import com.language.parser.parseExpression
 import org.apache.commons.codec.binary.Base32
 import org.apache.commons.codec.binary.Base64
@@ -14,9 +16,12 @@ fun compile(module: ModuleLookup): IRModule {
     val functions: MutableMap<String, IRFunction> = mutableMapOf()
     val structs: MutableMap<String, IRStruct> = mutableMapOf()
     val implBlocks: MutableMap<TemplatedType, MutableSet<IRImpl>> = mutableMapOf()
+    val appender = LambdaAppenderImpl(null)
+
+
     module.localSymbols.forEach { (name, entry) ->
         when(entry) {
-            is Function -> functions[name] = compileFunction(function = entry, module)
+            is Function -> functions[name] = compileFunction(function = entry, module, appender)
             is Struct -> structs[name] = compileStruct(struct = entry, module)
             is Impl -> {
                 val type = if (entry.type is TemplatedType.Complex && module.hasLocalStruct(entry.type.signatureString)) {
@@ -24,7 +29,7 @@ fun compile(module: ModuleLookup): IRModule {
                 } else {
                     entry.type.populate(module)
                 }
-                val block = compileImplBlock(entry, module)
+                val block = compileImplBlock(entry, module, appender)
                 implBlocks[type]?.add(block) ?: run { implBlocks[type] = mutableSetOf(block) }
             }
             is UseStatement -> {}
@@ -32,7 +37,7 @@ fun compile(module: ModuleLookup): IRModule {
         }
     }
 
-    return IRModule(module.localName, functions, structs, implBlocks)
+    return IRModule(module.localName, functions, structs, implBlocks).also { appender.module = it }
 }
 
 fun TemplatedType.populate(module: ModuleLookup): TemplatedType = when(this) {
@@ -45,15 +50,15 @@ fun compileStruct(struct: Struct, module: ModuleLookup): IRStruct {
     return IRStruct(fields, struct.generics, struct.modifiers)
 }
 
-fun compileImplBlock(implBlock: Impl, module: ModuleLookup): IRImpl {
+fun compileImplBlock(implBlock: Impl, module: ModuleLookup, lambdaAppender: LambdaAppender): IRImpl {
     if (!implBlock.type.exists(module)) {
         error("Invalid type ${implBlock.type}")
     }
     val fullImplSignature = module.localName +  generateName()
     val implBlockLookup = module.withNewContainer(fullImplSignature)
 
-    val methods = implBlock.methods.mapValues { (_, function) -> compileFunction(function, implBlockLookup) }
-    val associatedFunctions = implBlock.associatedFunctions.mapValues { (_, function) -> compileFunction(function, implBlockLookup) }
+    val methods = implBlock.methods.mapValues { (_, function) -> compileFunction(function, implBlockLookup, lambdaAppender) }
+    val associatedFunctions = implBlock.associatedFunctions.mapValues { (_, function) -> compileFunction(function, implBlockLookup, lambdaAppender) }
 
     return IRImpl(fullImplSignature, methods, associatedFunctions, implBlock.generics)
 }
@@ -77,14 +82,15 @@ fun TemplatedType.exists(module: ModuleLookup): Boolean = when(this) {
     is TemplatedType.Array -> itemType.exists(module)
 }
 
-fun compileFunction(function: Function, module: ModuleLookup): IRFunction {
+fun compileFunction(function: Function, module: ModuleLookup, lambdaAppender: LambdaAppender): IRFunction {
 
     val body = compileExpression(function.body, module, true)
 
     return IRFunction(
         function.args,
         body,
-        module.localImports.values.toSet() + module.localName
+        module.localImports.values.toSet() + module.localName,
+        lambdaAppender
     )
 }
 
@@ -208,6 +214,15 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
 
             Instruction.Keep(value, generateName().lowercase(), module.containerName)
         }
+
+        is Expression.Lambda -> {
+            Instruction.Lambda(
+                argNames = expression.args,
+                body = compileExpression(expression.body, module, uctl = false),
+                capturedVariables = expression.capturedVariables.toList(),
+                imports = module.localImports.values.toSet()
+            )
+        }
     }
 }
 
@@ -321,10 +336,14 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup, uctl: Boolean
                 else -> error("Cannot invoke non funciton ${parent.name}")
             }
         }
-        //this would be a value invokable
-        //meaning a value that has an invoke function
-        //you can still call .invoke for now but simply calling it will work too in the future
-        else -> error("Invoking dynamic value invokables not implemented yet")
+        //this calls a value invokable
+        //meaning a value that has an invoke function like lambdas
+        else -> {
+            Instruction.InvokeLambda(
+                compileExpression(parent, module, uctl),
+                args
+            )
+        }
     }
 }
 

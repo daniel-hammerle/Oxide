@@ -59,7 +59,7 @@ data class JvmMethodRepresentation(
         methods.first { it.fitsArgTypes(argTypes) }.let { it.genericReturnType.typeName != it.returnType.name }
 
 
-    suspend fun lookupVariant(generics: Map<String, Type.BroadType>, argTypes: List<Type>): FunctionCandidate? {
+    suspend fun lookupVariant(type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>): FunctionCandidate? {
         if (variants.contains(generics to argTypes)) return variants.get(generics to argTypes)
 
         val method = methods.firstOrNull { it.fitsArgTypes(argTypes) } ?: return null
@@ -68,7 +68,7 @@ data class JvmMethodRepresentation(
 
         val jvmArgTypes = method.parameterTypes.map { it.toType() }
         val candidate =  FunctionCandidate(
-            argTypes,
+            listOf(type) + argTypes,
             jvmArgTypes,
             method.returnType.toType(),
             oxideReturnType,

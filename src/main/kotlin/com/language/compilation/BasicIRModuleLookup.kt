@@ -62,6 +62,14 @@ class BasicIRModuleLookup(
         }
     }
 
+    override suspend fun lookupLambdaInit(signatureString: SignatureString): FunctionCandidate {
+        TODO("Not yet implemented")
+    }
+
+    override suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<Type>): FunctionCandidate {
+        TODO("Not yet implemented")
+    }
+
     override fun newModFrame(modNames: Set<SignatureString>): IRLookup {
         val newImplBlocks: MutableMap<TemplatedType, MutableSet<IRImpl>> = mutableMapOf()
         nativeModules.filter { it.name in modNames }.forEach { mod ->
@@ -270,6 +278,7 @@ class BasicIRModuleLookup(
                 types[0].copy(requireDispatch = true)
             }
             is Type.Array -> TODO()
+            is Type.Lambda -> TODO()
         }
     }
 
@@ -367,6 +376,7 @@ class BasicIRModuleLookup(
             }
 
             is Type.Array -> TODO()
+            is Type.Lambda -> TODO()
         }
     }
 
@@ -453,5 +463,6 @@ fun Class<*>.canBe(type: Type, strict: Boolean = false, nullable: Boolean = fals
         }
         is Type.Array -> name == type.toJVMDescriptor().replace("/", ".")
         Type.Never -> false
+        is Type.Lambda ->SignatureString(this.name.replace(".", "::")) == type.signature || name == "java.lang.Object"
     }
 }

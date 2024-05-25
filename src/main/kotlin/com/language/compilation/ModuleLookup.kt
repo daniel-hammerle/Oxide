@@ -22,5 +22,4 @@ interface ModuleLookup {
     fun hasModule(name: SignatureString): Boolean
     fun nativeModule(name: SignatureString): Module?
 
-
 }

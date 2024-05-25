@@ -156,6 +156,39 @@ class BasicOxideLookup(
         }
     }
 
+    override suspend fun lookupLambdaInit(signatureString: SignatureString): FunctionCandidate {
+        val lambda = modules[signatureString.modName]?.getLambda(signatureString)!!
+        val args = lambda.captures.values.toList()
+        return FunctionCandidate(
+            args,
+            args,
+            Type.Nothing,
+            Type.Lambda(signatureString),
+            Opcodes.INVOKESPECIAL,
+            signatureString,
+            "<init>",
+            obfuscateName = false,
+            requireDispatch = false
+        )
+    }
+
+    override suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate {
+        val lambda = modules[signatureString.modName]?.getLambda(signatureString)!!
+        val returnType = lambda.inferTypes(argTypes, lookup)
+
+        return FunctionCandidate(
+            argTypes,
+            argTypes,
+            returnType,
+            returnType,
+            Opcodes.INVOKEVIRTUAL,
+            signatureString,
+            "invoke",
+            obfuscateName = true,
+            requireDispatch = false
+        )
+    }
+
     private fun getStruct(signature: SignatureString) = modules[signature.modName]?.structs?.get(signature.structName)
 
     override suspend fun lookupModifiers(structName: Type): Modifiers = when(structName) {

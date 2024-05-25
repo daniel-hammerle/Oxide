@@ -82,5 +82,9 @@ interface IRLookup {
 
     suspend fun satisfiesModifiers(instance: Type, modifiers: Modifiers): Boolean
 
+    suspend fun lookupLambdaInit(signatureString: SignatureString): FunctionCandidate
+
+    suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<Type>): FunctionCandidate
+
     suspend fun TemplatedType.populate(generics: Map<String, Type>): Type
 }

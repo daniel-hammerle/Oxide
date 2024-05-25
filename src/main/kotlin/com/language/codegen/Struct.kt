@@ -31,20 +31,27 @@ fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct
         )
     }
     //create default constructor
+    generateConstructor(cw, struct.defaultVariant!!, modName+SignatureString(structName))
+    return cw.toByteArray()
+
+
+}
+
+fun generateConstructor(cw: ClassWriter, fields: Map<String, Type>, signatureString: SignatureString) {
     val mv = cw.visitMethod(
         Opcodes.ACC_PUBLIC,
         "<init>",
-        generateJVMFunctionSignature(struct.defaultVariant!!.values, Type.Nothing),
+        generateJVMFunctionSignature(fields.values, Type.Nothing),
         null,
         null
 
     )
-    mv.visitMaxs(3, 1+struct.defaultVariant!!.map { it.value.size }.sum())
+    mv.visitMaxs(3, 1+fields.map { it.value.size }.sum())
     mv.visitVarInsn(Opcodes.ALOAD, 0); // Load "this" onto the stack
     mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false); // Invoke super constructor
 
     var i = 0
-    for ((name, type) in struct.defaultVariant!!) {
+    for ((name, type) in fields) {
         mv.visitVarInsn(Opcodes.ALOAD, 0)
         val loadingInstruction = when(type) {
             is Type.IntT, is Type.BoolT -> Opcodes.ILOAD
@@ -55,14 +62,11 @@ fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct
         }
 
         mv.visitVarInsn(loadingInstruction, i+1)
-        mv.visitFieldInsn(Opcodes.PUTFIELD, structJVMName, name, type.toJVMDescriptor())
+        mv.visitFieldInsn(Opcodes.PUTFIELD, signatureString.toJvmNotation(), name, type.toJVMDescriptor())
         i+= when(type) {
             is Type.DoubleT -> 2
             else -> 1
         }
     }
     mv.visitInsn(Opcodes.RETURN)
-    return cw.toByteArray()
-
-
 }

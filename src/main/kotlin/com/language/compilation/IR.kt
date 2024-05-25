@@ -7,6 +7,7 @@ import com.language.codegen.VarFrame
 import com.language.codegen.VarFrameImpl
 import com.language.codegen.asUnboxed
 import com.language.compilation.metadata.FunctionMetaDataHandle
+import com.language.compilation.metadata.LambdaAppender
 import com.language.compilation.metadata.MetaDataHandle
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
@@ -159,7 +160,7 @@ class VariableMappingImpl private constructor(
     }
 
     override fun getType(name: String): Type {
-        return variables[name]!!
+        return variables[name] ?: error("No var with name $name")
     }
 
     override fun getId(name: String): Int {
@@ -422,6 +423,26 @@ sealed class Instruction {
         }
     }
 
+    data class InvokeLambda(val lambdaParent: Instruction, val args: List<Instruction>): Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableMapping,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
+            val parent = lambdaParent.inferTypes(variables, lookup, handle)
+            val args = args.map { it.inferTypes(variables, lookup, handle) }
+
+            val candidate = when(val tp = parent.type) {
+                is Type.Lambda -> {
+                    lookup.lookupLambdaInvoke(tp.signature, args.map { it.type })
+                }
+                else -> error("Cannot invoke non lambda")
+            }
+            return TypedInstruction.DynamicCall(candidate, "invoke", parent, args, null)
+        }
+
+    }
+
     data class ModuleCall(
         val moduleName: SignatureString,
         val name: String,
@@ -533,6 +554,25 @@ sealed class Instruction {
                 type = returnType
             )
         }
+    }
+
+    data class Lambda(val argNames: List<String>, val body: Instruction, val capturedVariables: List<String>, val imports: Set<SignatureString>): Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableMapping,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
+            val captures = capturedVariables.associateWith { variables.getType(it) }
+            val sig = handle.addLambda(argNames, captures, body, handle.inheritedGenerics, imports)
+            val candidate = lookup.lookupLambdaInit(sig)
+
+            return TypedInstruction.Lambda(
+                captures.mapValues { variables.getId(it.key) to it.value },
+                sig,
+                candidate
+            )
+        }
+
     }
 
     data class DynamicPropertyAssignment(val parent: Instruction, val name: String, val value: Instruction) : Instruction() {
@@ -880,6 +920,10 @@ sealed interface Type {
         override val size: Int = entries.maxOf { it.size }
     }
 
+    data class Lambda(val signature: SignatureString): Type {
+        override val size: Int = 1
+    }
+
     //this is not null but represents an instruction not producing a value on the stack whatsoever
     data object Nothing : Type {
         override val size: Int = 0
@@ -990,7 +1034,7 @@ fun Type.toActualJvmType() = when(this) {
 }
 
 
-data class IRFunction(val args: List<String>, val body: Instruction, val imports: Set<SignatureString>) {
+data class IRFunction(val args: List<String>, val body: Instruction, val imports: Set<SignatureString>, val module: LambdaAppender) {
     private val mutex = Mutex()
     private val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, FunctionMetaData>> = mutableMapOf()
 
@@ -1008,7 +1052,7 @@ data class IRFunction(val args: List<String>, val body: Instruction, val imports
         if (argTypes.size != this.args.size) {
             error("Expected ${this.args.size} but got ${argTypes.size} arguments when calling $args (TypeChecking)")
         }
-        val metaDataHandle = FunctionMetaDataHandle(generics)
+        val metaDataHandle = FunctionMetaDataHandle(generics, module)
         val variables = VariableMappingImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
         val result = body.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle)
         val requireImplicitNull = metaDataHandle.hasReturnType() && result.type == Type.Nothing
@@ -1096,5 +1140,66 @@ data class IRModule(
     val name: SignatureString,
     val functions: Map<String, IRFunction>,
     val structs: Map<String, IRStruct>,
-    val implBlocks: Map<TemplatedType, Set<IRImpl>>
-)
+    val implBlocks: Map<TemplatedType, Set<IRImpl>>,
+): LambdaAppender {
+    val lambdas: MutableMap<SignatureString, LambdaContainer> = mutableMapOf()
+    private val mutex = Mutex()
+
+    override suspend fun addLambda(
+        argNames: List<String>,
+        captures: Map<String, Type>,
+        body: Instruction,
+        generics: Map<String, Type>,
+        imports: Set<SignatureString>
+    ): SignatureString {
+        val sig = name + SignatureString(generateName())
+        val container = LambdaContainer(sig, captures, body, argNames, imports, generics, this)
+        mutex.withLock {
+            lambdas[sig] = container
+        }
+        return sig
+    }
+
+    suspend fun getLambda(signature: SignatureString): LambdaContainer? = mutex.withLock { lambdas[signature] }
+}
+
+data class LambdaContainer(
+    val signature: SignatureString,
+    val captures: Map<String, Type>,
+    val closureBody: Instruction,
+    val argNames: List<String>,
+    val imports: Set<SignatureString>,
+    val generics: Map<String, Type>,
+    val module: LambdaAppender
+) {
+    private val mutex = Mutex()
+    val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, FunctionMetaData>> = mutableMapOf()
+
+    suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup): Type {
+        if (argTypes in checkedVariants) {
+            return checkedVariants[argTypes]!!.second.returnType
+        }
+
+        if (argTypes.size != this.argNames.size) {
+            error("Expected ${this.argNames.size} but got ${argTypes.size} arguments when calling $argNames (TypeChecking)")
+        }
+        val metaDataHandle = FunctionMetaDataHandle(generics, module)
+        val variables = VariableMappingImpl.fromVariables(argTypes.zip(argNames).associate { (tp, name) -> name to tp } + captures)
+        val result = closureBody.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle)
+        val requireImplicitNull = metaDataHandle.hasReturnType() && result.type == Type.Nothing
+
+        val returnType = if (requireImplicitNull) Type.Null else result.type
+        metaDataHandle.issueReturnTypeAppend(returnType)
+        mutex.withLock {
+            checkedVariants[argTypes] = (
+                    if (requireImplicitNull)
+                        TypedInstruction.MultiInstructions(listOf(result, TypedInstruction.Null), variables.toVarFrame())
+                    else
+                        result
+                    ) to metaDataHandle.apply {
+                        varCount = variables.varCount()
+                    }.toMetaData()
+        }
+        return returnType
+    }
+}

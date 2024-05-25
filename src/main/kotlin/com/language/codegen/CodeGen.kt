@@ -13,7 +13,7 @@ suspend fun compileProject(modules: Set<IRModule>): Map<SignatureString, ByteArr
     modules.map { module ->
         launch {
             val modPath = module.name
-            val (modCode, structCode, implBlocks)  = compileModule(module)
+            val (modCode, structCode, implBlocks, lambdas)  = compileModule(module)
             mutex.withLock {
                 entries[modPath] = modCode
                 for ((structPath, bytes) in structCode) {
@@ -21,6 +21,9 @@ suspend fun compileProject(modules: Set<IRModule>): Map<SignatureString, ByteArr
                 }
                 for((blockPath, block) in implBlocks) {
                     entries[blockPath] = block
+                }
+                for((lambdaPath, bytes) in lambdas) {
+                    entries[lambdaPath] = bytes
                 }
             }
         }
@@ -33,7 +36,8 @@ suspend fun compileProject(modules: Set<IRModule>): Map<SignatureString, ByteArr
 data class CompiledModuleOutput(
     val modCode: ByteArray,
     val structs: Map<String, ByteArray>,
-    val impls: Map<SignatureString, ByteArray>
+    val impls: Map<SignatureString, ByteArray>,
+    val lambdaClasses: Map<SignatureString, ByteArray>
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -60,6 +64,12 @@ suspend fun compileModule(module: IRModule): CompiledModuleOutput = coroutineSco
     val structs = module.structs.mapValues { (name, struct) ->
         async {
             compileStruct(module.name, name, struct)
+        }
+    }
+
+    val lambdas = module.lambdas.mapValues { (_, lambda) ->
+        async {
+            compileLambda(lambda)
         }
     }
 
@@ -98,7 +108,8 @@ suspend fun compileModule(module: IRModule): CompiledModuleOutput = coroutineSco
     return@coroutineScope CompiledModuleOutput(
         cw.toByteArray(),
         structs.mapValues { it.value.await() },
-        impls.associate { it.first to it.second.await() }
+        impls.associate { it.first to it.second.await() },
+        lambdas.mapValues { it.value.await() }
     )
 }
 

@@ -1,6 +1,11 @@
 func main {
-    print("Enter a boolean >")
-    i = input()
+    x = "Hello World"
+    myClosure = { |a, b|
+        x + a
+    }
+    print(myClosure("!", 0))
+
+    i = input("Enter a boolean >")
     bool = tryBool(i).unwrap("Failed")
     print(bool)
 }
@@ -47,10 +52,10 @@ impl<error E, T> E | T {
 
 use java::lang::System
 use java::util::Scanner
-func input {
+func input(message) {
+    System.out.print(message)
     scanner = keep {
-        in = System.in
-        Scanner(in)
+        Scanner(System.in)
     }
     scanner.nextLine()
 }

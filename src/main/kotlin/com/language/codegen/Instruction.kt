@@ -124,7 +124,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         }
         is TypedInstruction.LoadVar -> {
             when(instruction.type) {
-                is Type.JvmType, is Type.Array -> mv.visitVarInsn(Opcodes.ALOAD, instruction.id)
+                is Type.JvmType, is Type.Array, is Type.Lambda -> mv.visitVarInsn(Opcodes.ALOAD, instruction.id)
                 Type.DoubleT -> mv.visitVarInsn(Opcodes.DLOAD, instruction.id)
                 Type.IntT, is Type.BoolT -> mv.visitVarInsn(Opcodes.ILOAD, instruction.id)
                 Type.Nothing -> mv.visitInsn(Opcodes.ACONST_NULL)
@@ -139,7 +139,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             when(instruction.value.type) {
                 is Type.BoolT, Type.IntT -> mv.visitVarInsn(Opcodes.ISTORE, instruction.id)
                 Type.DoubleT -> mv.visitVarInsn(Opcodes.DSTORE, instruction.id)
-                is Type.JvmType ->  mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
+                is Type.JvmType, is Type.Lambda->  mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
                 Type.Nothing -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
                 Type.Null, is Type.Array -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
                 is Type.Union -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
@@ -587,6 +587,18 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             stackMap.generateFrame(mv)
             mv.visitLabel(skip)
         }
+
+        is TypedInstruction.Lambda -> {
+            mv.visitTypeInsn(Opcodes.NEW, instruction.signatureString.toJvmNotation())
+            stackMap.push(instruction.type)
+            mv.visitInsn(Opcodes.DUP)
+            stackMap.push(instruction.type)
+            instruction.captures.values.forEach { (id, tp) ->
+                compileInstruction(mv, TypedInstruction.LoadVar(id, tp), stackMap)
+            }
+            instruction.candidate.generateCall(mv)
+            stackMap.pop(instruction.captures.size + 1)
+        }
     }
 }
 
@@ -626,7 +638,6 @@ fun compileMatch(
             )
             mv.visitInsn(Opcodes.ATHROW)
         }
-        @Contract
         if (instruction.type != body.type) {
             boxOrIgnore(mv, body.type)
             unboxOrIgnore(mv, body.type)
@@ -857,7 +868,7 @@ inline fun MethodVisitor.dynamicDispatch(types: Iterable<Type>, elseType: Type, 
     when(elseType) {
         is Type.BoolT, Type.IntT -> visitInsn(Opcodes.ICONST_0)
         Type.DoubleT -> visitLdcInsn(0.0)
-        is Type.BasicJvmType, Type.Null, is Type.Union, is Type.Array, Type.Never -> visitInsn(Opcodes.ACONST_NULL)
+        is Type.BasicJvmType, Type.Null, is Type.Union, is Type.Array, Type.Never, is Type.Lambda -> visitInsn(Opcodes.ACONST_NULL)
         Type.Nothing -> {}
     }
 
