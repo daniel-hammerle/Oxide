@@ -68,7 +68,7 @@ suspend fun TemplatedType.matches(
             true
         }
         is TemplatedType.Array -> {
-            type is Type.Array && itemType.matches(type.itemType, generics, modifiers, lookup)
+            type is Type.JvmArray && itemType.matches(type.itemType, generics, modifiers, lookup)
         }
         TemplatedType.BoolT ->type is Type.BoolT
         TemplatedType.DoubleT ->type == Type.DoubleT

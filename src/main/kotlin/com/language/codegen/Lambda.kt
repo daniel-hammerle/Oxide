@@ -1,6 +1,7 @@
 package com.language.codegen
 
 import com.language.compilation.LambdaContainer
+import com.language.compilation.Type
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
@@ -31,7 +32,7 @@ suspend fun compileLambda(lambda: LambdaContainer): ByteArray {
 
 
     lambda.checkedVariants.map { (argTypes, body) ->
-        compileCheckedFunction(cw, "invoke", body.first,body.second, argTypes)
+        compileCheckedFunction(cw, "invoke", body.first,body.second, argTypes, static = false, instanceType = Type.Lambda(lambda.signature))
     }
 
     return cw.toByteArray()

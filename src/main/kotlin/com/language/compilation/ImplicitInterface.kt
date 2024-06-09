@@ -7,7 +7,9 @@ interface ImplicitInterface {
 
     suspend fun validate(lookup: IRLookup, type: Type): Boolean = functions.all { (name, signature) ->
         val (args, returnType) = signature
-        val result = runCatching { lookup.lookUpCandidate(type, name, args) }.getOrNull() ?: return false
+        val result = runCatching { lookup.lookUpCandidate(type, name, args) }.getOrElse {
+            return false
+        }
         returnType(result.oxideReturnType, lookup)
     }
 }

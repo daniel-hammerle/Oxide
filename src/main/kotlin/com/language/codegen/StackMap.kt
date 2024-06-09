@@ -146,7 +146,7 @@ class StackMapImpl(
          mv.visitFrame(
             Opcodes.F_FULL,
             variables.variables.size,
-            variables.variables.map { it?.toFrameSignature() }.toTypedArray(),
+            variables.variables.map { it?.toFrameSignature() ?: Opcodes.TOP }.toTypedArray(),
             currentStackPtr,
             stack.map { it?.toFrameSignature() }.toTypedArray()
         )
@@ -209,5 +209,8 @@ fun Type.toFrameSignature(): Any = when(this) {
     Type.Nothing -> error("Nothing can't be on a stack")
     Type.Null -> "java/lang/Object"
     is Type.Union -> "java/lang/Object"
-    is Type.Array -> "[${itemType.getOrDefault(Type.Object).toJVMDescriptor()}"
+    is Type.Array -> "[Ljava/lang/Object;"
+    Type.BoolArray -> "[Z"
+    Type.DoubleArray -> "[D"
+    Type.IntArray -> "[I"
 }

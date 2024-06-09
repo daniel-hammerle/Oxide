@@ -98,6 +98,15 @@ fun compileStatements(statements: List<Statement>, module: ModuleLookup, uctl: B
     return statements.mapIndexed { i, it -> compileStatement(it, module, uctl) }
 }
 
+fun compileForLoopConstruct(construct: ForLoopConstruct, module: ModuleLookup, uctl: Boolean): ForLoop {
+    return ForLoop(
+        compileExpression(construct.parent, module, uctl),
+        construct.name,
+        construct.indexName,
+        compileConstructingArg(construct.body, module)
+    )
+}
+
 fun compileStatement(statement: Statement, module: ModuleLookup, uctl: Boolean): Instruction {
     return when(statement) {
         is Statement.Assign -> {
@@ -110,9 +119,7 @@ fun compileStatement(statement: Statement, module: ModuleLookup, uctl: Boolean):
         }
         is Statement.For -> {
             Instruction.For(
-                parent = compileExpression(statement.parent, module, uctl),
-                name = statement.itemName,
-                body = compileExpression(statement.body, module, false)
+                forLoop = compileForLoopConstruct(statement.forLoopConstruct, module, uctl)
             )
         }
         is Statement.Expr -> compileExpression(expression = statement.expression, module, uctl)
@@ -135,6 +142,7 @@ fun compileConstructingArg(arg: ConstructingArgument, module: ModuleLookup): Ins
     return when(arg) {
         is ConstructingArgument.Collect -> Instruction.ConstructingArgument.Collected(compileExpression(arg.expression, module, false))
         is ConstructingArgument.Normal -> Instruction.ConstructingArgument.Normal(compileExpression(arg.expression, module, false))
+        is ConstructingArgument.ForLoop -> Instruction.ConstructingArgument.Iteration(compileForLoopConstruct(arg.forLoopConstruct, module, false), )
     }
 }
 
@@ -223,6 +231,9 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
                 imports = module.localImports.values.toSet()
             )
         }
+
+        is Expression.DefaultArray -> TODO()
+        is Expression.CollectorArray -> TODO()
     }
 }
 

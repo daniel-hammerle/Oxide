@@ -9,7 +9,7 @@ import com.language.lookup.IRLookup
 interface JvmLookup {
     suspend fun lookUpMethod(instance: Type.JvmType, functionName: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
 
-    suspend fun lookUpAssociatedFunction(className: SignatureString, functionName: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
+    suspend fun lookUpAssociatedFunction(className: SignatureString, functionName: String, argTypes: List<Type>, lookup: IRLookup, generics: Map<String, Type.BroadType>): FunctionCandidate?
 
     suspend fun lookUpField(instance: Type.JvmType, fieldName: String, lookup: IRLookup): Type?
 
@@ -24,5 +24,7 @@ interface JvmLookup {
     suspend fun lookupConstructor(className: SignatureString, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
 
     suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int>?
+
+    suspend fun lookUpGenericsDefinitionOrder(className: SignatureString): List<String>
 
 }

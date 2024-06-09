@@ -29,7 +29,8 @@ class IRModuleLookup(
     override suspend fun lookUpCandidate(
         modName: SignatureString,
         funcName: String,
-        argTypes: List<Type>
+        argTypes: List<Type>,
+        generics: Map<String, Type.BroadType>
     ): FunctionCandidate {
         runCatching {
             oxideLookup.lookupFunction(modName, funcName, argTypes, this)
@@ -38,7 +39,7 @@ class IRModuleLookup(
             oxideLookup.lookupAssociatedExtensionFunction(modName, funcName, argTypes, this)
         }.map { return it }
 
-        return jvmLookup.lookUpAssociatedFunction(modName, funcName, argTypes, this) ?: error("NO method found $modName.$funcName($argTypes)")
+        return jvmLookup.lookUpAssociatedFunction(modName, funcName, argTypes, this, generics) ?: error("NO method found $modName.$funcName($argTypes)")
     }
 
     override suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate {

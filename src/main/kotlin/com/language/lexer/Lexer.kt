@@ -68,7 +68,7 @@ sealed interface Token {
     data object QuestionMark : Token
     data object EqualSign : Token
     data object ExclamationMark : Token
-
+    data object SemiColon : Token
     data object Collector : Token
 
     data object Arrow : Token
@@ -164,6 +164,10 @@ fun lexCode(code: String) = mutableListOf<Token>().apply {
             '+' -> {
                 flush()
                 Token.Plus
+            }
+            ';' -> {
+                flush()
+                Token.SemiColon
             }
             '?' -> {
                 flush()

@@ -1,13 +1,108 @@
 func main {
+    someList = [1, 2, 3]
+}
+
+func doSth(someList) {
+    result = [for item in someList item + 1, "Hello World", true, false]
+    println(result)
+}
+
+func oldMain {
     x = "Hello World"
-    myClosure = { |a, b|
+    myClosure = { |a|
         x + a
     }
-    print(myClosure("!", 0))
+    println(myClosure("!"))
+    println(myClosure(1))
 
     i = input("Enter a boolean >")
     bool = tryBool(i).unwrap("Failed")
-    print(bool)
+    println(bool)
+}
+
+use java::util::{List, ArrayList}
+impl<T> ArrayList<T> {
+    func map(self, closure) {
+        list[for item in self closure(item)]
+    }
+
+    func flatMap(self, closure) {
+        list[for item in self ...closure(item)]
+    }
+
+    func sum(self, startingValue) {
+        sum = startingValue
+        for item in self {
+            sum = sum + item
+        }
+        sum
+    }
+
+    func sumBy(self, startingValue, closure) {
+        sum = startingValue
+        for item in self {
+            sum = sum + closure(item)
+        }
+        sum
+    }
+
+    func fold(self, initialValue, closure) {
+        acc = initialValue
+        for item in self {
+            acc = closure(acc, item)
+        }
+        acc
+    }
+}
+
+impl<T> [T] {
+    func map(self, closure) {
+        [for item in self closure(item)]
+    }
+
+    func flatten(self) {
+        [for item in self ...item]
+    }
+
+    func flatMap(self, closure) {
+        [for item in self ...closure(item)]
+    }
+
+    func sum(self, initialValue) {
+        value = initialValue
+        for item in self {
+            value = value + item
+        }
+        value
+    }
+
+    func sumOf(self, initialValue, closure) {
+        value = initialValue
+        for item in self {
+            value = value + closure(item)
+        }
+        value
+    }
+}
+
+
+use java::util::Arrays
+impl<T> [T] {
+    func get(self, index) {
+        Arrays.asList(self).get(index)
+    }
+
+    func set(self, index, item) {
+        Arrays.asList(self).set(index, item)
+    }
+
+    func iterator(self) {
+        Arrays.asList(self).iterator()
+    }
+
+    func size(self) {
+        Arrays.asList(self).size()
+    }
 }
 
 use java::util::Random
@@ -61,8 +156,8 @@ func input(message) {
 }
 
 func panic(message) {
-    print(message)
+    println(message)
     control.exit(1)
 }
 
-func print(value) System.out.println(value)
+func println(value) System.out.println(value)

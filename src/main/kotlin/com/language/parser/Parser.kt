@@ -199,14 +199,8 @@ fun parseStatement(tokens: Tokens, variables: Variables): Statement {
             Statement.While(condition, body)
         }
         is Token.For -> {
-            val name = tokens.expect<Token.Identifier>().name
-            tokens.expect<Token.In>()
-            val scope = variables.child()
-            scope.put(name)
-            val parent = parseExpression(tokens, variables)
-            val body = parseExpression(tokens, scope)
-
-            Statement.For(parent, name, body)
+            tokens.previous()
+            Statement.For(parseForLoopConstruct(tokens, variables))
         }
         else -> {
             tokens.previous()
@@ -431,29 +425,63 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
     }
 }
 
+fun parseForLoopConstruct(tokens: Tokens, variables: Variables): ForLoopConstruct {
+    tokens.expect<Token.For>()
+    val name = tokens.expect<Token.Identifier>().name
+    val indexName = if (tokens.visitNext() == Token.Comma) {
+        tokens.expect<Token.Comma>()
+        tokens.expect<Token.Identifier>().name
+    } else null
+    tokens.expect<Token.In>()
+    val parent = parseExpression(tokens, variables)
+    val scope = variables.child()
+    scope.put(name)
+    indexName?.let { scope.put(it) }
+    val body = parseConstructingArgument(tokens, scope)
+    return ForLoopConstruct(parent, name, indexName, body)
+}
+
 fun parseConstructingArgument(tokens: Tokens, variables: Variables): ConstructingArgument {
     return when(tokens.visitNext()) {
         is Token.Collector -> {
             tokens.expect<Token.Collector>()
             ConstructingArgument.Collect(parseExpression(tokens, variables))
         }
+        Token.For -> {
+            ConstructingArgument.ForLoop(parseForLoopConstruct(tokens, variables))
+        }
         else -> ConstructingArgument.Normal(parseExpression(tokens, variables))
     }
 }
 
-fun parseArray(type: ArrayType, tokens: Tokens, variables: Variables, closingSymbol: Token = Token.ClosingSquare): Expression.ConstArray {
-    if (tokens.visitNext() == closingSymbol) {
-        tokens.next()
-        return Expression.ConstArray(type, emptyList())
+fun parseArray(type: ArrayType, tokens: Tokens, variables: Variables, closingSymbol: Token = Token.ClosingSquare): Expression.Array {
+    when (tokens.visitNext()) {
+        closingSymbol -> {
+            tokens.next()
+            return Expression.ConstArray(type, emptyList())
+        }
+        else -> {}
     }
+
 
     val items = mutableListOf<ConstructingArgument>()
     while(true) {
         items += parseConstructingArgument(tokens, variables)
-        when(tokens.next()) {
+        when(val tk = tokens.next()) {
+
+            Token.SemiColon -> {
+                val item = when {
+                    items.size != 1 -> error("")
+                    items[0] !is ConstructingArgument.Normal -> error("")
+                    else -> (items[0] as ConstructingArgument.Normal).expression
+                }
+                val size = parseExpression(tokens, variables)
+                tokens.expect(closingSymbol)
+                return Expression.DefaultArray(type, item, size)
+            }
             Token.Comma -> continue
             closingSymbol -> break
-            else -> error("Invalid symbol")
+            else -> error("Invalid symbol `$tk`")
         }
     }
 
@@ -676,4 +704,9 @@ fun Tokens.visit2Next() = next().let { next().also { previous(); previous() } }
 inline fun<reified A> Iterator<*>.expect(): A = when (val v = next()){
     !is A -> error("Expected ${A::class.simpleName} but got `$v`")
     else -> v
+}
+
+fun<A> Iterator<*>.expect(item: A) = when(val v = next()) {
+    item -> item
+    else -> error("Expected $item but got $v")
 }

@@ -25,7 +25,7 @@ interface IRLookup {
      * # Note
      * If the given module or class doesn't have a matching static method it will throw
      */
-    suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate
+    suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>, generics: Map<String, Type.BroadType> = emptyMap()): FunctionCandidate
 
     /**
      * Returns the function candidate for a given method

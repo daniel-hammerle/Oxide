@@ -24,7 +24,7 @@ sealed interface TypedInstruction {
         override val type = parent.type
     }
 
-    data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type) : TypedInstruction {
+    data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type, val tempArrayVariable: Int?) : TypedInstruction {
         val isConstList = items.all { it is TypedConstructingArgument.Normal }
         override val type: Type = Type.BasicJvmType(
             SignatureString("java::util::ArrayList"),
@@ -35,12 +35,14 @@ sealed interface TypedInstruction {
     data class LoadArray(val items: List<TypedConstructingArgument>, val arrayType: ArrayType, val itemType: Type.BroadType, val tempIndexVarId: Int, val tempArrayVarId: Int) : TypedInstruction {
         override val type: Type = when(arrayType) {
             ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
-            else -> Type.Array(itemType)
+            ArrayType.Int -> Type.IntArray
+            ArrayType.Double -> Type.DoubleArray
+            ArrayType.Bool -> Type.BoolArray
         }
     }
 
 
-    data class ForLoop(val parent: TypedInstruction, val itemId: Int, val hasNextCall: FunctionCandidate, val nextCall: FunctionCandidate, val body: TypedInstruction) : TypedInstruction {
+    data class ForLoop(val parent: TypedInstruction, val itemId: Int, val indexId: Int?, val hasNextCall: FunctionCandidate, val nextCall: FunctionCandidate, val body: TypedConstructingArgument) : TypedInstruction {
         override val type: Type = Type.Nothing
     }
 
@@ -56,7 +58,9 @@ sealed interface TypedInstruction {
     data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.BroadType) : TypedInstruction {
         override val type: Type = when(arrayType) {
             ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
-            else -> Type.Array(itemType)
+            ArrayType.Int -> Type.IntArray
+            ArrayType.Double -> Type.DoubleArray
+            ArrayType.Bool -> Type.BoolArray
         }
     }
 
@@ -136,7 +140,7 @@ sealed interface TypedInstruction {
     }
 
     data class Lambda(
-        val captures: Map<String, Pair<Int, Type>>,
+        val captures: Map<String, TypedInstruction>,
         val signatureString: SignatureString,
         val candidate: FunctionCandidate
     ): TypedInstruction {
@@ -187,7 +191,7 @@ sealed interface TypedInstruction {
 
 
 sealed interface TypedConstructingArgument {
-    abstract val instruction: TypedInstruction
+    val instruction: TypedInstruction
     val type: Type
     @JvmInline
     value class Normal(override val instruction: TypedInstruction) : TypedConstructingArgument {
@@ -199,6 +203,12 @@ sealed interface TypedConstructingArgument {
     value class Collected(override val instruction: TypedInstruction) : TypedConstructingArgument {
         override val type: Type
             get() = instruction.type
+    }
+
+    @JvmInline
+    value class Iteration(override val instruction: TypedInstruction.ForLoop): TypedConstructingArgument {
+        override val type: Type
+            get() = instruction.body.type
     }
 }
 

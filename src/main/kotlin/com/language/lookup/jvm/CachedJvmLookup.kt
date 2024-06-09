@@ -35,15 +35,16 @@ class CachedJvmLookup(
         }
 
     override suspend fun lookUpMethod(instance: Type.JvmType, functionName: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
-        return getClass(instance.signature).lookupMethod(functionName, instance, instance.genericTypes, argTypes, lookup)
+        return getClass(instance.signature).lookupMethod(functionName, instance, instance.genericTypes, argTypes, lookup, this)
     }
 
     override suspend fun lookUpAssociatedFunction(
         className: SignatureString,
         functionName: String,
         argTypes: List<Type>,
-        lookup: IRLookup
-    ): FunctionCandidate? = getClass(className).lookUpAssociatedFunction(functionName, argTypes, lookup)
+        lookup: IRLookup,
+        generics: Map<String, Type.BroadType>
+    ): FunctionCandidate? = getClass(className).lookUpAssociatedFunction(functionName, argTypes, lookup, this, generics)
 
     override suspend fun lookUpField(instance: Type.JvmType, fieldName: String, lookup: IRLookup): Type? {
         return getClass(instance.signature).lookUpField(fieldName, instance.genericTypes, lookup)
@@ -74,6 +75,10 @@ class CachedJvmLookup(
 
     override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int>? {
         TODO("Not yet implemented")
+    }
+
+    override suspend fun lookUpGenericsDefinitionOrder(className: SignatureString): List<String> {
+        return getClass(className).getGenericDefinitionOrder()
     }
 
 

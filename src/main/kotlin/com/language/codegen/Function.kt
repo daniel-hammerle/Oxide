@@ -10,10 +10,12 @@ suspend fun compileCheckedFunction(
     body: TypedInstruction,
     metaData: FunctionMetaData,
     argTypes: List<Type>,
+    static: Boolean = true,
+    instanceType: Type? = null
 ) {
     val mv = cw.visitMethod(
-        Opcodes.ACC_PUBLIC + Opcodes.ACC_FINAL + Opcodes.ACC_STATIC,
-        jvmName(name, argTypes),
+        Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL or if (static) Opcodes.ACC_STATIC else 0,
+        jvmName(name, if (instanceType != null) listOf(instanceType) + argTypes else argTypes),
         generateJVMFunctionSignature(argTypes, metaData.returnType),
         null,
         arrayOf()
@@ -35,7 +37,7 @@ suspend fun compileCheckedFunction(
         Type.IntT,is Type.BoolT -> mv.visitInsn(Opcodes.IRETURN)
         Type.DoubleT -> mv.visitInsn(Opcodes.DRETURN)
         Type.Nothing -> mv.visitInsn(Opcodes.RETURN)
-        is Type.Array -> mv.visitInsn(Opcodes.ARETURN)
+        is Type.JvmArray -> mv.visitInsn(Opcodes.ARETURN)
         Type.Never -> mv.visitInsn(Opcodes.RETURN)
     }
 }
@@ -63,6 +65,6 @@ fun Type.toFunctionNameNotation(): String = when(this) {
     Type.Nothing -> "v"
     Type.Never -> "v"
     Type.Null -> "n"
-    is Type.Array -> "${itemType.getOrDefault(Type.Object).toJVMDescriptor().removeSuffix(";").removePrefix("L")}]"
+    is Type.JvmArray -> "${itemType.getOrDefault(Type.Object).toJVMDescriptor().removeSuffix(";").removePrefix("L")}]"
     is Type.Union -> "u(${entries.joinToString("") { it.toFunctionNameNotation() }})"
 }

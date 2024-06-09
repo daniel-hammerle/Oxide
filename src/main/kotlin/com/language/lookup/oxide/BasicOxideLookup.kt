@@ -56,8 +56,8 @@ class BasicOxideLookup(
             blocks.forEach { impl ->
                 if (funcName in impl.methods && template.matches(instance, generics, impl.genericModifiers, lookup)) {
                     val func = impl.methods[funcName]!!
-                    val returnType = func.inferTypes(listOf(instance) + args, lookup, generics)
-
+                    val returnType = runCatching { func.inferTypes(listOf(instance) + args, lookup, generics) }.getOrElse { it.printStackTrace(); throw it }
+                    println(returnType)
                     return FunctionCandidate(
                         oxideArgs = listOf(instance) + args,
                         jvmArgs = listOf(instance) + args.map { it.toActualJvmType() },
@@ -177,7 +177,7 @@ class BasicOxideLookup(
         val returnType = lambda.inferTypes(argTypes, lookup)
 
         return FunctionCandidate(
-            argTypes,
+            listOf(Type.Lambda(signatureString)) + argTypes,
             argTypes,
             returnType,
             returnType,

@@ -81,7 +81,12 @@ class BasicIRModuleLookup(
         return BasicIRModuleLookup(nativeModules, externalJars, newImplBlocks)
     }
 
-    override suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>): FunctionCandidate {
+    override suspend fun lookUpCandidate(
+        modName: SignatureString,
+        funcName: String,
+        argTypes: List<Type>,
+        generics: Map<String, Type.BroadType>
+    ): FunctionCandidate {
         if (nativeModules.any{ it.name == modName }) {
             val module = nativeModules.first{ it.name == modName }
             return module.functions[funcName]?.inferTypes(argTypes, this, emptyMap())?.let {
@@ -277,7 +282,7 @@ class BasicIRModuleLookup(
                 val types = instance.entries.map { lookUpCandidate(it, funcName, argTypes) }
                 types[0].copy(requireDispatch = true)
             }
-            is Type.Array -> TODO()
+            is Type.JvmArray -> TODO()
             is Type.Lambda -> TODO()
         }
     }
@@ -375,7 +380,7 @@ class BasicIRModuleLookup(
                 types.reduce { acc, type -> acc.join(type) }
             }
 
-            is Type.Array -> TODO()
+            is Type.JvmArray -> TODO()
             is Type.Lambda -> TODO()
         }
     }
@@ -461,7 +466,7 @@ fun Class<*>.canBe(type: Type, strict: Boolean = false, nullable: Boolean = fals
                 }
             }
         }
-        is Type.Array -> name == type.toJVMDescriptor().replace("/", ".")
+        is Type.JvmArray -> name == type.toJVMDescriptor().replace("/", ".")
         Type.Never -> false
         is Type.Lambda ->SignatureString(this.name.replace(".", "::")) == type.signature || name == "java.lang.Object"
     }

@@ -13,7 +13,13 @@ sealed interface Expression {
     data class ConstStr(val str: String) : Const
     data class ConstBool(val bool: Boolean) : Const
 
-    data class ConstArray(val arrayType: ArrayType, val items: List<ConstructingArgument>): Expression
+    sealed interface Array : Expression {
+        val arrayType: ArrayType
+    }
+
+    data class ConstArray(override val arrayType: ArrayType, val items: List<ConstructingArgument>): Array
+    data class DefaultArray(override val arrayType: ArrayType, val defaultItem: Expression, val size: Expression) : Array
+    data class CollectorArray(override val arrayType: ArrayType, val name: String, val parent: Expression, val body: ConstructingArgument): Array
 
     data class Invoke(val parent: Expression, val args: Map<String, Expression>): Expression
 
@@ -42,6 +48,7 @@ sealed interface Expression {
 sealed interface ConstructingArgument {
     data class Collect(val expression: Expression) : ConstructingArgument
     data class Normal(val expression: Expression) : ConstructingArgument
+    data class ForLoop(val forLoopConstruct: ForLoopConstruct): ConstructingArgument
 }
 
 sealed interface TemplatedType {
@@ -58,6 +65,8 @@ sealed interface TemplatedType {
     data class Complex(val signatureString: SignatureString, val generics: List<TemplatedType>) : TemplatedType
     data class Union(val types: Set<TemplatedType>) : TemplatedType
 }
+
+data class ForLoopConstruct(val parent: Expression, val name: String, val indexName: String?, val body: ConstructingArgument)
 
 enum class ArrayType {
     Implicit,
@@ -90,7 +99,7 @@ sealed interface Statement {
     data class While(val condition: Expression, val body: Expression): Statement
     data class Assign(val name: String, val value: Expression) : Statement
     data class AssignProperty(val parent: Expression, val name: String, val value: Expression) : Statement
-    data class For(val parent: Expression, val itemName: String, val body: Expression) : Statement
+    data class For(val forLoopConstruct: ForLoopConstruct) : Statement
 }
 
 data class Module(val children: Map<String, ModuleChild>, val implBlocks: Map<TemplatedType, Impl>, val imports: Map<String, SignatureString>)

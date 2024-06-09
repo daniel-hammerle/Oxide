@@ -16,9 +16,9 @@ import java.lang.reflect.Field
 interface JvmClassRepresentation {
     suspend fun methodHasGenericReturnType(name: String, argTypes: List<Type>, lookup: IRLookup): Boolean
 
-    suspend fun lookupMethod(name: String, type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
+    suspend fun lookupMethod(name: String, type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup): FunctionCandidate?
 
-    suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
+    suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>): FunctionCandidate?
 
     suspend fun lookUpField(name: String, generics: Map<String, Type.BroadType>, lookup: IRLookup): Type?
 
@@ -27,6 +27,8 @@ interface JvmClassRepresentation {
     fun hasInterface(signatureString: SignatureString): Boolean
 
     suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
+
+    fun getGenericDefinitionOrder(): List<String>
 
     val modifiers: Modifiers
 }
@@ -53,9 +55,10 @@ data class BasicJvmClassRepresentation(
     private fun hasSuperType(signatureString: SignatureString): Boolean {
         var current = clazz.superclass
         while (true) {
-            return when(current.name) {
+            return when(current?.name) {
                 signatureString.toDotNotation() -> true
                 SignatureString("java::lang::Object").toDotNotation() -> false
+                null -> false
                 else -> {
                     current = current.superclass
                     continue
@@ -68,7 +71,7 @@ data class BasicJvmClassRepresentation(
         methods.get(name)?.let { return it }
 
         val collectedMethods = clazz.methods.filter { it.name == name && !ReflectModifiers.isStatic(it.modifiers) }
-        val rep = JvmMethodRepresentation(SignatureString.fromDotNotation(clazz.name), name, collectedMethods.toSet(), Cache())
+        val rep = JvmMethodRepresentation(SignatureString.fromDotNotation(clazz.name), name, collectedMethods.toSet(), Cache(), clazz.isInterface)
         methods.set(name, rep)
         return rep
     }
@@ -82,11 +85,11 @@ data class BasicJvmClassRepresentation(
         return rep
     }
 
-    override suspend fun lookupMethod(name: String, type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? =
-        getMethod(name).lookupVariant(type, generics, argTypes)
+    override suspend fun lookupMethod(name: String, type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup): FunctionCandidate? =
+        getMethod(name).lookupVariant(type, generics, argTypes, jvmLookup)
 
-    override suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? =
-        getAssociatedFunction(name).lookupVariant(argTypes)
+    override suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>): FunctionCandidate? =
+        getAssociatedFunction(name).lookupVariant(argTypes, jvmLookup, generics)
 
     override suspend fun lookUpField(name: String, generics: Map<String, Type.BroadType>, lookup: IRLookup): Type? {
         if (fields.contains(name)) {
@@ -106,8 +109,19 @@ data class BasicJvmClassRepresentation(
     }
 
     override fun hasInterface(signatureString: SignatureString): Boolean {
+        return hasInterface(clazz, signatureString, mutableSetOf())
+    }
+
+    private fun hasInterface(clazz: Class<*>, signatureString: SignatureString, previous: MutableSet<SignatureString>): Boolean {
         return clazz.interfaces.any {
-            it.name == signatureString.toDotNotation() || it.interfaces.any { i -> hasInterface(SignatureString.fromDotNotation(i.name)) }
+            it.name == signatureString.toDotNotation() || it.interfaces.any { i ->
+                val signature = SignatureString.fromDotNotation(i.name)
+                if (signature !in previous) {
+                    previous.add(signature)
+                    hasInterface(i, signatureString, previous)
+                }
+                else false
+            }
         }
     }
 
@@ -134,6 +148,10 @@ data class BasicJvmClassRepresentation(
 
         return candidate
     }
+
+    override fun getGenericDefinitionOrder(): List<String> {
+        return clazz.typeParameters.map { it.name }
+    }
 }
 
 data class JvmClassInfoRepresentation(
@@ -158,6 +176,7 @@ data class JvmClassInfoRepresentation(
         generics: Map<String, Type.BroadType>,
         argTypes: List<Type>,
         lookup: IRLookup,
+        jvmLookup: JvmLookup
     ): FunctionCandidate? {
         val method = getMethod(name, argTypes, lookup) ?: return null
         val oxideReturnType = with(lookup) {
@@ -179,7 +198,7 @@ data class JvmClassInfoRepresentation(
         return candidate
     }
 
-    override suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
+    override suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>): FunctionCandidate? {
         val function = getAssociatedFunction(name, argTypes, lookup) ?: return null
 
         val oxideReturnType = evaluateReturnType(function.returnType.defaultVariant(), argTypes, function)
@@ -233,6 +252,10 @@ data class JvmClassInfoRepresentation(
         )
 
         return candidate
+    }
+
+    override fun getGenericDefinitionOrder(): List<String> {
+        return info.generics.map { it.name }
     }
 
     override val modifiers: Modifiers
