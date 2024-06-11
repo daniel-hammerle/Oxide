@@ -885,8 +885,7 @@ fun typeMath(op: MathOp, first: Type, second: Type): Type {
                 first == Type.IntT && second == Type.IntT -> Type.IntT
                 first == Type.Int && second == Type.Double -> Type.Double
                 first == Type.Double && second == Type.Int -> Type.Double
-                first == Type.Int && second == Type.Int -> Type.IntT
-                first == Type.Int && second == Type.IntT -> Type.IntT
+                first.isInt() && second.isInt() -> Type.IntT
                 first == Type.Null -> error("Cannot do null + sth")
                 else -> error("Cannot perform operation $first + $second")
             }
@@ -914,14 +913,31 @@ fun Type.toActualJvmType() = when(this) {
     else -> this
 }
 
+sealed interface IRFunction {
+    val args: List<String>
+    val body: Instruction
+    val imports: Set<SignatureString>
+    val keepBlocks: MutableMap<String, Type>
+    val module: LambdaAppender
 
-data class IRFunction(val args: List<String>, val body: Instruction, val imports: Set<SignatureString>, val module: LambdaAppender) {
+    fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>>
+}
+
+data class IRInlineFunction(override val args: List<String>, override val body: Instruction, override val imports: Set<SignatureString>, override val module: LambdaAppender): IRFunction {
+    override val keepBlocks: MutableMap<String, Type> = mutableMapOf()
+
+    override fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>> {
+        TODO("Not yet implemented")
+    }
+}
+
+data class BasicIRFunction(override val args: List<String>, override val body: Instruction, override val imports: Set<SignatureString>, override val module: LambdaAppender): IRFunction {
     private val mutex = Mutex()
     private val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, FunctionMetaData>> = mutableMapOf()
 
-    val keepBlocks: MutableMap<String, Type> = mutableMapOf()
+    override val keepBlocks: MutableMap<String, Type> = mutableMapOf()
 
-    fun checkedVariantsUniqueJvm(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>> {
+    override fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>> {
         return checkedVariants
     }
 

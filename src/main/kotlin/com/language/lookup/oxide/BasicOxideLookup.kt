@@ -35,7 +35,7 @@ class BasicOxideLookup(
     ): FunctionCandidate {
         val mod = modules[module] ?: error("No Module found with name `$module`")
         val func = mod.functions[funcName] ?: error("No Function `$funcName` on module `$module`")
-        val returnType = runCatching { func.inferTypes(args, lookup, emptyMap()) }.getOrElse { it.printStackTrace(); throw it }
+        val returnType = runCatching { (func as BasicIRFunction).inferTypes(args, lookup, emptyMap()) }.getOrElse { it.printStackTrace(); throw it }
 
         return FunctionCandidate(
             oxideArgs = args,
@@ -56,7 +56,7 @@ class BasicOxideLookup(
             blocks.forEach { impl ->
                 if (funcName in impl.methods && template.matches(instance, generics, impl.genericModifiers, lookup)) {
                     val func = impl.methods[funcName]!!
-                    val returnType = runCatching { func.inferTypes(listOf(instance) + args, lookup, generics) }.getOrElse { it.printStackTrace(); throw it }
+                    val returnType = runCatching { (func as BasicIRFunction).inferTypes(listOf(instance) + args, lookup, generics) }.getOrElse { it.printStackTrace(); throw it }
                     println(returnType)
                     return FunctionCandidate(
                         oxideArgs = listOf(instance) + args,
@@ -87,7 +87,7 @@ class BasicOxideLookup(
                 val impl = blocks.find { funcName in it.associatedFunctions }
                 if (impl != null) {
                     val func = impl.associatedFunctions[funcName]!!
-                    val returnType = func.inferTypes(args, lookup, emptyMap())
+                    val returnType = (func as BasicIRFunction).inferTypes(args, lookup, emptyMap())
                     return FunctionCandidate(
                         oxideArgs = args,
                         jvmArgs = args.map { it.toActualJvmType() },

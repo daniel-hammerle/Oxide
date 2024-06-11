@@ -311,7 +311,12 @@ fun parseExpressionCallBase(first: Expression, tokens: Tokens, variables: Variab
         }
         is Token.OpenBracket -> {
             tokens.next()
-            val args = parseCallingArgs(tokens, variables, Token.ClosingBracket)
+            val args = parseCallingArgs(tokens, variables, Token.ClosingBracket) +
+            if (tokens.visitNext() == Token.OpenCurly && tokens.visit2Next() == Token.Pipe) {
+                val lambda = parseExpressionBase(tokens, variables)
+                listOf(lambda)
+            } else emptyList()
+
             parseExpressionCallBase(
                 Expression.Invoke(
                     first,
@@ -326,6 +331,21 @@ fun parseExpressionCallBase(first: Expression, tokens: Tokens, variables: Variab
             val name = tokens.expect<Token.Identifier>().name
             parseExpressionCallBase(
                 Expression.AccessProperty(first, name),
+                tokens,
+                variables
+            )
+        }
+        is Token.OpenCurly -> {
+            if (tokens.visit2Next() != Token.Pipe) {
+                return first
+            }
+            val lambda = parseExpressionBase(tokens, variables)
+            val args = listOf(lambda)
+            parseExpressionCallBase(
+                Expression.Invoke(
+                    first,
+                    args.mapIndexed { index, expression -> "$index" to expression }.toMap()
+                ),
                 tokens,
                 variables
             )

@@ -89,7 +89,7 @@ class BasicIRModuleLookup(
     ): FunctionCandidate {
         if (nativeModules.any{ it.name == modName }) {
             val module = nativeModules.first{ it.name == modName }
-            return module.functions[funcName]?.inferTypes(argTypes, this, emptyMap())?.let {
+            return (module.functions[funcName] as? BasicIRFunction)?.inferTypes(argTypes, this, emptyMap())?.let {
                     FunctionCandidate(
                     argTypes,
                     argTypes,
@@ -106,7 +106,7 @@ class BasicIRModuleLookup(
         when (val result = getAssociatedFunction(modName, funcName)) {
             is Pair<IRImpl, IRFunction> -> {
                 val (implBlock, function) = result
-                return function.inferTypes(argTypes, lookup = this, emptyMap()).let {
+                return (function as? BasicIRFunction)?.inferTypes(argTypes, lookup = this, emptyMap())?.let {
                     FunctionCandidate(
                         argTypes,
                         argTypes.map { t -> t.toActualJvmType() },
@@ -118,7 +118,7 @@ class BasicIRModuleLookup(
                         obfuscateName = true,
                         requireDispatch = false
                     )
-                }
+                } ?: error("Cannot process inline function")
             }
 
 
@@ -227,7 +227,7 @@ class BasicIRModuleLookup(
         when(val result = getExtensionFunction(instance, funcName)) {
             is Triple<IRImpl, IRFunction, Map<String, Type>> -> {
                 val (implBlock, function, generics) = result
-                return function.inferTypes(listOf(instance) + argTypes, lookup = this, generics).let {
+                return (function as BasicIRFunction).inferTypes(listOf(instance) + argTypes, lookup = this, generics).let {
                     FunctionCandidate(
                         listOf(instance) + argTypes,
                         listOf(instance) + argTypes,

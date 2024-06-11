@@ -1,9 +1,17 @@
 func main {
     someList = [1, 2, 3]
+    result = someList
+        .sumOf(0) { |item| item + 1 }
+    println(result)
 }
 
 func doSth(someList) {
-    result = [for item in someList item + 1, "Hello World", true, false]
+    result = [
+        for item in someList item + 1,
+        "Hello World",
+        true,
+        false
+    ]
     println(result)
 }
 
@@ -56,19 +64,19 @@ impl<T> ArrayList<T> {
 }
 
 impl<T> [T] {
-    func map(self, closure) {
+    inline func map(self, closure) {
         [for item in self closure(item)]
     }
 
-    func flatten(self) {
+    inline func flatten(self) {
         [for item in self ...item]
     }
 
-    func flatMap(self, closure) {
+    inline func flatMap(self, closure) {
         [for item in self ...closure(item)]
     }
 
-    func sum(self, initialValue) {
+    inline func sum(self, initialValue) {
         value = initialValue
         for item in self {
             value = value + item
@@ -76,12 +84,27 @@ impl<T> [T] {
         value
     }
 
-    func sumOf(self, initialValue, closure) {
+    inline func sumOf(self, initialValue, closure) {
         value = initialValue
         for item in self {
             value = value + closure(item)
         }
         value
+    }
+}
+
+struct MyComplexType {
+    someField str,
+    amount int
+}
+
+impl MyComplexType {
+    func new(someField, amount) {
+        MyComplexType(someField, amount)
+    }
+
+    func deepClone(self) {
+        MyComplexType.new(self.someField, self.amount)
     }
 }
 
@@ -102,6 +125,14 @@ impl<T> [T] {
 
     func size(self) {
         Arrays.asList(self).size()
+    }
+
+    func clone(self) {
+        [...self]
+    }
+
+    func deepClone(self) {
+        [for item in self item.deepClone()]
     }
 }
 

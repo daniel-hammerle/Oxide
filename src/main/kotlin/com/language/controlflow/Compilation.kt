@@ -41,7 +41,7 @@ fun compileProject(fileName: String) {
         val (type, typeCheckingTime) = measureTime {
             runBlocking {
                 scope.async {
-                    result.functions["main"]!!.inferTypes(listOf(), irLookup, emptyMap())
+                    (result.functions["main"]!! as BasicIRFunction).inferTypes(listOf(), irLookup, emptyMap())
                 }.await()
             }
         }

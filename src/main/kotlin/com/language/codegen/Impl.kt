@@ -17,13 +17,13 @@ suspend fun compileImpl(impl: IRImpl): ByteArray {
     )
 
     impl.associatedFunctions.forEach { (name, func) ->
-        func.checkedVariantsUniqueJvm().map { (argTypes, body) ->
+        func.checkedVariants().map { (argTypes, body) ->
             compileCheckedFunction(cw, name, body.first,body.second, argTypes)
         }
     }
 
     impl.methods.forEach { (name, func) ->
-        func.checkedVariantsUniqueJvm().map { (argTypes, body) ->
+        func.checkedVariants().map { (argTypes, body) ->
             compileCheckedFunction(cw, name, body.first,body.second, argTypes)
         }
     }

@@ -27,6 +27,11 @@ sealed interface Token {
         override val name: String = "pub"
         override val modifier: Modifier = Modifier.Public
     }
+    data object Inline : KeyWord, Identifier, ModifierToken {
+        override val name: String = "inline"
+        override val modifier: Modifier = Modifier.Inline
+
+    }
     data object Self : KeyWord, Identifier {
         override val name: String = "self"
     }
@@ -116,6 +121,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "in" -> Token.In
         "pub" -> Token.Public
         "null" -> Token.Null
+        "inline" -> Token.Inline
         else -> null
     }
 }

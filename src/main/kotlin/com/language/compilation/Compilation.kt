@@ -86,7 +86,7 @@ fun compileFunction(function: Function, module: ModuleLookup, lambdaAppender: La
 
     val body = compileExpression(function.body, module, true)
 
-    return IRFunction(
+    return BasicIRFunction(
         function.args,
         body,
         module.localImports.values.toSet() + module.localName,

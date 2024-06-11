@@ -100,7 +100,7 @@ suspend fun compileModule(module: IRModule): CompiledModuleOutput = coroutineSco
                 null
             )
         }
-        function.checkedVariantsUniqueJvm().map { (argTypes, body) ->
+        function.checkedVariants().map { (argTypes, body) ->
             compileCheckedFunction(cw, name, body.first, body.second, argTypes)
         }
     }
