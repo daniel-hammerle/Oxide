@@ -4,8 +4,11 @@ import com.language.TemplatedType
 import com.language.compilation.FunctionCandidate
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
+import com.language.compilation.TypedInstruction
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.variables.VariableManager
+import com.language.parser.Variables
 
 interface IRLookup {
 
@@ -44,6 +47,17 @@ interface IRLookup {
      * Will throw if the interface doesn't exist
      */
     suspend fun typeHasInterface(type: Type, interfaceType: SignatureString): Boolean
+
+    /**
+     *
+     */
+    suspend fun processInlining(
+        variables: VariableManager,
+        instance: TypedInstruction,
+        funcName: String,
+        args: List<TypedInstruction>,
+        generics: Map<String, Type>
+    ): TypedInstruction?
 
     /**
      * Returns a new instance of Self with the new ModFrame

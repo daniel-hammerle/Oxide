@@ -20,6 +20,8 @@ interface VariableMapping: ReadOnlyVariableManager {
     fun merge1(branches: List<VariableMapping>): List<Map<String, Pair<Type, Type>>>
     override fun toVarFrame(): VarFrame
     fun deleteVar(name: String)
+    fun registerUnchecked(name: String, id: Int)
+    fun minVarCount(count: Int)
 }
 
 
@@ -34,16 +36,19 @@ class TempVariable(private val variables: VariableMapping, val type: Type) : Clo
 }
 
 class VariableMappingImpl private constructor(
-    private val variables: MutableMap<String, Type> = mutableMapOf(),
+    val variables: MutableMap<String, Type> = mutableMapOf(),
     private val variableIds: MutableMap<String, Int> = mutableMapOf(),
     private val variableStack: MutableList<Boolean>     = mutableListOf()
 ) : VariableMapping {
+
+    private var varMax = 0
+
 
     companion object {
         fun fromVariables(variables: Map<String, Type>, reserveThis: Boolean = false) = VariableMappingImpl().apply {
             //add an instance at slot 0
             if (reserveThis)
-                insertVariable("_instance", Type.Object)
+                insertVariable("__instance__", Type.Object)
             variables.forEach { (name, type) -> insertVariable(name, type) }
         }
     }
@@ -56,6 +61,10 @@ class VariableMappingImpl private constructor(
                 null
         }
         return VarFrameImpl(variables)
+    }
+
+    override fun minVarCount(count: Int) {
+        varMax = max(varMax, count)
     }
 
     override fun change(name: String, type: Type): Int {
@@ -158,6 +167,11 @@ class VariableMappingImpl private constructor(
         }
     }
 
+    override fun registerUnchecked(name: String, id: Int) {
+        val oldName = variableIds.entries.first { it.value == id }.key
+        variables[oldName]!!.let { variables[name] = it; variableIds[name] = id }
+    }
+
     override fun loadVar(name: String): TypedInstruction {
         return TypedInstruction.LoadVar(getId(name), getType(name))
     }
@@ -184,10 +198,9 @@ class VariableMappingImpl private constructor(
     }
 
     override fun getId(name: String): Int {
-        return variableIds[name]!!
+        return variableIds[name] ?: error("No variable with name `$name` ($variableIds)")
     }
 
-    private var varMax = 0
     fun varCount(): Int = varMax
 
 }

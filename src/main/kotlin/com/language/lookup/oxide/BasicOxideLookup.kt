@@ -203,6 +203,20 @@ class BasicOxideLookup(
     override suspend fun lookupStructGenericModifiers(structSig: SignatureString): Map<String, Modifiers> {
         return getStruct(structSig)?.generics?.lazyTransform { it.modifiers } ?: error("Cannot find struct $structSig")
     }
+
+    override suspend fun findExtensionFunction(instance: Type, funcName: String, lookup: IRLookup): IRFunction {
+        for ((template, blocks) in allowedImplBlocks) {
+            val generics = mutableMapOf<String, Type>()
+            blocks.forEach { impl ->
+                if (funcName in impl.methods && template.matches(instance, generics, impl.genericModifiers, lookup)) {
+                    val func = impl.methods[funcName]!!
+                    return func
+                }
+            }
+
+        }
+        error("No extension method found fpr $instance.$funcName")
+    }
 }
 
 

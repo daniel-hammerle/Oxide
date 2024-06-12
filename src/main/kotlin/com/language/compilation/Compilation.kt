@@ -6,6 +6,7 @@ import com.language.Function
 import com.language.codegen.compileInstruction
 import com.language.compilation.metadata.LambdaAppender
 import com.language.compilation.metadata.LambdaAppenderImpl
+import com.language.compilation.modifiers.Modifier
 import com.language.parser.parseExpression
 import org.apache.commons.codec.binary.Base32
 import org.apache.commons.codec.binary.Base64
@@ -86,12 +87,20 @@ fun compileFunction(function: Function, module: ModuleLookup, lambdaAppender: La
 
     val body = compileExpression(function.body, module, true)
 
-    return BasicIRFunction(
-        function.args,
-        body,
-        module.localImports.values.toSet() + module.localName,
-        lambdaAppender
-    )
+    return when(function.modifiers.isModifier(Modifier.Inline)) {
+        true -> IRInlineFunction(
+            function.args,
+            body,
+            module.localImports.values.toSet() + module.localName,
+            lambdaAppender
+        )
+        false -> BasicIRFunction(
+            function.args,
+            body,
+            module.localImports.values.toSet() + module.localName,
+            lambdaAppender
+        )
+    }
 }
 
 fun compileStatements(statements: List<Statement>, module: ModuleLookup, uctl: Boolean): List<Instruction> {

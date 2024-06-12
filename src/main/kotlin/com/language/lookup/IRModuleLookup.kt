@@ -4,8 +4,12 @@ import com.language.TemplatedType
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.variables.VariableManager
+import com.language.compilation.variables.VariableMappingImpl
 import com.language.lookup.jvm.JvmLookup
 import com.language.lookup.oxide.OxideLookup
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.skip
 
 class IRModuleLookup(
     private val jvmLookup: JvmLookup,
@@ -57,6 +61,49 @@ class IRModuleLookup(
             is Type.JvmType -> jvmLookup.typeHasInterface(type, interfaceType)
             else -> false
         }
+    }
+
+    override suspend fun processInlining(
+        variables: VariableManager,
+        instance: TypedInstruction,
+        funcName: String,
+        args: List<TypedInstruction>,
+        generics: Map<String, Type>
+    ): TypedInstruction? {
+        val function = runCatching { oxideLookup.findExtensionFunction(instance.type, funcName, this) }.getOrNull() ?: return null
+        when(function) {
+            is BasicIRFunction -> return null
+            else -> {}
+        }
+        function as IRInlineFunction
+
+        if (args.size != function.args.size-1) {
+            error("Function $funcName expected ${function.args.size} arguments but got ${args.size}")
+        }
+
+        val scope = variables.clone()
+        val actualArgInstruction = mutableListOf<TypedInstruction>()
+        if (instance is TypedInstruction.LoadVar) {
+            scope.tryGetMapping()!!.registerUnchecked("self", instance.id)
+        } else {
+            actualArgInstruction += scope.changeVar("self", instance)
+        }
+
+
+        args.zip(function.args.slice(1..<function.args.size)).forEach { (it, name) ->
+            when (it) {
+                is TypedInstruction.LoadVar -> scope.tryGetMapping()!!.registerUnchecked(name, it.id)
+                else -> actualArgInstruction += scope.changeVar(name, it)
+            }
+        }
+
+        variables.tryGetMapping()!!.minVarCount(scope.toVarFrame().variables.size + 1)
+        val bodyInstruction = function.inferTypes(scope, this, generics)
+
+        return TypedInstruction.MultiInstructions(
+            actualArgInstruction + listOf(bodyInstruction),
+            variables.toVarFrame()
+        )
     }
 
     override fun newModFrame(modNames: Set<SignatureString>): IRLookup {

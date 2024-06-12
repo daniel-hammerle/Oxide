@@ -10,6 +10,7 @@ import com.language.compilation.metadata.LambdaAppender
 import com.language.compilation.metadata.MetaDataHandle
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.modifiers.modifiers
 import com.language.compilation.variables.FieldBinding
 import com.language.compilation.variables.VariableManager
 import com.language.compilation.variables.VariableManagerImpl
@@ -36,28 +37,26 @@ sealed class Instruction {
         val args: List<Instruction>,
     ) : Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction.DynamicCall {
+        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
             val parent = parent.inferTypes(variables, lookup, handle)
-            val args = args.map { it.inferTypes(variables, lookup, handle) }
 
-            //get the return type (or error out if we don't have the method with the respective args)
-            val genericChanges = lookup.lookUpGenericTypes(parent.type, name, args.map { it.type })
-
-            for ((name, index) in genericChanges) {
-                val type = args[index].type
-                //generics cant contain unboxed primitives
-                genericChangeRequest(variables, name, type.asBoxed())
-            }
-            val newParent = this.parent.inferTypes(variables, lookup, handle)
-            val candidate = lookup.lookUpCandidate(newParent.type, name, args.map { it.type })
-
-            return TypedInstruction.DynamicCall(
-                candidate,
-                name,
-                newParent,
+            return inferCall(
                 args,
-                null
-            )
+                name,
+                parent,
+                lookup,
+                variables,
+                handle,
+                handle.inheritedGenerics
+            ) { candidate, typedArgs ->
+                TypedInstruction.DynamicCall(
+                    candidate,
+                    name,
+                    parent,
+                    typedArgs,
+                    null
+                )
+            }
         }
 
         override fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
@@ -927,8 +926,15 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
     override val keepBlocks: MutableMap<String, Type> = mutableMapOf()
 
     override fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>> {
-        TODO("Not yet implemented")
+        return emptyMap()
     }
+
+    suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, generics: Map<String, Type>): TypedInstruction {
+        val metaDataHandle = FunctionMetaDataHandle(generics, module)
+        val typedBody = body.inferTypes(variables, lookup, metaDataHandle)
+        return typedBody
+    }
+
 }
 
 data class BasicIRFunction(override val args: List<String>, override val body: Instruction, override val imports: Set<SignatureString>, override val module: LambdaAppender): IRFunction {
@@ -942,8 +948,10 @@ data class BasicIRFunction(override val args: List<String>, override val body: I
     }
 
     suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup, generics: Map<String, Type>): Type {
-        if (argTypes in checkedVariants) {
-            return checkedVariants[argTypes]!!.second.returnType
+        mutex.withLock {
+            if (argTypes in checkedVariants) {
+                return checkedVariants[argTypes]!!.second.returnType
+            }
         }
 
         if (argTypes.size != this.args.size) {
@@ -1104,4 +1112,22 @@ data class LambdaContainer(
         }
         return returnType
     }
+}
+
+suspend inline fun inferCall(
+    args: List<Instruction>,
+    name: String,
+    parent: TypedInstruction,
+    lookup: IRLookup,
+    variables: VariableManager,
+    handle: MetaDataHandle,
+    generics: Map<String, Type>,
+    callBuilder: (candidate: FunctionCandidate, args: List<TypedInstruction>) -> TypedInstruction,
+): TypedInstruction {
+    val typedArgs = args.map { it.inferTypes(variables, lookup, handle) }
+
+    return lookup.processInlining(variables, parent, name, typedArgs, generics)
+        ?.let { return it }
+        ?: callBuilder(lookup.lookUpCandidate(parent.type, name, typedArgs.map { it.type }), typedArgs)
+
 }

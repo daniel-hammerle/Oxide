@@ -4,6 +4,7 @@ import com.language.TemplatedType
 import com.language.codegen.toJVMDescriptor
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.templatedType.matches
+import com.language.compilation.variables.VariableManager
 import com.language.lookup.IRLookup
 import org.objectweb.asm.Opcodes
 import java.lang.reflect.Constructor
@@ -164,6 +165,18 @@ class BasicIRModuleLookup(
         }
     }
 
+    override suspend fun processInlining(
+        variables: VariableManager,
+        instance: TypedInstruction,
+        funcName: String,
+        args: List<TypedInstruction>,
+        generics: Map<String, Type>
+    ): TypedInstruction? {
+        error("Basic ir lookup does not support inlining")
+
+    }
+
+
     override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int> {
         when(instance) {
             is Type.JvmType -> {
@@ -282,8 +295,7 @@ class BasicIRModuleLookup(
                 val types = instance.entries.map { lookUpCandidate(it, funcName, argTypes) }
                 types[0].copy(requireDispatch = true)
             }
-            is Type.JvmArray -> TODO()
-            is Type.Lambda -> TODO()
+            else -> error("Basic ir lookup does not support that feature")
         }
     }
 

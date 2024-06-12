@@ -2,6 +2,7 @@ package com.language.lookup.oxide
 
 import com.language.TemplatedType
 import com.language.compilation.FunctionCandidate
+import com.language.compilation.IRFunction
 import com.language.lookup.IRLookup
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
@@ -26,4 +27,6 @@ interface OxideLookup {
     fun lookupOrderedFields(structName: SignatureString): List<Pair<String, TemplatedType>>
 
     suspend fun lookupStructGenericModifiers(structSig: SignatureString): Map<String, Modifiers>
+    suspend fun findExtensionFunction(instance: Type, funcName: String, lookup: IRLookup): IRFunction
+
 }
