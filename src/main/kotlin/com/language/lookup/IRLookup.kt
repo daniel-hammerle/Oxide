@@ -59,6 +59,14 @@ interface IRLookup {
         generics: Map<String, Type>
     ): TypedInstruction?
 
+
+    suspend fun processInlining(
+        variables: VariableManager,
+        modName: SignatureString,
+        funcName: String,
+        args: List<TypedInstruction>,
+        generics: Map<String, Type>
+    ): TypedInstruction?
     /**
      * Returns a new instance of Self with the new ModFrame
      * # Note

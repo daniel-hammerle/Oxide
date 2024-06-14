@@ -2,7 +2,11 @@ package com.language.compilation.metadata
 
 import com.language.compilation.*
 
-class FunctionMetaDataHandle(override val inheritedGenerics: Map<String, Type>, private val appender: LambdaAppender) : MetaDataHandle {
+class FunctionMetaDataHandle(
+    override val inheritedGenerics: Map<String, Type>,
+    private val appender: LambdaAppender,
+    override val inlinableLambdas: List<TypedInstruction.Lambda>
+) : MetaDataHandle {
     lateinit var returnType: Type
         private set
 

@@ -11,10 +11,7 @@ import com.language.compilation.metadata.MetaDataHandle
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
-import com.language.compilation.variables.FieldBinding
-import com.language.compilation.variables.VariableManager
-import com.language.compilation.variables.VariableManagerImpl
-import com.language.compilation.variables.VariableMappingImpl
+import com.language.compilation.variables.*
 import com.language.lookup.IRLookup
 import com.language.lookup.oxide.lazyTransform
 import kotlinx.coroutines.async
@@ -104,7 +101,10 @@ sealed class Instruction {
                 variables.getTempVar(Type.Array(Type.BroadType.Unset)).use { arrayStorage ->
                     val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
                     val itemType = typedItems
-                        .map { it.type }
+                        .map { when(it) {
+                            is TypedConstructingArgument.Collected -> ((it.type as Type.Array).itemType as Type.BroadType.Known).type
+                            else -> it.type
+                        } }
                         .reduceOrNull { acc, type -> acc.join(type) }
 
                     val broadType = itemType
@@ -275,6 +275,10 @@ sealed class Instruction {
             handle: MetaDataHandle
         ): TypedInstruction {
             val parent = lambdaParent.inferTypes(variables, lookup, handle)
+            if (parent is TypedInstruction.Lambda && parent in handle.inlinableLambdas) {
+                return parent.body.inferTypes(variables, lookup, handle)
+            }
+
             val args = args.map { it.inferTypes(variables, lookup, handle) }
 
             val candidate = when(val tp = parent.type) {
@@ -297,6 +301,7 @@ sealed class Instruction {
 
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
             val args= args.map { it.inferTypes(variables, lookup, handle) }
+            lookup.processInlining(variables, moduleName, name, args, handle.inheritedGenerics)?.let { return it }
             val candidate = lookup.lookUpCandidate(moduleName, name, args.map { it.type })
             return TypedInstruction.ModuleCall(
                 candidate,
@@ -397,7 +402,8 @@ sealed class Instruction {
             return TypedInstruction.Lambda(
                 captures.mapValues { variables.loadVar(it.key) },
                 sig,
-                candidate
+                candidate,
+                body
             )
         }
 
@@ -929,8 +935,53 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
         return emptyMap()
     }
 
-    suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, generics: Map<String, Type>): TypedInstruction {
-        val metaDataHandle = FunctionMetaDataHandle(generics, module)
+    suspend fun generateInlining(
+        args: List<TypedInstruction>,
+        variables: VariableManager,
+        instance: TypedInstruction?,
+        lookup: IRLookup,
+        generics: Map<String, Type>
+    ): TypedInstruction {
+
+        if (args.size != this.args.size - if (instance == null) 0 else 1) {
+            error("Function expected ${this.args.size} arguments but got ${args.size}")
+        }
+
+        val scope = variables.clone()
+        val actualArgInstruction = mutableListOf<TypedInstruction>()
+        if (instance != null) {
+            if (instance is TypedInstruction.LoadVar) {
+                scope.tryGetMapping()!!.registerUnchecked("self", instance.id)
+            } else {
+                actualArgInstruction += scope.changeVar("self", instance)
+            }
+        }
+
+        val slicedArgs = if (instance == null) this.args else this.args.slice(1..<this.args.size)
+        val inlinableLambdas = mutableListOf<TypedInstruction.Lambda>()
+
+        args.zip(slicedArgs).forEach { (it, name) ->
+            when (it) {
+                is TypedInstruction.LoadVar -> scope.tryGetMapping()!!.registerUnchecked(name, it.id)
+                is TypedInstruction.Lambda -> {
+                    scope.putVar(name, ConstBinding(it))
+                    inlinableLambdas.add(it)
+                }
+                else -> actualArgInstruction += scope.changeVar(name, it)
+            }
+        }
+        val bodyInstruction = inferTypes(scope, lookup, generics, inlinableLambdas)
+
+        variables.tryGetMapping()!!.minVarCount(scope.tryGetMapping()!!.varCount())
+
+        return TypedInstruction.MultiInstructions(
+            actualArgInstruction + listOf(bodyInstruction),
+            variables.toVarFrame()
+        )
+    }
+
+    suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, generics: Map<String, Type>, inlinableLambdas: List<TypedInstruction.Lambda>): TypedInstruction {
+        val metaDataHandle = FunctionMetaDataHandle(generics, module, inlinableLambdas)
         val typedBody = body.inferTypes(variables, lookup, metaDataHandle)
         return typedBody
     }
@@ -957,7 +1008,7 @@ data class BasicIRFunction(override val args: List<String>, override val body: I
         if (argTypes.size != this.args.size) {
             error("Expected ${this.args.size} but got ${argTypes.size} arguments when calling $args (TypeChecking)")
         }
-        val metaDataHandle = FunctionMetaDataHandle(generics, module)
+        val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList())
         val variables = VariableMappingImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
         val varMan = VariableManagerImpl(variables)
         val result = body.inferTypes(varMan, lookup.newModFrame(imports), metaDataHandle)
@@ -1089,7 +1140,7 @@ data class LambdaContainer(
         if (argTypes.size != this.argNames.size) {
             error("Expected ${this.argNames.size} but got ${argTypes.size} arguments when calling $argNames (TypeChecking)")
         }
-        val metaDataHandle = FunctionMetaDataHandle(generics, module)
+        val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList())
         val variables = VariableMappingImpl.fromVariables(argTypes.zip(argNames).associate { (tp, name) -> name to tp }, reserveThis = true)
         val varMan = VariableManagerImpl(variables)
         captures.forEach { (name, type) ->

@@ -6,9 +6,10 @@ import com.language.compilation.TypedInstruction
 
 class VariableManagerImpl(
     val parent: ReadOnlyVariableManager? = null,
+    private val variables: MutableMap<String, VariableProvider> = mutableMapOf()
 ) : VariableManager {
 
-    private val variables: MutableMap<String, VariableProvider> = mutableMapOf()
+
 
     override fun loadVar(name: String): TypedInstruction {
         val provider = variables[name]
@@ -44,7 +45,7 @@ class VariableManagerImpl(
     override fun getTempVar(type: Type): TempVariable = parent!!.getTempVar(type)
 
     override fun clone(): VariableManagerImpl {
-        return VariableManagerImpl(parent?.clone())
+        return VariableManagerImpl(parent?.clone(), variables)
     }
 
     override fun putVar(name: String, provider: VariableProvider) {

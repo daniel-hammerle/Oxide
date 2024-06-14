@@ -176,6 +176,16 @@ class BasicIRModuleLookup(
 
     }
 
+    override suspend fun processInlining(
+        variables: VariableManager,
+        modName: SignatureString,
+        funcName: String,
+        args: List<TypedInstruction>,
+        generics: Map<String, Type>
+    ): TypedInstruction? {
+        error("Basic ir lookup does not support inlining")
+    }
+
 
     override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int> {
         when(instance) {

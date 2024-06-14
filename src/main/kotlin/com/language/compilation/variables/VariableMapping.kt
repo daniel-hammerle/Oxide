@@ -15,6 +15,7 @@ interface VariableMapping: ReadOnlyVariableManager {
     override fun change(name: String, type: Type): Int
     override fun getType(name: String): Type
     fun hasVar(name: String): Boolean
+    fun varCount(): Int
     fun getId(name: String): Int
     override fun clone(): VariableMapping
     fun merge1(branches: List<VariableMapping>): List<Map<String, Pair<Type, Type>>>
@@ -201,6 +202,6 @@ class VariableMappingImpl private constructor(
         return variableIds[name] ?: error("No variable with name `$name` ($variableIds)")
     }
 
-    fun varCount(): Int = varMax
+    override fun varCount(): Int = varMax
 
 }

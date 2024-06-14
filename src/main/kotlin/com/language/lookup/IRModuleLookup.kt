@@ -71,42 +71,28 @@ class IRModuleLookup(
         generics: Map<String, Type>
     ): TypedInstruction? {
         val function = runCatching { oxideLookup.findExtensionFunction(instance.type, funcName, this) }.getOrNull() ?: return null
-        when(function) {
-            is BasicIRFunction -> return null
-            else -> {}
+        return when(function) {
+            is BasicIRFunction -> null
+            is IRInlineFunction -> function.generateInlining(args, variables, instance, this, generics)
         }
-        function as IRInlineFunction
+    }
 
-        if (args.size != function.args.size-1) {
-            error("Function $funcName expected ${function.args.size} arguments but got ${args.size}")
+    override suspend fun processInlining(
+        variables: VariableManager,
+        modName: SignatureString,
+        funcName: String,
+        args: List<TypedInstruction>,
+        generics: Map<String, Type>
+    ): TypedInstruction? {
+        val function = runCatching { oxideLookup.findFunction(modName, funcName, this) }.getOrNull() ?: return null
+        return when(function) {
+            is BasicIRFunction -> null
+            is IRInlineFunction -> function.generateInlining(args, variables, null, this, generics)
         }
-
-        val scope = variables.clone()
-        val actualArgInstruction = mutableListOf<TypedInstruction>()
-        if (instance is TypedInstruction.LoadVar) {
-            scope.tryGetMapping()!!.registerUnchecked("self", instance.id)
-        } else {
-            actualArgInstruction += scope.changeVar("self", instance)
-        }
-
-
-        args.zip(function.args.slice(1..<function.args.size)).forEach { (it, name) ->
-            when (it) {
-                is TypedInstruction.LoadVar -> scope.tryGetMapping()!!.registerUnchecked(name, it.id)
-                else -> actualArgInstruction += scope.changeVar(name, it)
-            }
-        }
-
-        variables.tryGetMapping()!!.minVarCount(scope.toVarFrame().variables.size + 1)
-        val bodyInstruction = function.inferTypes(scope, this, generics)
-
-        return TypedInstruction.MultiInstructions(
-            actualArgInstruction + listOf(bodyInstruction),
-            variables.toVarFrame()
-        )
     }
 
     override fun newModFrame(modNames: Set<SignatureString>): IRLookup {
+        //Generates a new ModFrame
         return IRModuleLookup(jvmLookup, oxideLookup.newModFrame(modNames))
     }
 

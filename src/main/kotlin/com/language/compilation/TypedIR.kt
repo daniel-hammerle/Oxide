@@ -142,7 +142,8 @@ sealed interface TypedInstruction {
     data class Lambda(
         val captures: Map<String, TypedInstruction>,
         val signatureString: SignatureString,
-        val candidate: FunctionCandidate
+        val candidate: FunctionCandidate,
+        val body: Instruction // the reason we also carry the body itself is just so we can potentially inline
     ): TypedInstruction {
         override val type: Type = Type.Lambda(signatureString)
     }

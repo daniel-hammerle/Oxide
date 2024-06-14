@@ -408,6 +408,68 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
 
         }
         is TypedInstruction.LoadArray -> {
+
+            if (instruction.items.size == 1) {
+                when(val item = instruction.items.first()) {
+                    is TypedConstructingArgument.Collected -> {
+                        compileInstruction(mv, item.instruction, stackMap)
+                        stackMap.pop()
+                        mv.visitMethodInsn(
+                            Opcodes.INVOKEVIRTUAL,
+                            "[Ljava/lang/Object;",
+                            "clone",
+                            "()Ljava/lang/Object;",
+                            false
+                        )
+                        mv.visitTypeInsn(Opcodes.CHECKCAST, "[Ljava/lang/Object;")
+                        stackMap.push(Type.Array(instruction.itemType))
+
+                        return
+                    }
+                    is TypedConstructingArgument.Iteration -> {
+                        mv.visitTypeInsn(Opcodes.NEW, "java/util/ArrayList")
+                        mv.visitInsn(Opcodes.DUP)
+                        mv.visitMethodInsn(
+                            Opcodes.INVOKESPECIAL,
+                            "java/util/ArrayList",
+                            "<init>",
+                            "()V",
+                            false
+                        )
+                        //temporarily store it
+                        mv.visitVarInsn(Opcodes.ASTORE, instruction.tempArrayVarId)
+                        stackMap.changeVar(instruction.tempArrayVarId, Type.BasicJvmType(SignatureString("java::util::ArrayList")))
+
+                        //compile the for-loop and add the resulting items to the arraylist
+                        compileForLoop(mv, item.instruction, stackMap) {
+                            mv.visitVarInsn(Opcodes.ALOAD, instruction.tempArrayVarId)
+                            mv.visitInsn(Opcodes.SWAP)
+                            boxOrIgnore(mv, item.instruction.body.type)
+                            mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/ArrayList", "add", "(Ljava/lang/Object;)Z", false)
+                            mv.visitInsn(Opcodes.POP)
+                            stackMap.pop()
+                        }
+
+                        //Convert the ArrayList into an array
+                        mv.visitVarInsn(Opcodes.ALOAD, instruction.tempArrayVarId)
+                        mv.visitInsn(Opcodes.ICONST_0)
+                        val itemType =  item.type.asBoxed().toJVMDescriptor().removePrefix("L").removeSuffix(";")
+                        mv.visitTypeInsn(Opcodes.ANEWARRAY, itemType)
+                        mv.visitMethodInsn(
+                            Opcodes.INVOKEVIRTUAL,
+                            "java/util/ArrayList",
+                            "toArray",
+                            "([Ljava/lang/Object;)[Ljava/lang/Object;",
+                            false
+                        )
+                        stackMap.push(Type.Array(instruction.itemType))
+
+                        return
+                    }
+                    is TypedConstructingArgument.Normal -> {}
+                }
+            }
+
             //load the number of items on the stack
             mv.visitInsn(Opcodes.ICONST_0)
             mv.visitVarInsn(Opcodes.ISTORE, instruction.tempIndexVarId)

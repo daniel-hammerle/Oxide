@@ -1,5 +1,6 @@
 import org.jetbrains.annotations.Contract;
-import sun.misc.Unsafe;
+
+import java.util.Arrays;
 
 
 public class control<T> {
@@ -14,4 +15,5 @@ public class control<T> {
     public static void exit(int code) {
         System.exit(code);
     }
+
 }

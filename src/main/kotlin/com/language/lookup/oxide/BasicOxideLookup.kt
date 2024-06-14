@@ -1,6 +1,7 @@
 package com.language.lookup.oxide
 
 import com.language.TemplatedType
+import com.language.codegen.compileInstruction
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.templatedType.matches
@@ -216,6 +217,20 @@ class BasicOxideLookup(
 
         }
         error("No extension method found fpr $instance.$funcName")
+    }
+
+    override suspend fun findFunction(modName: SignatureString, funcName: String, lookup: IRLookup): IRFunction {
+        modules[modName]?.functions?.get(funcName)?.let { return it }
+        for ((template, blocks) in allowedImplBlocks) {
+            if (template is TemplatedType.Complex && template.signatureString == modName) {
+                val impl = blocks.find { funcName in it.associatedFunctions }
+                if (impl != null) {
+                    val func = impl.associatedFunctions[funcName]!!
+                    return func
+                }
+            }
+        }
+        error("No function found for $modName.$funcName")
     }
 }
 

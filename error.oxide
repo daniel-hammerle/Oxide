@@ -1,7 +1,7 @@
 func main {
-    someList = [1, 2, 3]
-    result = someList
-        .sumOf(0) { |item| item + 1 }
+    array = [1, 2, 3]
+    x = 3
+    result = array.sumOf(0) { |item| item + x }
     println(result)
 }
 
@@ -128,7 +128,7 @@ impl<T> [T] {
         Arrays.asList(self).size()
     }
 
-    func clone(self) {
+    inline func clone(self) {
         [...self]
     }
 
@@ -192,4 +192,4 @@ func panic(message) {
     control.exit(1)
 }
 
-func println(value) System.out.println(value)
+inline func println(value) System.out.println(value)
