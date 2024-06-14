@@ -63,6 +63,9 @@ impl<T> ArrayList<T> {
     }
 }
 
+func run(closure, arg) {
+    closure(arg)
+}
 
 impl<T> [T] {
     inline func map(self, closure) {
@@ -88,7 +91,7 @@ impl<T> [T] {
     inline func sumOf(self, initialValue, closure) {
         value = initialValue
         for item in self {
-            value = value + closure(item)
+            value = value + run(closure, item)
         }
         value
     }
