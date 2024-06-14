@@ -12,6 +12,7 @@ import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
 import com.language.compilation.variables.*
+import com.language.eval.evalComparison
 import com.language.eval.evalMath
 import com.language.lookup.IRLookup
 import com.language.lookup.oxide.lazyTransform
@@ -206,6 +207,8 @@ sealed class Instruction {
             if (cond.type !is Type.BoolT) {
                 error("Condition must be of type boolean but was ${cond.type}")
             }
+
+
             val bodyVars = variables.clone()
             val bodyFuture = async { body.inferTypes(bodyVars, lookup, handle) }
             val elseBodyVars = variables.clone()
@@ -214,6 +217,15 @@ sealed class Instruction {
             val body = bodyFuture.await()
             val elseBody = elseBodyFuture.await()
             val (changesBody, changesElseBody) = variables.merge(listOf(bodyVars, elseBodyVars))
+
+            if (cond is TypedInstruction.Const) {
+                if ((cond as TypedInstruction.LoadConstBoolean).value) {
+                    return@coroutineScope body
+                } else {
+                    return@coroutineScope elseBody ?: TypedInstruction.Noop(Type.Nothing)
+                }
+            }
+
 
             return@coroutineScope TypedInstruction.If(
                 cond,
@@ -553,6 +565,10 @@ sealed class Instruction {
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
             val first = first.inferTypes(variables, lookup, handle)
             val second = second.inferTypes(variables, lookup, handle)
+
+            if (first is TypedInstruction.Const && second is TypedInstruction.Const) {
+                return evalComparison(first, second, op)
+            }
 
             when(op) {
                 CompareOp.Eq, CompareOp.Neq -> {}
@@ -983,6 +999,7 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
                     scope.putVar(name, ConstBinding(it))
                     inlinableLambdas.add(it)
                 }
+                is TypedInstruction.Const -> scope.putVar(name, SemiConstBinding(it))
                 else -> actualArgInstruction += scope.changeVar(name, it)
             }
         }

@@ -2,12 +2,15 @@ use java::lang::System
 
 func main {
     x = 56 - { 15641 * 165 }
-    x = 4
+    x = 4 * 25 + x
     println(x)
-    x = 3
+    x = 3 - x
     println(x)
-    x = 2
+    x = 2 * x
     println(x)
+    if x + 1 == { x - 2 } + 3  {
+        println(x  + 1)
+    }
     y = add(3, 2)
     x = input(">")
     println(x + y)

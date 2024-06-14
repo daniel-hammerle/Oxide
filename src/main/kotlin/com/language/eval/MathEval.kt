@@ -54,5 +54,5 @@ fun TypedInstruction.Const.value(): Any = when(this) {
 fun TypedInstruction.Const.toNumericalValue() = when(this) {
     is TypedInstruction.LoadConstInt -> value.toDouble()
     is TypedInstruction.LoadConstDouble -> value
-    else -> error("$this is not a numerical value (Internal Compiler Error)")
+    else -> error("$this is not a numerical value however is expected to be numerical")
 }

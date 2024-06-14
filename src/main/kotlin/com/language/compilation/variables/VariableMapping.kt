@@ -109,7 +109,7 @@ class VariableMappingImpl private constructor(
             change(name, type)
         }
 
-        return emptyList()
+        return listOf(emptyMap(), emptyMap())
     }
 
     override fun merge(branches: List<VariableManager>): List<Map<String, Pair<Type, Type>>> {
