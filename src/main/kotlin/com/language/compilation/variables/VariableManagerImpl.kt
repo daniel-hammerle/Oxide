@@ -14,7 +14,7 @@ class VariableManagerImpl(
     override fun loadVar(name: String): TypedInstruction {
         val provider = variables[name]
         if (provider != null)
-            return provider.get()
+            return provider.get(parent)
 
         return parent?.loadVar(name) ?: error("No variable with name `$name` found.")
     }
@@ -22,7 +22,7 @@ class VariableManagerImpl(
 
     override fun changeVar(name: String, value: TypedInstruction): TypedInstruction {
         if (name in variables) {
-            return variables[name]!!.put(value)
+            return variables[name]!!.put(value, parent)
         }
 
         parent?.changeVar(name, value)?.let { return it }
@@ -36,7 +36,7 @@ class VariableManagerImpl(
 
     override fun toVarFrame(): VarFrame = parent!!.toVarFrame()
 
-    override fun getType(name: String): Type = variables[name]?.type() ?: parent!!.getType(name)
+    override fun getType(name: String): Type = variables[name]?.type(parent) ?: parent!!.getType(name)
     override fun tryGetMapping(): VariableMapping? = parent?.tryGetMapping()
 
 

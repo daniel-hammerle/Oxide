@@ -6,6 +6,7 @@ import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.variables.VariableManager
 import com.language.compilation.variables.VariableMappingImpl
+import com.language.eval.evalFunction
 import com.language.lookup.jvm.JvmLookup
 import com.language.lookup.oxide.OxideLookup
 import kotlinx.coroutines.flow.asFlow
@@ -71,8 +72,12 @@ class IRModuleLookup(
         generics: Map<String, Type>
     ): TypedInstruction? {
         val function = runCatching { oxideLookup.findExtensionFunction(instance.type, funcName, this) }.getOrNull() ?: return null
+        val isConstEvalAble = args.all { it is TypedInstruction.Const } && instance is TypedInstruction.Const
         return when(function) {
-            is BasicIRFunction -> null
+            is BasicIRFunction -> {
+                if (!isConstEvalAble) return null
+                runCatching { evalFunction(function, (listOf(instance) + args) as List<TypedInstruction.Const>, this, generics) }.getOrNull()
+            }
             is IRInlineFunction -> function.generateInlining(args, variables, instance, this, generics)
         }
     }
@@ -85,8 +90,12 @@ class IRModuleLookup(
         generics: Map<String, Type>
     ): TypedInstruction? {
         val function = runCatching { oxideLookup.findFunction(modName, funcName, this) }.getOrNull() ?: return null
+        val isConstEvalAble = args.all { it is TypedInstruction.Const }
         return when(function) {
-            is BasicIRFunction -> null
+            is BasicIRFunction -> {
+                if (!isConstEvalAble) return null
+                runCatching { evalFunction(function, args as List<TypedInstruction.Const>, this, generics) }.getOrNull()
+            }
             is IRInlineFunction -> function.generateInlining(args, variables, null, this, generics)
         }
     }

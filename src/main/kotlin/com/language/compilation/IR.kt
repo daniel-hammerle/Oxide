@@ -12,6 +12,7 @@ import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
 import com.language.compilation.variables.*
+import com.language.eval.evalMath
 import com.language.lookup.IRLookup
 import com.language.lookup.oxide.lazyTransform
 import kotlinx.coroutines.async
@@ -335,6 +336,11 @@ sealed class Instruction {
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
             val first = first.inferTypes(variables, lookup, handle)
             val second = second.inferTypes(variables, lookup, handle)
+
+            if (first is TypedInstruction.Const && second is TypedInstruction.Const) {
+                return evalMath(first, second, op)
+            }
+
             val resultType = typeMath(op, first.type, second.type)
 
             return TypedInstruction.Math(
@@ -347,7 +353,15 @@ sealed class Instruction {
     }
     data class StoreVar(val name: String, val value: Instruction) : Instruction() {
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
-            return variables.changeVar(name, value.inferTypes(variables, lookup, handle))
+            val value = value.inferTypes(variables, lookup, handle)
+
+            return when(value) {
+                is TypedInstruction.Const -> {
+                    variables.putVar(name, SemiConstBinding(value))
+                    TypedInstruction.Noop(Type.Nothing)
+                }
+                else -> variables.changeVar(name, value)
+            }
         }
     }
     data class LoadVar(val name: String) : Instruction() {
@@ -365,7 +379,9 @@ sealed class Instruction {
         }
 
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
-            return TypedInstruction.MultiInstructions(instructions.map { it.inferTypes(variables, lookup, handle) }, variables.toVarFrame())
+            val typedInstructions = instructions.map { it.inferTypes(variables, lookup, handle) }
+            if (typedInstructions.size == 1) return typedInstructions.first()
+            return TypedInstruction.MultiInstructions(typedInstructions, variables.toVarFrame())
         }
     }
 

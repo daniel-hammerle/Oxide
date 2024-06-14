@@ -49,8 +49,6 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 instruction.name,
                 instruction.value.type.toJVMDescriptor()
             )
-
-
         }
         is TypedInstruction.If -> {
             //eval condition
@@ -210,9 +208,11 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 //integers
                 if (instruction.op == MathOp.Div) {
                     compileInstruction(mv, instruction.first, stackMap)
-                    mv.visitInsn(Opcodes.I2D)
+                    if (firstType != Type.DoubleT)
+                        mv.visitInsn(Opcodes.I2D)
                     compileInstruction(mv, instruction.second, stackMap)
-                    mv.visitInsn(Opcodes.I2D)
+                    if (secondType != Type.DoubleT)
+                        mv.visitInsn(Opcodes.I2D)
                     mv.visitInsn(Opcodes.DDIV)
                     return
                 }
@@ -222,7 +222,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 unboxOrIgnore(mv, instruction.second.type)
                 mv.visitInsn(when (instruction.op) {
                     MathOp.Add -> Opcodes.IADD
-                    MathOp.Sub -> Opcodes.ISTORE
+                    MathOp.Sub -> Opcodes.ISUB
                     MathOp.Mul -> Opcodes.IMUL
                     MathOp.Div -> error("Unreachable")
                 })

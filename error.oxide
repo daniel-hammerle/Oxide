@@ -1,8 +1,20 @@
+use java::lang::System
+
 func main {
-    array = [1, 2, 3]
+    x = 56 - { 15641 * 165 }
+    x = 4
+    println(x)
     x = 3
-    result = array.sumOf(0) { |item| item + x }
-    println(result)
+    println(x)
+    x = 2
+    println(x)
+    y = add(3, 2)
+    x = input(">")
+    println(x + y)
+}
+
+func add(a, b) {
+    a + b
 }
 
 func doSth(someList) {
@@ -16,6 +28,10 @@ func doSth(someList) {
 }
 
 func oldMain {
+
+    array = [1, 2, 3]
+    result = array.sumOf(0) { |item| item + 1 }
+    println(result)
     x = "Hello World"
     myClosure = { |a|
         x + a
@@ -91,7 +107,7 @@ impl<T> [T] {
     inline func sumOf(self, initialValue, closure) {
         value = initialValue
         for item in self {
-            value = value + run(closure, item)
+            value = value + closure(item)
         }
         value
     }

@@ -7,16 +7,20 @@ import com.language.codegen.VarFrame
 sealed interface TypedInstruction {
     val type: Type
 
-    data class LoadConstString(val value: String): TypedInstruction {
+    sealed interface Const : TypedInstruction
+
+    sealed interface PrimitiveConst : Const
+
+    data class LoadConstString(val value: String): PrimitiveConst {
         override val type: Type = Type.String
     }
-    data class LoadConstInt(val value: Int): TypedInstruction {
+    data class LoadConstInt(val value: Int): PrimitiveConst {
         override val type: Type = Type.IntT
     }
-    data class LoadConstDouble(val value: Double): TypedInstruction {
+    data class LoadConstDouble(val value: Double): PrimitiveConst {
         override val type: Type = Type.DoubleT
     }
-    data class LoadConstBoolean(val value: Boolean): TypedInstruction {
+    data class LoadConstBoolean(val value: Boolean): PrimitiveConst {
         override val type: Type = if(value) Type.BoolTrue else Type.BoolFalse
     }
 
@@ -55,7 +59,7 @@ sealed interface TypedInstruction {
             get() = value.type.asBoxed()
     }
 
-    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.BroadType) : TypedInstruction {
+    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.BroadType) : Const {
         override val type: Type = when(arrayType) {
             ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
             ArrayType.Int -> Type.IntArray
@@ -144,7 +148,7 @@ sealed interface TypedInstruction {
         val signatureString: SignatureString,
         val candidate: FunctionCandidate,
         val body: Instruction // the reason we also carry the body itself is just so we can potentially inline
-    ): TypedInstruction {
+    ): PrimitiveConst {
         override val type: Type = Type.Lambda(signatureString)
     }
 
