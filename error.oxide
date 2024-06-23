@@ -1,6 +1,28 @@
 use java::lang::System
 
 func main {
+    array = [1, 2, 3]
+    result = array.sumOf(0) { |item|
+        item + 1
+    }
+    println(result)
+}
+
+impl<T> T {
+    func log(self) {
+        println(self)
+        self
+    }
+}
+
+
+inline func with(resource, closure) {
+    result = closure(resource)
+    resource.close()
+    result
+}
+
+func f {
     x = 56 - { 15641 * 165 }
     x = 4 * 25 + x
     println(x)
@@ -11,9 +33,11 @@ func main {
     if x + 1 == { x - 2 } + 3  {
         println(x  + 1)
     }
+    
     y = add(3, 2)
     x = input(">")
     println(x + y)
+
 }
 
 func add(a, b) {
@@ -30,12 +54,8 @@ func doSth(someList) {
     println(result)
 }
 
-func oldMain {
-
-    array = [1, 2, 3]
-    result = array.sumOf(0) { |item| item + 1 }
-    println(result)
-    x = "Hello World"
+func olderMain {
+x = "Hello World"
     myClosure = { |a|
         x + a
     }
@@ -116,6 +136,7 @@ impl<T> [T] {
     }
 }
 
+
 struct MyComplexType {
     someField str,
     amount int
@@ -165,6 +186,11 @@ func randBool {
     random.nextBoolean()
 }
 
+func randInt {
+    random = keep { Random() }
+    random.nextInt()
+}
+
 error struct ConversionError {
     message str
 }
@@ -182,6 +208,7 @@ func tryBool(input) {
     }
 }
 
+
 impl<error E, T> E | T {
     func orDefault(self, value) {
         match self {
@@ -197,7 +224,6 @@ impl<error E, T> E | T {
         }
     }
 }
-
 
 use java::lang::System
 use java::util::Scanner

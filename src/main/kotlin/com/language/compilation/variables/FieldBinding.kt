@@ -9,7 +9,7 @@ class FieldBinding(
     val type: Type,
     val name: String
 ) : VariableProvider {
-    override fun get(parent: ReadOnlyVariableManager?): TypedInstruction {
+    override fun get(parent: VariableMapping): TypedInstruction {
         return TypedInstruction.DynamicPropertyAccess(
             instance,
             name,
@@ -17,7 +17,7 @@ class FieldBinding(
         )
     }
 
-    override fun put(value: TypedInstruction, parent: ReadOnlyVariableManager?): TypedInstruction {
+    override fun put(value: TypedInstruction, parent: VariableMapping): TypedInstruction {
         if (!value.type.isContainedOrEqualTo(type)) error("Underlying variable implementation cannot handle type ${value.type} (underlying type is $type)")
         return TypedInstruction.DynamicPropertyAssignment(
             instance,
@@ -25,4 +25,6 @@ class FieldBinding(
             value
         )
     }
+
+    override fun clone(): VariableProvider = FieldBinding(instance, type, name)
 }

@@ -1,7 +1,6 @@
 package com.language.eval
 
 import com.language.CompareOp
-import com.language.compilation.Instruction
 import com.language.compilation.TypedInstruction
 
 fun evalComparison(

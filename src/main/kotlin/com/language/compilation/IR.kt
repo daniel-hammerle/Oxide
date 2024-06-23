@@ -39,7 +39,7 @@ sealed class Instruction {
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
             val parent = parent.inferTypes(variables, lookup, handle)
 
-            return inferCall(
+            val result =  inferCall(
                 args,
                 name,
                 parent,
@@ -56,6 +56,7 @@ sealed class Instruction {
                     null
                 )
             }
+            return result
         }
 
         override fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
@@ -146,7 +147,7 @@ sealed class Instruction {
                 lookup: IRLookup,
                 handle: MetaDataHandle
             ): TypedConstructingArgument {
-                return TypedConstructingArgument.Iteration(loop.inferTypes(variables, lookup, handle))
+                return TypedConstructingArgument.Iteration(loop.inferTypes(variables, lookup, handle) as TypedInstruction.ForLoop)
             }
 
         }
@@ -216,7 +217,6 @@ sealed class Instruction {
 
             val body = bodyFuture.await()
             val elseBody = elseBodyFuture.await()
-            val (changesBody, changesElseBody) = variables.merge(listOf(bodyVars, elseBodyVars))
 
             if (cond is TypedInstruction.Const) {
                 if ((cond as TypedInstruction.LoadConstBoolean).value) {
@@ -231,8 +231,8 @@ sealed class Instruction {
                 cond,
                 body,
                 elseBody,
-                changesBody,
-                changesElseBody
+                emptyMap(),
+                emptyMap()
             )
         }
     }
@@ -605,20 +605,18 @@ data class PatternMatchingContextImpl(val types: List<Instruction>, override val
     override fun nextBinding(): Instruction = types[ptr++]
 }
 
+fun TypedInstruction.isConst() = this is TypedInstruction.Const
+fun TypedConstructingArgument.isConst() = instruction.isConst()
+
 data class ForLoop(val parent: Instruction, val name: String, val indexName: String?,  val body: Instruction.ConstructingArgument) {
-    suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction.ForLoop {
+    suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
         val parent = parent.inferTypes(variables, lookup, handle)
         return when {
             IteratorI.validate(lookup, parent.type) -> {
                 val hasNext = lookup.lookUpCandidate(parent.type, "hasNext", emptyList())
                 val next = lookup.lookUpCandidate(parent.type, "next", emptyList())
 
-                val bodyScope = variables.clone()
-                val itemId = bodyScope.change(name, next.oxideReturnType)
-                val indexId = indexName?.let { bodyScope.change(indexName, Type.IntT) }
-                val body = body.inferTypes(bodyScope, lookup, handle)
-
-                TypedInstruction.ForLoop(parent, itemId, indexId, hasNext, next, body)
+                compileForLoopBody(variables, next, hasNext, parent, lookup, handle)
             }
             IterableI.validate(lookup, parent.type) -> {
                 val iterCall = DynamicCall(this.parent, "iterator", emptyList()).inferTypes(variables, lookup, handle)
@@ -626,23 +624,33 @@ data class ForLoop(val parent: Instruction, val name: String, val indexName: Str
                 val hasNext = lookup.lookUpCandidate(iterCall.type, "hasNext", emptyList())
                 val next = lookup.lookUpCandidate(iterCall.type, "next", emptyList())
 
-                val bodyScope = variables.clone()
-                val itemId = bodyScope.change(name, next.oxideReturnType)
-                val indexId = indexName?.let { bodyScope.change(indexName, Type.IntT) }
-                val body = body.inferTypes(bodyScope, lookup, handle)
-
-                TypedInstruction.ForLoop(
-                    iterCall,
-                    itemId,
-                    indexId,
-                    hasNext,
-                    next,
-                    body
-                )
+                compileForLoopBody(variables, next, hasNext, iterCall, lookup, handle)
             }
             else -> error("Invalid type ${parent.type}! it is neither an iterable nor an iterator")
         }
     }
+
+    private suspend fun compileForLoopBody(
+        variables: VariableManager,
+        nextCall: FunctionCandidate,
+        hasNextCall: FunctionCandidate,
+        parent: TypedInstruction,
+        lookup: IRLookup,
+        handle: MetaDataHandle
+    ): TypedInstruction.ForLoop {
+        val bodyScope = variables.clone()
+        val itemId = bodyScope.change(name, nextCall.oxideReturnType)
+        val indexId = indexName?.let { bodyScope.change(indexName, Type.IntT) }
+
+        val bodyScopePre = bodyScope.clone()
+        //infer it twice for non consts to unfold
+        body.inferTypes(bodyScope, lookup, handle)
+        val adjustments = bodyScopePre.loopMerge(bodyScope, variables)
+        val body = body.inferTypes(bodyScopePre, lookup, handle)
+        return TypedInstruction.ForLoop(parent, itemId, indexId, hasNextCall, nextCall, body, adjustments)
+    }
+
+
 }
 
 interface PatternMatchingContext {

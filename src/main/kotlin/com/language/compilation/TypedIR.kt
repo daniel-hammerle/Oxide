@@ -46,7 +46,15 @@ sealed interface TypedInstruction {
     }
 
 
-    data class ForLoop(val parent: TypedInstruction, val itemId: Int, val indexId: Int?, val hasNextCall: FunctionCandidate, val nextCall: FunctionCandidate, val body: TypedConstructingArgument) : TypedInstruction {
+    data class ForLoop(
+        val parent: TypedInstruction,
+        val itemId: Int,
+        val indexId: Int?,
+        val hasNextCall: FunctionCandidate,
+        val nextCall: FunctionCandidate,
+        val body: TypedConstructingArgument,
+        val preLoopAdjustments: ScopeAdjustment
+    ) : TypedInstruction {
         override val type: Type = Type.Nothing
     }
 
@@ -59,7 +67,16 @@ sealed interface TypedInstruction {
             get() = value.type.asBoxed()
     }
 
-    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.BroadType) : Const {
+    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.BroadType) : TypedInstruction {
+        override val type: Type = when(arrayType) {
+            ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
+            ArrayType.Int -> Type.IntArray
+            ArrayType.Double -> Type.DoubleArray
+            ArrayType.Bool -> Type.BoolArray
+        }
+    }
+
+    data class LoadConstConstArray(val items: List<Const>, val arrayType: ArrayType, val itemType: Type.BroadType): Const {
         override val type: Type = when(arrayType) {
             ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
             ArrayType.Int -> Type.IntArray
@@ -231,3 +248,32 @@ sealed interface TypedIRPattern {
         override val bindings: Set<Pair<String, Type>> = parent.bindings
     }
 }
+
+data class ScopeAdjustment(
+    val instructions: List<ScopeAdjustInstruction>
+)
+
+sealed interface ScopeAdjustInstruction {
+    data class Move(
+        val src: Int,
+        val dest: Int,
+        val type: Type
+    ) : ScopeAdjustInstruction
+
+    data class Box(
+        val src: Int,
+        val type: Type
+    ) : ScopeAdjustInstruction
+
+    data class Unbox(
+        val src: Int,
+        val type: Type
+    ) : ScopeAdjustInstruction
+
+    data class Store(
+        val value: TypedInstruction,
+        val dest: Int
+    ) : ScopeAdjustInstruction
+}
+
+

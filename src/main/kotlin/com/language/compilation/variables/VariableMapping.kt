@@ -2,27 +2,28 @@ package com.language.compilation.variables
 
 import com.language.codegen.VarFrame
 import com.language.codegen.VarFrameImpl
-import com.language.compilation.Type
-import com.language.compilation.TypedInstruction
-import com.language.compilation.asBoxed
-import com.language.compilation.join
+import com.language.compilation.*
 import java.io.Closeable
 import java.util.*
 import kotlin.math.max
 
 
-interface VariableMapping: ReadOnlyVariableManager {
-    override fun change(name: String, type: Type): Int
-    override fun getType(name: String): Type
+interface VariableMapping {
+    fun change(name: String, type: Type): Int
+    fun getType(name: String): Type
     fun hasVar(name: String): Boolean
     fun varCount(): Int
     fun getId(name: String): Int
-    override fun clone(): VariableMapping
+    fun clone(): VariableMapping
     fun merge1(branches: List<VariableMapping>): List<Map<String, Pair<Type, Type>>>
-    override fun toVarFrame(): VarFrame
+    fun toVarFrame(): VarFrame
     fun deleteVar(name: String)
     fun registerUnchecked(name: String, id: Int)
     fun minVarCount(count: Int)
+    fun changeVar(name: String, value: TypedInstruction): TypedInstruction
+    fun loadVar(name: String): TypedInstruction
+    fun getTempVar(type: Type): TempVariable
+    fun tryAllocateId(id: Int, name: String, type: Type): Boolean
 }
 
 
@@ -112,9 +113,6 @@ class VariableMappingImpl private constructor(
         return listOf(emptyMap(), emptyMap())
     }
 
-    override fun merge(branches: List<VariableManager>): List<Map<String, Pair<Type, Type>>> {
-        return merge1(branches.map { it.tryGetMapping()!! })
-    }
 
     private fun mergeMaps(map1: Map<String, Type>, map2: Map<String, Type>): Map<String, Type> {
         val result = mutableMapOf<String, Type>()
@@ -182,12 +180,19 @@ class VariableMappingImpl private constructor(
         return TypedInstruction.StoreVar(id, value)
     }
 
-    override fun tryGetMapping(): VariableMapping {
-        return this
-    }
-
     override fun getTempVar(type: Type): TempVariable {
         return TempVariable(this, type)
+    }
+
+    override fun tryAllocateId(id: Int, name: String, type: Type): Boolean {
+        while (variableStack.size <= id) {
+            variableStack.add(false)
+        }
+        if (variableStack[id]) return false
+        varMax = max(varMax, id+1)
+        variables[name] = type
+        variableIds[name] = id
+        return true
     }
 
     override fun getType(name: String): Type {

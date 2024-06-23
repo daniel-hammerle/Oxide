@@ -364,7 +364,6 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                         compileForLoop(mv, item.instruction, stackMap) {
                             //box the item of the body if necessary
                             boxOrIgnore(mv, item.instruction.body.type)
-
                             mv.visitVarInsn(Opcodes.ALOAD, instruction.tempArrayVariable)
                             mv.visitInsn(Opcodes.SWAP)
                             mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/ArrayList", "add", "(Ljava/lang/Object;)Z", false)
@@ -701,6 +700,38 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             instruction.candidate.generateCall(mv)
             stackMap.pop(instruction.captures.size + 1)
         }
+
+        is TypedInstruction.LoadConstConstArray -> {
+            compileInstruction(mv, TypedInstruction.LoadConstInt(instruction.items.size), stackMap)
+            when(instruction.arrayType) {
+                ArrayType.Int -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT)
+                ArrayType.Double -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_DOUBLE)
+                ArrayType.Bool -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_BOOLEAN)
+                ArrayType.Object -> mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object")
+            }
+            stackMap.pop()
+            stackMap.push(instruction.type)
+
+            instruction.items.forEachIndexed { index, item ->
+                mv.visitInsn(Opcodes.DUP)
+                stackMap.dup()
+                compileInstruction(mv, TypedInstruction.LoadConstInt(index), stackMap)
+                compileInstruction(mv, item, stackMap)
+                if (instruction.arrayType == ArrayType.Object) {
+                    boxOrIgnore(mv, item.type)
+                }
+                when(instruction.arrayType) {
+                    ArrayType.Int -> mv.visitInsn(Opcodes.IASTORE)
+                    ArrayType.Double -> mv.visitInsn(Opcodes.DASTORE)
+                    ArrayType.Bool -> mv.visitInsn(Opcodes.IASTORE)
+                    ArrayType.Object -> mv.visitInsn(Opcodes.AASTORE)
+                }
+                stackMap.pop()
+                stackMap.pop()
+                stackMap.pop()
+            }
+
+        }
     }
 }
 
@@ -780,11 +811,17 @@ inline fun compileForLoop(
     compileInstruction(mv, instruction.parent, stackMap)
     val start = Label()
     val end = Label()
+    //create a new var frame so that the variables like the index are gone after the loop's execution
+    stackMap.pushVarFrame(VarFrameImpl(emptyList()), cloning = false)
+
     if (instruction.indexId != null) {
         mv.visitInsn(Opcodes.ICONST_0)
         stackMap.changeVar(instruction.indexId, Type.IntT)
         mv.visitVarInsn(Opcodes.ISTORE, instruction.indexId)
     }
+
+    compileScopeAdjustment(mv, instruction.preLoopAdjustments, stackMap)
+
     mv.visitLabel(start)
     stackMap.generateFrame(mv)
     mv.visitInsn(Opcodes.DUP)
@@ -806,7 +843,13 @@ inline fun compileForLoop(
     }
     mv.visitJumpInsn(Opcodes.GOTO, start)
     mv.visitLabel(end)
+
+    //pop the previously pushed var frame so that all the for-loop-stuff is gone
     stackMap.generateFrame(mv)
+
+    stackMap.popVarFrame()
+
+    //cleanup (pop the iterator from the stack)
     mv.visitInsn(Opcodes.POP)
     stackMap.pop()
 }
@@ -1189,4 +1232,25 @@ fun Type.asUnboxed() = when (this) {
     Type.DoubleT, Type.Double -> Type.DoubleT
     Type.IntT, Type.Int -> Type.IntT
     else -> error("Cannot unbox $this")
+}
+
+
+fun storeInstruction(type: Type) = when(type) {
+    is Type.BoolT, Type.IntT -> Opcodes.ISTORE
+    Type.DoubleT -> Opcodes.DSTORE
+    is Type.JvmType, is Type.Lambda-> Opcodes.ASTORE
+    Type.Nothing -> Opcodes.ASTORE
+    Type.Null, is Type.JvmArray -> Opcodes.ASTORE
+    is Type.Union ->Opcodes.ASTORE
+    Type.Never -> error("Cannot store variable of type never")
+}
+
+fun loadInstruction(type: Type) = when(type) {
+    is Type.BoolT, Type.IntT -> Opcodes.ILOAD
+    Type.DoubleT -> Opcodes.DLOAD
+    is Type.JvmType, is Type.Lambda-> Opcodes.ALOAD
+    Type.Nothing -> Opcodes.ALOAD
+    Type.Null, is Type.JvmArray -> Opcodes.ALOAD
+    is Type.Union ->Opcodes.ALOAD
+    Type.Never -> error("Cannot store variable of type never")
 }

@@ -43,7 +43,7 @@ fun evalMath(
 }
 
 fun TypedInstruction.Const.value(): Any = when(this) {
-    is TypedInstruction.LoadConstArray -> this
+    is TypedInstruction.LoadConstConstArray -> this
     is TypedInstruction.Lambda -> this
     is TypedInstruction.LoadConstBoolean -> value
     is TypedInstruction.LoadConstDouble -> value
