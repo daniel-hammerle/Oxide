@@ -111,12 +111,6 @@ class BasicOxideLookup(
         val fields = struct.getDefaultVariant(lookup)
         if (fields.size != args.size) error("Invalid arg count")
 
-        if (fields.values.toList()
-            .zip(args)
-            .any { (fieldTp, argTp) -> !argTp.isContainedOrEqualTo(fieldTp) }
-        ) {
-            error("Invalid arguments supplied")
-        }
 
         val generics = mutableMapOf<String, Type>()
 

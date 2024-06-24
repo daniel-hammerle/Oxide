@@ -1,6 +1,7 @@
 package com.language
 
 
+import com.language.controlflow.compileAndWriteDir
 import java.io.FileOutputStream
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
@@ -9,7 +10,7 @@ import java.util.jar.JarOutputStream
 
 
 fun main() {
-    com.language.controlflow.compileProject("error.oxide")
+    compileAndWriteDir("./oxide", listOf("./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar"))
 }
 
 fun createZipFile(entries: Map<String, ByteArray>, zipFilePath: String) {

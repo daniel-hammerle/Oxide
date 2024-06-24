@@ -1,0 +1,14 @@
+use java::lang::System
+use java::util::Scanner
+
+inline func println(value) System.out.println(value)
+
+inline func print(value) System.out.print(value)
+
+func input(message) {
+    System.out.print(message)
+    scanner = keep {
+        Scanner(System.in)
+    }
+    scanner.nextLine()
+}

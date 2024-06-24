@@ -1,0 +1,58 @@
+
+impl<T> [T] {
+    inline func map(self, closure) {
+        [for item in self closure(item)]
+    }
+
+    inline func flatten(self) {
+        [for item in self ...item]
+    }
+
+    inline func flatMap(self, closure) {
+        [for item in self ...closure(item)]
+    }
+
+    inline func sum(self, initialValue) {
+        value = initialValue
+        for item in self {
+            value = value + item
+        }
+        value
+    }
+
+    inline func sumOf(self, initialValue, closure) {
+        value = initialValue
+        for item in self {
+            value = value + closure(item)
+        }
+        value
+    }
+}
+
+
+use java::util::Arrays
+impl<T> [T] {
+    func get(self, index) {
+        Arrays.asList(self).get(index)
+    }
+
+    func set(self, index, item) {
+        Arrays.asList(self).set(index, item)
+    }
+
+    func iterator(self) {
+        Arrays.asList(self).iterator()
+    }
+
+    func size(self) {
+        Arrays.asList(self).size()
+    }
+
+    inline func clone(self) {
+        [...self]
+    }
+
+    func deepClone(self) {
+        [for item in self item.deepClone()]
+    }
+}

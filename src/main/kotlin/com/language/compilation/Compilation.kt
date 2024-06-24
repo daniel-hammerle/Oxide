@@ -237,7 +237,7 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
                 argNames = expression.args,
                 body = compileExpression(expression.body, module, uctl = false),
                 capturedVariables = expression.capturedVariables.toList(),
-                imports = module.localImports.values.toSet()
+                imports = module.localImports.values.toSet() + module.localName
             )
         }
 

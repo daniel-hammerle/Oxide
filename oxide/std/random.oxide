@@ -1,0 +1,11 @@
+
+use java::util::Random
+func randBool {
+    random = keep { Random() }
+    random.nextBoolean()
+}
+
+func randInt {
+    random = keep { Random() }
+    random.nextInt()
+}

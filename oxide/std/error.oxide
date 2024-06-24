@@ -1,0 +1,30 @@
+
+impl<error E, T> E | T {
+    func orDefault(self, value) {
+        match self {
+            E -> value
+            T -> self
+        }
+    }
+
+    func unwrap(self, message) {
+        match self {
+            E -> std.panic(message)
+            T -> self
+        }
+    }
+
+    inline func map(self, closure) {
+        match self {
+            E -> self
+            T -> closure(T)
+        }
+    }
+
+    inline func mapError(self, closure) {
+        match self {
+            E -> closure(self)
+            T -> self
+        }
+    }
+}

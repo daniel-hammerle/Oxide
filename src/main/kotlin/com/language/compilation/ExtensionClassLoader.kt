@@ -14,17 +14,17 @@ import java.util.jar.JarFile
 
 
 class ExtensionClassLoader(
-    jarPath: String,
     private val parent: ClassLoader
 ) : RawClassLoader(null) {
 
     private val loadedClasses: MutableMap<String, Pair<Class<*>,ByteArray>> = mutableMapOf()
 
-    init {
+    constructor(jarPath: String, parent: ClassLoader) : this(parent) {
         loadClassesFromJar(jarPath)
+
     }
 
-    private fun loadClassesFromJar(jarFilePath: String) {
+    fun loadClassesFromJar(jarFilePath: String) {
         try {
             val jarFile = JarFile(jarFilePath)
             jarFile.stream().forEach { entry: JarEntry ->

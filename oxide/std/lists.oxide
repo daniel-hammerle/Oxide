@@ -1,0 +1,34 @@
+use java::util::{List, ArrayList}
+impl<T> List<T> {
+    func map(self, closure) {
+        list[for item in self closure(item)]
+    }
+
+    func flatMap(self, closure) {
+        list[for item in self ...closure(item)]
+    }
+
+    func sum(self, startingValue) {
+        sum = startingValue
+        for item in self {
+            sum = sum + item
+        }
+        sum
+    }
+
+    func sumBy(self, startingValue, closure) {
+        sum = startingValue
+        for item in self {
+            sum = sum + closure(item)
+        }
+        sum
+    }
+
+    func fold(self, initialValue, closure) {
+        acc = initialValue
+        for item in self {
+            acc = closure(acc, item)
+        }
+        acc
+    }
+}

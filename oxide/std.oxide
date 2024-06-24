@@ -1,0 +1,17 @@
+use std::io
+
+struct Box<T> {
+    value T
+}
+
+impl<T> Box<T> {
+    func new(value) {
+        Box(value)
+    }
+}
+
+func panic(message) {
+    io.println(message)
+    control.exit(1)
+}
+
