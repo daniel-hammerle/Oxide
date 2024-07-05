@@ -1,3 +1,4 @@
+use std::lists
 
 impl<T> [T] {
     inline func map(self, closure) {
@@ -20,6 +21,17 @@ impl<T> [T] {
         value
     }
 
+    func filter(self, closure) {
+        result = list[]
+        for item in self {
+            if closure(item) {
+                result.add(item)
+            }
+        }
+
+        result.toArray()
+    }
+
     inline func sumOf(self, initialValue, closure) {
         value = initialValue
         for item in self {
@@ -27,6 +39,10 @@ impl<T> [T] {
         }
         value
     }
+
+    inline func toArray(self) [...self]
+
+    inline func toList(self) list[...self]
 }
 
 
@@ -56,3 +72,4 @@ impl<T> [T] {
         [for item in self item.deepClone()]
     }
 }
+

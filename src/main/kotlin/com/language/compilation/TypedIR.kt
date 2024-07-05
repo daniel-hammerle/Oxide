@@ -28,11 +28,11 @@ sealed interface TypedInstruction {
         override val type = parent.type
     }
 
-    data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type, val tempArrayVariable: Int?) : TypedInstruction {
+    data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type.BroadType, val tempArrayVariable: Int?) : TypedInstruction {
         val isConstList = items.all { it is TypedConstructingArgument.Normal }
         override val type: Type = Type.BasicJvmType(
             SignatureString("java::util::ArrayList"),
-            linkedMapOf("E" to Type.BroadType.Known(itemType))
+            linkedMapOf("E" to itemType)
         )
     }
 

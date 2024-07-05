@@ -4,6 +4,8 @@ import com.language.CompareOp
 import com.language.MathOp
 import com.language.TemplatedType
 import com.language.codegen.asUnboxed
+import com.language.codegen.getOrDefault
+import com.language.codegen.getOrNull
 import com.language.compilation.Instruction.DynamicCall
 import com.language.compilation.metadata.FunctionMetaDataHandle
 import com.language.compilation.metadata.LambdaAppender
@@ -46,16 +48,20 @@ sealed class Instruction {
                 lookup,
                 variables,
                 handle,
-                handle.inheritedGenerics
-            ) { candidate, typedArgs ->
-                TypedInstruction.DynamicCall(
-                    candidate,
-                    name,
-                    parent,
-                    typedArgs,
-                    null
-                )
-            }
+                handle.inheritedGenerics,
+                genericTypeChange = { name, type ->
+                    genericChangeRequest(variables, name, type)
+                },
+                callBuilder = { candidate, typedArgs ->
+                    TypedInstruction.DynamicCall(
+                        candidate,
+                        name,
+                        parent,
+                        typedArgs,
+                        null
+                    )
+                }
+            )
             return result
         }
 
@@ -100,26 +106,22 @@ sealed class Instruction {
         }
 
         private suspend fun notConstArray(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction.LoadArray {
+            //temp variable for index storage
             variables.getTempVar(Type.IntT).use { indexStorage ->
+                //temp variable for the array during construction
                 variables.getTempVar(Type.Array(Type.BroadType.Unset)).use { arrayStorage ->
                     val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
-                    val itemType = typedItems
-                        .map { when(it) {
-                            is TypedConstructingArgument.Collected -> ((it.type as Type.Array).itemType as Type.BroadType.Known).type
-                            else -> it.type
-                        } }
-                        .reduceOrNull { acc, type -> acc.join(type) }
 
-                    val broadType = itemType
-                        ?.let { Type.BroadType.Known(it) }
-                        ?: Type.BroadType.Unset
+                    //get the common type of all items
+                    val itemType = typedItems.itemType(lookup)
+
                     when(arrayType) {
-                        ArrayType.Int -> if (itemType?.isContainedOrEqualTo(Type.IntT) != true) error("Type Error Primitive Int array can only hold IntT")
-                        ArrayType.Double -> if (itemType?.isContainedOrEqualTo(Type.DoubleT) != true) error("Type Error Primitive Int array can only hold DoubleT")
-                        ArrayType.Bool -> if (itemType?.isContainedOrEqualTo(Type.BoolUnknown) != true) error("Type Error Primitive Int array can only hold BoolT")
+                        ArrayType.Int -> if (!itemType.getOrDefault(Type.IntT).isContainedOrEqualTo(Type.IntT)) error("Type Error Primitive Int array can only hold IntT")
+                        ArrayType.Double -> if (!itemType.getOrDefault(Type.DoubleT).isContainedOrEqualTo(Type.DoubleT)) error("Type Error Primitive Int array can only hold DoubleT")
+                        ArrayType.Bool -> if (!itemType.getOrDefault(Type.BoolUnknown).isContainedOrEqualTo(Type.BoolUnknown)) error("Type Error Primitive Int array can only hold BoolT")
                         ArrayType.Object -> {}
                     }
-                    return TypedInstruction.LoadArray(typedItems, arrayType, broadType, indexStorage.id, arrayStorage.id)
+                    return TypedInstruction.LoadArray(typedItems, arrayType, itemType, indexStorage.id, arrayStorage.id)
                 }
             }
         }
@@ -162,18 +164,18 @@ sealed class Instruction {
 
     data class ConstArrayList(val items: List<ConstructingArgument>) : Instruction() {
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
-
-
-            return if (items.any { it is ConstructingArgument.Iteration }) {
-                variables.getTempVar(Type.Object).use { variable ->
+            return when {
+                items.isEmpty() -> TypedInstruction.LoadList(emptyList(), Type.BroadType.Unset, null)
+                items.any { it is ConstructingArgument.Iteration } -> variables.getTempVar(Type.Object).use { variable ->
                     val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
-                    val itemType = typedItems.map { it.type }.reduce { acc, type -> acc.asBoxed().join(type.asBoxed()) }
+                    val itemType = typedItems.itemType(lookup)
                     TypedInstruction.LoadList(typedItems, itemType, variable.id)
                 }
-            } else {
-                val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
-                val itemType = typedItems.map { it.type }.reduce { acc, type -> acc.asBoxed().join(type.asBoxed()) }
-                TypedInstruction.LoadList(typedItems, itemType, null)
+                else ->{
+                    val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
+                    val itemType = typedItems.itemType(lookup)
+                    TypedInstruction.LoadList(typedItems, itemType, null)
+                }
             }
         }
 
@@ -218,6 +220,8 @@ sealed class Instruction {
             val body = bodyFuture.await()
             val elseBody = elseBodyFuture.await()
 
+            val result = variables.merge(listOf(bodyVars, elseBodyVars))
+
             if (cond is TypedInstruction.Const) {
                 if ((cond as TypedInstruction.LoadConstBoolean).value) {
                     return@coroutineScope body
@@ -225,7 +229,7 @@ sealed class Instruction {
                     return@coroutineScope elseBody ?: TypedInstruction.Noop(Type.Nothing)
                 }
             }
-
+            println(result)
 
             return@coroutineScope TypedInstruction.If(
                 cond,
@@ -333,7 +337,7 @@ sealed class Instruction {
 
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
             val args= args.map { it.inferTypes(variables, lookup, handle) }
-            val candidate = lookup.lookUpCandidate(classModuleName, name, args.map { it.type }, handle.inheritedGenerics.lazyTransform { Type.BroadType.Known(it) })
+            val candidate = lookup.lookUpCandidate(classModuleName, name, args.map { it.type }, handle.inheritedGenerics.lazyTransform { _, it -> Type.BroadType.Known(it) })
             return TypedInstruction.StaticCall(
                 candidate,
                 name,
@@ -381,6 +385,10 @@ sealed class Instruction {
 
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
             return variables.loadVar(name)
+        }
+
+        override fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
+            variables.genericChangeRequest(this.name, name, type)
         }
     }
     data class MultiInstructions(val instructions: List<Instruction>) : Instruction() {
@@ -647,6 +655,7 @@ data class ForLoop(val parent: Instruction, val name: String, val indexName: Str
         body.inferTypes(bodyScope, lookup, handle)
         val adjustments = bodyScopePre.loopMerge(bodyScope, variables)
         val body = body.inferTypes(bodyScopePre, lookup, handle)
+        variables.merge(listOf(bodyScopePre))
         return TypedInstruction.ForLoop(parent, itemId, indexId, hasNextCall, nextCall, body, adjustments)
     }
 
@@ -897,6 +906,27 @@ fun Type.join(other: Type): Type {
     val result = when {
         other == Type.Never -> this
         this == Type.Never -> other
+        this is Type.JvmType && other is Type.JvmType && signature == other.signature -> {
+            //iterate over all generics and join their values
+            val allGenerics = genericTypes.keys + other.genericTypes.keys
+            val joinedGenerics = allGenerics.associateWith { name ->
+                val first = genericTypes[name]?.getOrNull()
+                val second = other.genericTypes[name]?.getOrNull()
+
+                when {
+                    first == null && second != null -> second.asBroadType()
+                    first != null && second == null -> first.asBroadType()
+                    else ->  {
+                        val type = second?.let { first?.join(second) }
+                        val broadType = type?.let { Type.BroadType.Known(it) } ?: Type.BroadType.Unset
+
+                        broadType
+                    }
+                }
+            }
+
+            Type.BasicJvmType(signature, joinedGenerics)
+        }
         this is Type.Union && other is Type.Union -> Type.Union((entries.toList() + other.entries.toList()).toSet())
         this is Type.Union -> Type.Union((entries.toList() + other).toSet())
         other is Type.Union -> Type.Union((other.entries.toList() + this).toSet())
@@ -1214,12 +1244,37 @@ suspend inline fun inferCall(
     variables: VariableManager,
     handle: MetaDataHandle,
     generics: Map<String, Type>,
+    genericTypeChange: (name: String, type: Type) -> Unit,
     callBuilder: (candidate: FunctionCandidate, args: List<TypedInstruction>) -> TypedInstruction,
 ): TypedInstruction {
     val typedArgs = args.map { it.inferTypes(variables, lookup, handle) }
+
+    val changes = lookup.lookUpGenericTypes(parent.type, name, typedArgs.map { it.type })
+    for ((changeName, tp) in changes) {
+        genericTypeChange(changeName, tp)
+    }
 
     return lookup.processInlining(variables, parent, name, typedArgs, generics)
         ?.let { return it }
         ?: callBuilder(lookup.lookUpCandidate(parent.type, name, typedArgs.map { it.type }), typedArgs)
 
 }
+
+fun Type?.asBroadType() = this?.let { Type.BroadType.Known(it) } ?: Type.BroadType.Unset
+
+suspend fun List<TypedConstructingArgument>.itemType(lookup: IRLookup) = map { when(it) {
+        is TypedConstructingArgument.Collected -> when(val tp = it.type) {
+            is Type.Array -> (tp.itemType as? Type.BroadType.Known)?.type
+            is Type.BasicJvmType  -> {
+                if (lookup.typeHasInterface(tp, SignatureString("java::util::Collection"))) {
+                    (tp.genericTypes["E"]!! as? Type.BroadType.Known)?.type
+                } else {
+                    error("")
+                }
+            }
+            else -> error("Invalid error type")
+        }
+        else -> it.type
+    } }
+    .reduceOrNull { acc, type -> type?.let { acc?.join(type) } ?: acc }
+    .let { if (it == null) Type.BroadType.Unset else Type.BroadType.Known(it) }

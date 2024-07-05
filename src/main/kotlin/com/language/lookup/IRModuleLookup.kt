@@ -17,9 +17,9 @@ class IRModuleLookup(
     private val oxideLookup: OxideLookup
 ) : IRLookup {
 
-    override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int> {
-        return oxideLookup.lookUpGenericTypes(instance, funcName, argTypes)
-            ?: jvmLookup.lookUpGenericTypes(instance, funcName, argTypes)
+    override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Type> {
+        return oxideLookup.lookUpGenericTypes(instance, funcName, argTypes, this)
+            ?: jvmLookup.lookUpGenericTypes(instance as Type.JvmType, funcName, argTypes, this)
             ?: error("No function: $instance.$funcName($argTypes)")
     }
 
@@ -37,6 +37,7 @@ class IRModuleLookup(
         argTypes: List<Type>,
         generics: Map<String, Type.BroadType>
     ): FunctionCandidate {
+        println("Static candidate $modName.$funcName($argTypes)")
         runCatching {
             oxideLookup.lookupFunction(modName, funcName, argTypes, this)
         }.map { return it }
@@ -126,6 +127,10 @@ class IRModuleLookup(
 
     override fun lookUpOrderedFields(className: SignatureString): List<Pair<String, TemplatedType>> {
         return oxideLookup.lookupOrderedFields(structName = className)
+    }
+
+    override suspend fun lookupOrderGenerics(className: SignatureString): List<String> {
+        TODO("Not yet implemented")
     }
 
     override suspend fun hasModifier(instance: Type, modifier: Modifier): Boolean {

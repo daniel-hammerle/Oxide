@@ -344,7 +344,18 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 when(item) {
                     is TypedConstructingArgument.Collected -> {
                         compileInstruction(mv, item.instruction, stackMap)
-                        boxOrIgnore(mv, item.type)
+
+                        //if it's an array, convert it to a collection first
+                        if (item.type is Type.Array) {
+                            mv.visitMethodInsn(
+                                Opcodes.INVOKESTATIC,
+                                "java/util/Arrays",
+                                "asList",
+                                "([Ljava/lang/Object;)Ljava/util/List;",
+                                false
+                            )
+                        }
+
                         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/ArrayList", "addAll", "(Ljava/util/Collection;)Z", false)
                         mv.visitInsn(Opcodes.POP)
                         stackMap.pop(2)
@@ -411,16 +422,33 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             if (instruction.items.size == 1) {
                 when(val item = instruction.items.first()) {
                     is TypedConstructingArgument.Collected -> {
-                        compileInstruction(mv, item.instruction, stackMap)
-                        stackMap.pop()
-                        mv.visitMethodInsn(
-                            Opcodes.INVOKEVIRTUAL,
-                            "[Ljava/lang/Object;",
-                            "clone",
-                            "()Ljava/lang/Object;",
-                            false
-                        )
-                        mv.visitTypeInsn(Opcodes.CHECKCAST, "[Ljava/lang/Object;")
+                        when(item.instruction.type) {
+                            is Type.Array -> {
+                                compileInstruction(mv, item.instruction, stackMap)
+                                stackMap.pop()
+                                mv.visitMethodInsn(
+                                    Opcodes.INVOKEVIRTUAL,
+                                    "[Ljava/lang/Object;",
+                                    "clone",
+                                    "()Ljava/lang/Object;",
+                                    false
+                                )
+                                mv.visitTypeInsn(Opcodes.CHECKCAST, "[Ljava/lang/Object;")
+                            }
+                            is Type.JvmType -> {
+                                compileInstruction(mv, item.instruction, stackMap)
+                                stackMap.pop()
+                                mv.visitMethodInsn(
+                                    Opcodes.INVOKEINTERFACE,
+                                    "java/util/Collection",
+                                    "toArray",
+                                    "()[Ljava/lang/Object;",
+                                    true
+                                )
+                            }
+                            else -> error("Unreachable")
+                        }
+
                         stackMap.push(Type.Array(instruction.itemType))
 
                         return

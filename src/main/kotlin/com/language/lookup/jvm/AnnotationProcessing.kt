@@ -1,6 +1,7 @@
 package com.language.lookup.jvm
 
 import com.language.compilation.*
+import com.language.lookup.IRLookup
 import com.language.lookup.jvm.contract.ContractItem
 import com.language.lookup.jvm.contract.matches
 import com.language.lookup.jvm.contract.parseContractString
@@ -12,6 +13,7 @@ import org.jetbrains.annotations.Contract
 import java.lang.reflect.Executable
 import java.lang.reflect.Method
 import java.lang.reflect.ParameterizedType
+import java.lang.reflect.TypeVariable
 
 fun Executable.fitsArgTypes(argTypes: List<Type>): Boolean {
     if (parameterCount != argTypes.size) return false
@@ -34,10 +36,17 @@ suspend fun ReflectType.toType(jvmLookup: JvmLookup, generics: Map<String, Type>
     return when(val tp = this) {
         is ParameterizedType -> {
             if (tp.typeName in generics) return generics[tp.typeName]!!
+            if (tp.typeName.endsWith("[]")) {
+                return Type.Array(Type.BroadType.Known(Type.BasicJvmType(SignatureString.fromDotNotation(tp.typeName.removeSuffix("[]")))))
+            }
+
             val instanceType = tp.rawType.toType(jvmLookup, generics) as Type.JvmType
             val genericNames = jvmLookup.lookUpGenericsDefinitionOrder(instanceType.signature)
             val genericValues = genericNames.zip(tp.actualTypeArguments).associate { (name, arg) -> name to Type.BroadType.Known(arg.toType(jvmLookup, generics)) }
             Type.BasicJvmType(instanceType.signature, genericValues)
+        }
+        is TypeVariable<*> -> {
+            generics[tp.name] ?: error("No generic exists with name `${tp.name}` in $generics")
         }
         else -> {
             when (tp.typeName) {
@@ -47,6 +56,9 @@ suspend fun ReflectType.toType(jvmLookup: JvmLookup, generics: Map<String, Type>
                 "boolean" -> Type.BoolUnknown
                 in generics -> generics[tp.typeName]!!
                 else -> {
+                    if (tp.typeName.endsWith("[]")) {
+                        return Type.Array(Type.BroadType.Known(Type.BasicJvmType(SignatureString.fromDotNotation(tp.typeName.removeSuffix("[]")))))
+                    }
                     val signature = SignatureString.fromDotNotation(tp.typeName)
                     Type.BasicJvmType(signature)
                 }
@@ -55,12 +67,20 @@ suspend fun ReflectType.toType(jvmLookup: JvmLookup, generics: Map<String, Type>
     }
 }
 
-suspend fun evaluateReturnType(arguments: List<Type>, generics: Map<String, Type.BroadType>, method: Method, jvmLookup: JvmLookup): Type {
+suspend fun evaluateReturnType(arguments: List<Type>, generics: Map<String, Type.BroadType>, method: Method, jvmLookup: JvmLookup, lookup: IRLookup): Type {
     val annotations = method.annotations
     val contract = annotations.firstOrNull { it.javaClass == Contract::class.java } as? Contract
     val annotationPatterns = contract?.value?.let { parseContractString(it) }
 
-    val normalReturnType = method.genericReturnType.toType(jvmLookup, generics.asLazyTypeMap())
+    val methodSpecificGenerics = method.typeParameters.map { it.name }
+    val methodGenerics = method.genericParameterTypes
+        .zip(arguments)
+        .map { (reflectTp, tp) -> reflectTp.extract(tp, lookup) }
+        .reduceOrNull { acc, map -> acc + map }
+        ?.filter { it.key in methodSpecificGenerics }
+        ?: emptyMap()
+
+    val normalReturnType = method.genericReturnType.toType(jvmLookup, generics.asLazyTypeMap() + methodGenerics.asLazyTypeMap())
 
     val pattern = annotationPatterns?.firstNotNullOfOrNull { it.matches(arguments) }
     return when(pattern) {

@@ -1,12 +1,19 @@
 package com.language.lookup.jvm
 
+import com.language.codegen.getOrDefault
+import com.language.codegen.getOrThrow
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
+import com.language.lookup.IRLookup
 import com.language.lookup.jvm.rep.asLazyTypeMap
+import com.language.lookup.jvm.rep.orderByKeys
 import org.objectweb.asm.Opcodes
 import java.lang.reflect.Field
+import java.lang.reflect.GenericArrayType
 import java.lang.reflect.Method
+import java.lang.reflect.ParameterizedType
+import java.lang.reflect.TypeVariable
 
 typealias ReflectModifiers = java.lang.reflect.Modifier
 typealias ReflectType = java.lang.reflect.Type
@@ -25,11 +32,11 @@ data class JvmStaticMethodRepresentation(
     private val methods: Set<Method>,
     private val variants: Cache<List<Type>, FunctionCandidate>
 ) {
-    suspend fun lookupVariant(argTypes: List<Type>, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>): FunctionCandidate? {
+    suspend fun lookupVariant(argTypes: List<Type>, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>, lookup: IRLookup): FunctionCandidate? {
         if (variants.contains(argTypes)) return variants.get(argTypes)
 
         val method = methods.firstOrNull { it.fitsArgTypes(argTypes) } ?: return null
-        val oxideReturnType = evaluateReturnType(argTypes, generics, method, jvmLookup)
+        val oxideReturnType = evaluateReturnType(argTypes, generics, method, jvmLookup, lookup)
 
         val jvmArgTypes = method.parameterTypes.map { it.toType() }
         val candidate =  FunctionCandidate(
@@ -60,13 +67,20 @@ data class JvmMethodRepresentation(
     fun hasGenericReturnType(argTypes: List<Type>): Boolean =
         methods.first { it.fitsArgTypes(argTypes) }.let { it.genericReturnType.typeName != it.returnType.name }
 
+    suspend fun lookupGenericTypes(argTypes: List<Type>, lookup: IRLookup): Map<String, Type>? {
+        val method = methods.firstOrNull { it.fitsArgTypes(argTypes) } ?: return null
+        val result = method.genericParameterTypes
+            .zip(argTypes)
+            .fold(emptyMap<String, Type>()) { acc, (reflectType, tp) -> acc + reflectType.extract(tp, lookup).asLazyTypeMap() }
+        return result
+    }
 
-    suspend fun lookupVariant(type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, jvmLookup: JvmLookup): FunctionCandidate? {
+    suspend fun lookupVariant(type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, jvmLookup: JvmLookup, lookup: IRLookup): FunctionCandidate? {
         if (variants.contains(generics to argTypes)) return variants.get(generics to argTypes)
 
         val method = methods.firstOrNull { it.fitsArgTypes(argTypes) } ?: return null
 
-        val oxideReturnType = evaluateReturnType(argTypes, generics, method, jvmLookup)
+        val oxideReturnType = evaluateReturnType(argTypes, generics, method, jvmLookup, lookup)
 
         val jvmArgTypes = method.parameterTypes.map { it.toType() }
         val candidate =  FunctionCandidate(
@@ -85,6 +99,32 @@ data class JvmMethodRepresentation(
         variants.set(generics to argTypes, candidate)
         return candidate
     }
+}
+
+suspend fun ReflectType.extract(type: Type, lookup: IRLookup): Map<String, Type.BroadType> {
+    return when(this) {
+        is TypeVariable<*> -> mapOf(name to Type.BroadType.Known(type))
+        is ParameterizedType -> {
+            type as Type.JvmType
+            val orderedGenerics = type.genericTypes.orderByKeys(
+                lookup.lookupOrderGenerics(SignatureString.fromDotNotation(typeName))
+            )
+            orderedGenerics
+                .zip(actualTypeArguments)
+                .map { (tp, reflectTp) ->
+                    val (_, oxideTp) = tp
+                    reflectTp.extract(oxideTp.getOrThrow("Invalid type"), lookup)
+                }
+                .reduce { acc, map -> acc + map }
+        }
+        is GenericArrayType -> {
+            type as Type.Array
+            val name = this.typeName.removeSuffix("[]")
+            mapOf(name to type.itemType)
+        }
+        else -> emptyMap()
+    }
+
 }
 
 

@@ -16,7 +16,7 @@ interface IRLookup {
      * It looks up what arguments of a function are generic and returns a map
      * containing their names and their corresponding index in the function arguments
      */
-    suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int>
+    suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Type>
 
     /**
      * Checks whether a given method has a generic return type
@@ -41,6 +41,7 @@ interface IRLookup {
      * If the type doesn't have a matching method, the function will throw
      */
     suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate
+
 
     /**
      * Checks if the given type has the interface expected.
@@ -99,6 +100,8 @@ interface IRLookup {
      * This only works for **native** structs
      */
     fun lookUpOrderedFields(className: SignatureString): List<Pair<String, TemplatedType>>
+
+    suspend fun lookupOrderGenerics(className: SignatureString): List<String>
 
     suspend fun hasModifier(instance: Type, modifier: Modifier): Boolean
 

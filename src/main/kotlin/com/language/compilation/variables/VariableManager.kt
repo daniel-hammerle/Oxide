@@ -27,6 +27,8 @@ interface ReadOnlyVariableManager {
 
     fun tryGetMapping(): VariableMapping?
 
+    fun genericChangeRequest(name: String, genericName: String, type: Type)
+
     val variables: Map<String, VariableProvider>
 
     fun merge(branches: List<VariableManager>): List<ScopeAdjustment>

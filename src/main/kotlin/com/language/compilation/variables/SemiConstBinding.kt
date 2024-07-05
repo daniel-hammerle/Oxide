@@ -10,11 +10,21 @@ class SemiConstBinding(
     @Volatile
     private var name: String? = null
 
+
     override val physicalName: String?
         get() = synchronized(this) { name }
 
     override fun clone(): VariableProvider {
         return SemiConstBinding(value).also { it.name = this.name }
+    }
+
+    override fun genericChangeRequest(parent: VariableMapping, genericName: String, type: Type) {
+        synchronized(this) {
+            when(val n = name) {
+                is String -> parent.genericChangeRequest(n, genericName, type)
+                else -> error("Cannot change generic type of const")
+            }
+        }
     }
 
     override fun get(parent: VariableMapping): TypedInstruction {

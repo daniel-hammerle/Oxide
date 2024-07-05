@@ -1,5 +1,5 @@
 use java::util::{List, ArrayList}
-impl<T> List<T> {
+impl<T> ArrayList<T> {
     func map(self, closure) {
         list[for item in self closure(item)]
     }
@@ -31,4 +31,8 @@ impl<T> List<T> {
         }
         acc
     }
+
+    inline func toArray(self) [...self]
+
+    inline func toList(self) list[...self]
 }

@@ -34,7 +34,7 @@ suspend fun TemplatedType.matches(
                 entries.remove(entry)
             }
             if (entries.isNotEmpty()) {
-                val wildcard = types.find { it.isWildCard(modifiers.lazyTransform { t -> t.modifiers }) } as? TemplatedType.Generic
+                val wildcard = types.find { it.isWildCard(modifiers.lazyTransform { _, t -> t.modifiers }) } as? TemplatedType.Generic
                 if (wildcard == null) {
                     return false
                 }
@@ -48,7 +48,10 @@ suspend fun TemplatedType.matches(
             }
             type.genericTypes.entries.zip(this.generics).forEach { (entry, template) ->
                 when(val v = entry.value) {
-                    is Type.BroadType.Unset -> error("UNknwown type")
+                    is Type.BroadType.Unset -> {
+                        println("Unset type ($type cannot match $this)")
+                        println("Defaulting to true")
+                    }
                     is Type.BroadType.Known -> when (template.matches(v.type, generics, modifiers, lookup)) {
                         false-> return false
                         else -> {}
@@ -86,7 +89,7 @@ suspend fun TemplatedType.matches(
 ): Boolean {
     return when(type) {
         is Type.BroadType.Known -> matches(type.type, generics, modifiers, lookup)
-        Type.BroadType.Unset -> error("")
+        Type.BroadType.Unset -> true
     }
 }
 

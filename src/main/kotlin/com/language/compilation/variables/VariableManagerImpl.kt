@@ -22,6 +22,7 @@ class VariableManagerImpl(
             return variables[name]!!.put(value, parent)
         }
 
+        variables[name] = VariableBinding(name)
         return parent.changeVar(name, value)
     }
 
@@ -33,6 +34,10 @@ class VariableManagerImpl(
 
     override fun getType(name: String): Type = variables[name]?.type(parent) ?: parent.getType(name)
     override fun tryGetMapping(): VariableMapping = parent
+    
+    override fun genericChangeRequest(name: String, genericName: String, type: Type) {
+        variables[name]?.genericChangeRequest(parent, genericName, type) ?: parent.genericChangeRequest(name, genericName, type)
+    }
 
     override fun loopMerge(postLoop: VariableManager, parentScope: VariableManager?): ScopeAdjustment {
         val previousAllocations = variables
@@ -95,7 +100,7 @@ class VariableManagerImpl(
         changeInstructions: List<MutableList<ScopeAdjustInstruction>>,
         commonVariables: List<Triple<String, VariableProvider, List<Pair<VariableProvider, VariableMapping>>>>,
     ) {
-        for ((_, _, providers) in commonVariables) {
+        for ((name, nativeProv, providers) in commonVariables) {
             val commonType = providers
                 .map { (provider, variables) -> provider.type(variables) }
                 .reduce { acc, type -> acc.join(type) }
@@ -162,21 +167,31 @@ class VariableManagerImpl(
                     }
                     null -> {
                         //in this case, there hasn't been any allocation on any scope so far.
+                        if (providers.size == 1) {
+                            variables[name] = providers.first().first
+                        } else {
+                            val newId = parent.change(name, commonType)
+                            variables[name] = VariableBinding(name)
+                            generateAdjustOperation(ids, newId, commonType, providers, changeInstructions)
+                        }
+
                         return
 
-                        TODO() //check if there is only 1 other branch hand then merge it directly,
-                        // or otherwise use physical variables
                     }
                 }
             }
             //now there is either no common id, or it is already allocated on this scope.
             //therefore, we force to migrate every scope to change to this
             val newId = parent.change(name, commonType)
+            variables[name] = VariableBinding(name)
             generateAdjustOperation(ids, newId, commonType, providers, changeInstructions)
         } else {
             //the native scope seems to already have an allocation for that,
             // and it seems to have been dropped in a scope
-           generateAdjustOperation(ids, nativeId, commonType, providers, changeInstructions)
+            val n = nativeProv.physicalName!!
+            val newId = parent.change(n, commonType)
+            variables[name] = VariableBinding(name)
+            generateAdjustOperation(ids, newId, commonType, providers, changeInstructions)
         }
 
     }
@@ -196,10 +211,10 @@ class VariableManagerImpl(
                     // to prevent unwanted physical variable interaction)
                     newId
                 )
-                else -> ScopeAdjustInstruction.Move(id, newId, commonType)
+                else -> ScopeAdjustInstruction.Move(id, newId, commonType).takeUnless { id == newId }
             }
 
-            changeInstructions[index].add(ins)
+            ins?.let { changeInstructions[index].add(ins) }
         }
     }
 

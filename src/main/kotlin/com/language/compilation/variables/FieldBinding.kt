@@ -27,4 +27,8 @@ class FieldBinding(
     }
 
     override fun clone(): VariableProvider = FieldBinding(instance, type, name)
+    override fun genericChangeRequest(parent: VariableMapping, genericName: String, type: Type) {
+        TODO("Not yet implemented")
+    }
+
 }

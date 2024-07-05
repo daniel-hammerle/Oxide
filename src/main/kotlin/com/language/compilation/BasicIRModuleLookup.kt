@@ -187,7 +187,7 @@ class BasicIRModuleLookup(
     }
 
 
-    override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int> {
+    override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Type> {
         when(instance) {
             is Type.JvmType -> {
                 if (getStruct(instance.signature) != null) {
@@ -206,7 +206,7 @@ class BasicIRModuleLookup(
                     .mapIndexed { index, c -> index to c  }
                     .filter { it.second.typeName in instance.genericTypes }
                     .associate { (index, c) -> c.typeName to index }
-                return typeMap
+                return emptyMap()
             }
             else -> return emptyMap()
         }
@@ -376,6 +376,10 @@ class BasicIRModuleLookup(
 
             else -> error("Ordered Fields are only guaranteed for `oxide` types ($className)")
         }
+    }
+
+    override suspend fun lookupOrderGenerics(className: SignatureString): List<String> {
+        TODO("Not yet implemented")
     }
 
     override suspend fun lookUpFieldType(instance: Type, fieldName: String): Type {

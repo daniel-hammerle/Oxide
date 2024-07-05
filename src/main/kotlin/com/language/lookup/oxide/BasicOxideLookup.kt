@@ -6,6 +6,7 @@ import com.language.compilation.*
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.templatedType.matches
 import com.language.lookup.IRLookup
+import com.language.lookup.jvm.rep.asLazyTypeMap
 import org.objectweb.asm.Opcodes
 
 class BasicOxideLookup(
@@ -23,9 +24,23 @@ class BasicOxideLookup(
         return BasicOxideLookup(modules, newImplBlocks)
     }
 
-    override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int> {
+    override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>, lookup: IRLookup): Map<String, Type>? {
         //this can never happen in native methods since we don't have static type annotations
-        return emptyMap()
+        return if (hasExtensionMethod(instance, funcName, lookup)) {
+            emptyMap()
+        } else null
+    }
+
+    private suspend fun hasExtensionMethod(instance: Type, funcName: String, lookup: IRLookup): Boolean {
+        for ((template, blocks) in allowedImplBlocks) {
+            val generics = mutableMapOf<String, Type>()
+            blocks.forEach { impl ->
+                if (funcName in impl.methods && template.matches(instance, generics, impl.genericModifiers, lookup)) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     override suspend fun lookupFunction(
@@ -58,7 +73,7 @@ class BasicOxideLookup(
                 if (funcName in impl.methods && template.matches(instance, generics, impl.genericModifiers, lookup)) {
                     val func = impl.methods[funcName]!!
                     val returnType = runCatching { (func as BasicIRFunction).inferTypes(listOf(instance) + args, lookup, generics) }.getOrElse { it.printStackTrace(); throw it }
-                    println(returnType)
+                    println("Method $instance.$funcName($args) returns $returnType")
                     return FunctionCandidate(
                         oxideArgs = listOf(instance) + args,
                         jvmArgs = listOf(instance) + args.map { it.toActualJvmType() },
@@ -139,12 +154,7 @@ class BasicOxideLookup(
         return when(instance) {
             is Type.JvmType -> {
                 val type = getStruct(instance.signature)?.fields?.get(name)
-                val transformedGenerics = instance.genericTypes.lazyTransform {
-                    when(it) {
-                        is Type.BroadType.Known -> it.type
-                        Type.BroadType.Unset -> error("No known type for generic!")
-                    }
-                }
+                val transformedGenerics = instance.genericTypes.asLazyTypeMap()
                 with(lookup) { type?.populate(transformedGenerics) } ?: error("No field $instance.$name")
             }
             else -> error("$instance does not have the field `$name`")
@@ -196,7 +206,7 @@ class BasicOxideLookup(
     }
 
     override suspend fun lookupStructGenericModifiers(structSig: SignatureString): Map<String, Modifiers> {
-        return getStruct(structSig)?.generics?.lazyTransform { it.modifiers } ?: error("Cannot find struct $structSig")
+        return getStruct(structSig)?.generics?.lazyTransform { _, it -> it.modifiers } ?: error("Cannot find struct $structSig")
     }
 
     override suspend fun findExtensionFunction(instance: Type, funcName: String, lookup: IRLookup): IRFunction {

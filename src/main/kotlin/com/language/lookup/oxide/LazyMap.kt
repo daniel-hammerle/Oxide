@@ -1,12 +1,12 @@
 package com.language.lookup.oxide
 
 
-fun<K, V, T> Map<K, V>.lazyTransform(transformation: (V) -> T): Map<K, T> = LazyMap(this, transformation)
+fun<K, V, T> Map<K, V>.lazyTransform(transformation: (K, V) -> T): Map<K, T> = LazyMap(this, transformation)
 
 
 class LazyMap<K, V, T>(
     private val base: Map<K, V>,
-    private val transformation: (V) -> T
+    private val transformation: (K, V) -> T
 ) : Map<K, T> {
 
     private val cache = mutableMapOf<K, T>()
@@ -39,7 +39,7 @@ class LazyMap<K, V, T>(
 
     private fun getOrTransform(key: K): T {
         return cache.getOrPut(key) {
-            transformation(base.getValue(key))
+            transformation(key, base.getValue(key))
         }
     }
 }

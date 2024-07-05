@@ -23,6 +23,9 @@ suspend fun compileCheckedFunction(
     mv.visitMaxs(20, metaData.varCount + 1) // 1 for the instance
     val stackMap = StackMap.fromMax(20)
     stackMap.pushVarFrame(VarFrameImpl(argTypes), true)
+    if (instanceType != null) {
+        stackMap.changeVar(0, instanceType)
+    }
     //compile body
     compileInstruction(mv, body, stackMap)
 
@@ -54,6 +57,17 @@ fun Type.BroadType.toFunctionNameNotation() = when(this) {
 fun Type.BroadType.getOrDefault(type: Type): Type = when(this) {
     is Type.BroadType.Known -> this.type
     Type.BroadType.Unset -> type
+}
+
+fun Type.BroadType.getOrNull(): Type? = when(this) {
+    is Type.BroadType.Known -> this.type
+    Type.BroadType.Unset -> null
+}
+
+
+fun Type.BroadType.getOrThrow(message: String) =when(this) {
+    is Type.BroadType.Known -> this.type
+    Type.BroadType.Unset -> error(message)
 }
 
 fun Type.toFunctionNameNotation(): String = when(this) {

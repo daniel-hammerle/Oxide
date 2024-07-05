@@ -67,6 +67,9 @@ object NoopVariableMapping: VariableMapping {
         error("Not supported")
     }
 
+    override fun genericChangeRequest(name: String, genericName: String, type: Type) {
+    }
+
 }
 
 suspend fun evalFunction(

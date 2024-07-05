@@ -26,6 +26,8 @@ interface JvmClassRepresentation {
 
     fun hasInterface(signatureString: SignatureString): Boolean
 
+    suspend fun lookupGenericTypes(name: String, argTypes: List<Type>, lookup: IRLookup): Map<String, Type>?
+
     suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
 
     fun getGenericDefinitionOrder(): List<String>
@@ -86,10 +88,10 @@ data class BasicJvmClassRepresentation(
     }
 
     override suspend fun lookupMethod(name: String, type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup): FunctionCandidate? =
-        getMethod(name).lookupVariant(type, generics, argTypes, jvmLookup)
+        getMethod(name).lookupVariant(type, generics, argTypes, jvmLookup, lookup)
 
     override suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>): FunctionCandidate? =
-        getAssociatedFunction(name).lookupVariant(argTypes, jvmLookup, generics)
+        getAssociatedFunction(name).lookupVariant(argTypes, jvmLookup, generics, lookup)
 
     override suspend fun lookUpField(name: String, generics: Map<String, Type.BroadType>, lookup: IRLookup): Type? {
         if (fields.contains(name)) {
@@ -110,6 +112,10 @@ data class BasicJvmClassRepresentation(
 
     override fun hasInterface(signatureString: SignatureString): Boolean {
         return hasInterface(clazz, signatureString, mutableSetOf())
+    }
+
+    override suspend fun lookupGenericTypes(name: String, argTypes: List<Type>, lookup: IRLookup): Map<String, Type>? {
+        return getMethod(name).lookupGenericTypes(argTypes, lookup)
     }
 
     private fun hasInterface(clazz: Class<*>, signatureString: SignatureString, previous: MutableSet<SignatureString>): Boolean {
@@ -234,6 +240,16 @@ data class JvmClassInfoRepresentation(
         return signatureString in info.interfaces
     }
 
+    override suspend fun lookupGenericTypes(name: String, argTypes: List<Type>, lookup: IRLookup): Map<String, Type>? {
+        return getMethod(name, argTypes, lookup)
+            ?.args
+            ?.zip(argTypes)
+            ?.map { (arg, tp) ->
+                arg.extractGenerics(tp, lookup)
+            }
+            ?.reduce { acc, map -> acc + map }
+    }
+
     private val instanceType = Type.BasicJvmType(info.signature, info.generics.associate { it.name to Type.BroadType.Unset })
 
     override suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
@@ -283,4 +299,29 @@ fun TemplatedType.isGeneric(): Boolean = when(this) {
     else -> false
 }
 
-fun Map<String, Type.BroadType>.asLazyTypeMap() = lazyTransform { (it as? Type.BroadType.Known)?.type ?: error("No Type found") }
+fun TemplatedType.getGenerics(): Set<String> = when(this) {
+    is TemplatedType.Array -> itemType.getGenerics()
+    is TemplatedType.Complex -> generics.fold(emptySet()) { acc, it -> acc + it.getGenerics() }
+    is TemplatedType.Generic -> setOf(name)
+    is TemplatedType.Union -> types.fold(emptySet()) { acc, it -> acc + it.getGenerics() }
+    else -> emptySet()
+}
+
+
+suspend fun TemplatedType.extractGenerics(type: Type, lookup: IRLookup): Map<String, Type> = when(this) {
+    is TemplatedType.Array -> itemType.extractGenerics(((type as Type.Array).itemType as Type.BroadType.Known).type, lookup)
+    is TemplatedType.Complex -> (type as Type.JvmType)
+        .orderedGenerics(lookup)
+        .zip(generics)
+        .mapNotNull { (tp, template) -> (tp.second as? Type.BroadType.Known)?.type?.let{ template.extractGenerics(it, lookup)  } }
+        .fold(emptyMap()) { acc, map -> acc + map }
+    is TemplatedType.Generic -> mapOf(name to type)
+    is TemplatedType.Union -> TODO()
+    else -> emptyMap()
+}
+
+suspend fun Type.JvmType.orderedGenerics(lookup: IRLookup) = genericTypes.orderByKeys(lookup.lookupOrderGenerics(signature))
+
+fun<K, V> Map<K, V>.orderByKeys(keys: List<K>) = keys.map { it to this[it]!! }
+
+fun Map<String, Type.BroadType>.asLazyTypeMap() = lazyTransform { key, it -> (it as? Type.BroadType.Known)?.type ?: Type.Object }

@@ -10,8 +10,35 @@ impl<T> Box<T> {
     }
 }
 
+struct Atom {
+    value str
+}
+
+impl Atom {
+    func new(value) {
+        Atom(value)
+    }
+}
+
 func panic(message) {
     io.println(message)
     control.exit(1)
 }
 
+inline func with(resource, closure) {
+    result = closure(resource)
+    resource.close()
+    result
+}
+
+impl<T> T {
+    inline func let(self, closure) {
+        closure(self)
+    }
+
+    inline func also(self, closure) {
+        _ = closure(self)
+        self
+    }
+
+}

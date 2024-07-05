@@ -10,7 +10,7 @@ import com.language.compilation.modifiers.Modifiers
 
 interface OxideLookup {
     fun newModFrame(modNames: Set<SignatureString>): OxideLookup
-    suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int>?
+    suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>, lookup: IRLookup): Map<String, Type>?
     suspend fun lookupFunction(module: SignatureString, funcName: String, args: List<Type>, lookup: IRLookup): FunctionCandidate
 
     suspend fun lookupExtensionMethod(instance: Type, funcName: String, args: List<Type>, lookup: IRLookup): FunctionCandidate

@@ -23,7 +23,7 @@ interface JvmLookup {
 
     suspend fun lookupConstructor(className: SignatureString, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
 
-    suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Int>?
+    suspend fun lookUpGenericTypes(instance: Type.JvmType, funcName: String, argTypes: List<Type>, lookup: IRLookup): Map<String, Type>?
 
     suspend fun lookUpGenericsDefinitionOrder(className: SignatureString): List<String>
 

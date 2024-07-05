@@ -24,6 +24,7 @@ interface VariableMapping {
     fun loadVar(name: String): TypedInstruction
     fun getTempVar(type: Type): TempVariable
     fun tryAllocateId(id: Int, name: String, type: Type): Boolean
+    fun genericChangeRequest(name: String, genericName: String, type: Type)
 }
 
 
@@ -195,6 +196,11 @@ class VariableMappingImpl private constructor(
         return true
     }
 
+    override fun genericChangeRequest(name: String, genericName: String, type: Type) {
+        val (signature, generics) = (getType(name) as Type.JvmType).let { it.signature to it.genericTypes }
+        change(name, Type.BasicJvmType(signature, generics + mapOf(genericName to Type.BroadType.Known(type))))
+    }
+
     override fun getType(name: String): Type {
         return variables[name] ?: error("No var with name $name")
     }
@@ -210,3 +216,4 @@ class VariableMappingImpl private constructor(
     override fun varCount(): Int = varMax
 
 }
+

@@ -1,7 +1,9 @@
 package com.language
 
 
+import com.language.compilation.ExtensionClassLoader
 import com.language.controlflow.compileAndWriteDir
+import com.language.controlflow.loadExternalLibs
 import java.io.FileOutputStream
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
@@ -10,7 +12,13 @@ import java.util.jar.JarOutputStream
 
 
 fun main() {
-    compileAndWriteDir("./oxide", listOf("./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar"))
+    val externalLibs = listOf("./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar")
+    compileAndWriteDir("./oxide", externalLibs)
+    val loader = loadExternalLibs(externalLibs)
+    ExtensionClassLoader("out.jar", loader)
+        .loadClass("main")
+        .methods.first { it.name == "main_1" }
+        .invoke(null)
 }
 
 fun createZipFile(entries: Map<String, ByteArray>, zipFilePath: String) {
