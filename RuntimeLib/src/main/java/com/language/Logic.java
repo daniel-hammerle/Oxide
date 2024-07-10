@@ -1,6 +1,5 @@
 package com.language;
 
-import java.util.List;
 
 public class Logic {
     public static boolean isTrue(Object any) {

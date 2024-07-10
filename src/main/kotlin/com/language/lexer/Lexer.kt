@@ -14,7 +14,6 @@ sealed interface Token {
     data object Struct : KeyWord
     data object In : KeyWord, Identifier {
         override val name: String = "in"
-
     }
     data object Match : KeyWord
     data object Impl : KeyWord
@@ -30,23 +29,17 @@ sealed interface Token {
     data object Inline : KeyWord, Identifier, ModifierToken {
         override val name: String = "inline"
         override val modifier: Modifier = Modifier.Inline
-
     }
     data object Self : KeyWord, Identifier {
         override val name: String = "self"
     }
-
     sealed interface ModifierToken : Token {
         val modifier: Modifier
     }
-
     data object Colon : Token
-
-
     sealed interface Identifier : Token {
         val name: String
     }
-
     data class BasicIdentifier(override val name: String) : Identifier
 
     sealed interface Literal : Token

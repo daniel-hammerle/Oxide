@@ -12,7 +12,6 @@ import com.language.compilation.metadata.LambdaAppender
 import com.language.compilation.metadata.MetaDataHandle
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
-import com.language.compilation.modifiers.modifiers
 import com.language.compilation.variables.*
 import com.language.eval.evalComparison
 import com.language.eval.evalMath
@@ -292,12 +291,15 @@ sealed class Instruction {
             handle: MetaDataHandle
         ): TypedInstruction {
             val parent = lambdaParent.inferTypes(variables, lookup, handle)
-            if (parent is TypedInstruction.Lambda && parent in handle.inlinableLambdas) {
-                return parent.body.inferTypes(variables, lookup, handle)
-            }
-
             val args = args.map { it.inferTypes(variables, lookup, handle) }
 
+            if (parent is TypedInstruction.Lambda && parent in handle.inlinableLambdas) {
+                val scope = variables.clone()
+                for ((name, arg) in parent.args.zip(args)) {
+                    TODO()
+                }
+                return parent.body.inferTypes(scope, lookup, handle).also { variables.merge(listOf(scope)) }
+            }
             val candidate = when(val tp = parent.type) {
                 is Type.Lambda -> {
                     lookup.lookupLambdaInvoke(tp.signature, args.map { it.type })
@@ -314,7 +316,6 @@ sealed class Instruction {
         val name: String,
         val args: List<Instruction>,
     ) : Instruction() {
-
 
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
             val args= args.map { it.inferTypes(variables, lookup, handle) }
@@ -439,7 +440,8 @@ sealed class Instruction {
                 captures.mapValues { variables.loadVar(it.key) },
                 sig,
                 candidate,
-                body
+                body,
+                argNames,
             )
         }
 
@@ -1021,7 +1023,7 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
         val actualArgInstruction = mutableListOf<TypedInstruction>()
         if (instance != null) {
             if (instance is TypedInstruction.LoadVar) {
-                scope.tryGetMapping()!!.registerUnchecked("self", instance.id)
+                scope.putFromId(instance.id, "self")
             } else {
                 actualArgInstruction += scope.changeVar("self", instance)
             }
@@ -1032,18 +1034,21 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
 
         args.zip(slicedArgs).forEach { (it, name) ->
             when (it) {
-                is TypedInstruction.LoadVar -> scope.tryGetMapping()!!.registerUnchecked(name, it.id)
+                is TypedInstruction.LoadVar -> scope.putFromId(it.id, name)
                 is TypedInstruction.Lambda -> {
                     scope.putVar(name, ConstBinding(it))
                     inlinableLambdas.add(it)
                 }
                 is TypedInstruction.Const -> scope.putVar(name, SemiConstBinding(it))
-                else -> actualArgInstruction += scope.changeVar(name, it)
+                else ->  {
+                    actualArgInstruction += scope.changeVar(name, it)
+                    scope.putVar(name, VariableBinding(name))
+                }
             }
         }
         val bodyInstruction = inferTypes(scope, lookup, generics, inlinableLambdas)
 
-        variables.tryGetMapping()!!.minVarCount(scope.tryGetMapping()!!.varCount())
+        variables.mapping().minVarCount(scope.mapping().varCount())
 
         return TypedInstruction.MultiInstructions(
             actualArgInstruction + listOf(bodyInstruction),
@@ -1057,6 +1062,11 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
         return typedBody
     }
 
+}
+
+fun VariableManager.putFromId(id: Int, name: String) {
+    val oldName = mapping().getName(id)
+    putVar(name, VariableBinding(realName(oldName)))
 }
 
 data class BasicIRFunction(override val args: List<String>, override val body: Instruction, override val imports: Set<SignatureString>, override val module: LambdaAppender): IRFunction {

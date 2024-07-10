@@ -1,8 +1,8 @@
-use std::{error, io, Box, arrays, lists}
+use std::{error, io, Box, arrays, lists, random}
 
 func main {
-    array = [1, 2, 3, 4, 5, 6]
-    result = array.filter {|item| item >= 2 }.sum(0)
+    array = [1, 2, 3]
+    result = array.filter { |tem| tem == 1 }
     io.println(result)
 }
 
@@ -12,7 +12,6 @@ impl<T> T {
         self
     }
 }
-
 
 func f {
     x = 56 - { 15641 * 165 }
@@ -35,7 +34,6 @@ func f {
 func add(a, b) {
     a + b
 }
-
 
 func doSth(someList) {
     result = [

@@ -25,11 +25,13 @@ interface ReadOnlyVariableManager {
 
     fun getType(name: String): Type
 
-    fun tryGetMapping(): VariableMapping?
+    fun mapping(): VariableMapping
 
     fun genericChangeRequest(name: String, genericName: String, type: Type)
 
     val variables: Map<String, VariableProvider>
+
+    fun realName(name: String): String
 
     fun merge(branches: List<VariableManager>): List<ScopeAdjustment>
 

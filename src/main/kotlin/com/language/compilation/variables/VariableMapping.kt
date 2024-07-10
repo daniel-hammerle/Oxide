@@ -9,6 +9,7 @@ import kotlin.math.max
 
 
 interface VariableMapping {
+    fun getName(id: Int): String
     fun change(name: String, type: Type): Int
     fun getType(name: String): Type
     fun hasVar(name: String): Boolean
@@ -69,6 +70,8 @@ class VariableMappingImpl private constructor(
     override fun minVarCount(count: Int) {
         varMax = max(varMax, count)
     }
+
+    override fun getName(id: Int): String = variableIds.toList().first { it.second == id }.first
 
     override fun change(name: String, type: Type): Int {
         return when {

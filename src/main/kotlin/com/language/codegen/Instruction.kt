@@ -725,7 +725,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             instruction.captures.values.forEach { ins ->
                 compileInstruction(mv, ins, stackMap)
             }
-            instruction.candidate.generateCall(mv)
+            instruction.constructorCandidate.generateCall(mv)
             stackMap.pop(instruction.captures.size + 1)
         }
 

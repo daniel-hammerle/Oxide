@@ -33,8 +33,8 @@ class VariableManagerImpl(
     override fun toVarFrame(): VarFrame = parent.toVarFrame()
 
     override fun getType(name: String): Type = variables[name]?.type(parent) ?: parent.getType(name)
-    override fun tryGetMapping(): VariableMapping = parent
-    
+    override fun mapping(): VariableMapping = parent
+
     override fun genericChangeRequest(name: String, genericName: String, type: Type) {
         variables[name]?.genericChangeRequest(parent, genericName, type) ?: parent.genericChangeRequest(name, genericName, type)
     }
@@ -80,12 +80,12 @@ class VariableManagerImpl(
     //@everyone who needs to debug variable merging: im sorry
     override fun merge(branches: List<VariableManager>): List<ScopeAdjustment> {
         val commonVariables = variables.mapNotNull { (name, provider) ->
-            val branchesProviders = branches.mapNotNull { it.variables[name]?.let { a -> a to it.parent }  }
+            val branchesProviders = branches.mapNotNull { it.variables[name]?.let { a -> a to it }  }
             when(branchesProviders.size) {
                 branches.size -> Triple(name, provider, branchesProviders)
                 else -> null
             }
-        }
+        }.filter { hasVar(it.first) }
 
         val changeInstructions = branches.map { mutableListOf<ScopeAdjustInstruction>() }
 
@@ -95,17 +95,25 @@ class VariableManagerImpl(
         return changeInstructions.map { ScopeAdjustment(it) }
     }
 
+    override fun realName(name: String): String {
+        return when(val binding = variables[name]) {
+            is VariableBinding -> {
+                if (binding.name == name) name else realName(binding.name)
+            }
+            else -> name
+        }
+    }
 
     private fun mergeTypeConversions(
         changeInstructions: List<MutableList<ScopeAdjustInstruction>>,
-        commonVariables: List<Triple<String, VariableProvider, List<Pair<VariableProvider, VariableMapping>>>>,
+        commonVariables: List<Triple<String, VariableProvider, List<Pair<VariableProvider, VariableManager>>>>,
     ) {
         for ((name, nativeProv, providers) in commonVariables) {
             val commonType = providers
-                .map { (provider, variables) -> provider.type(variables) }
+                .map { (provider, variables) -> provider.type(variables.parent) }
                 .reduce { acc, type -> acc.join(type) }
             for ((index, provider) in providers.withIndex()) {
-                val id = provider.first.physicalName?.let { provider.second.getId(it) }
+                val id = provider.first.physicalName?.let { provider.second.parent.getId(it) }
 
                 //gracefully ignore type conversions on values that are not allocated
                 //(since they don't have a type anyway)
@@ -113,7 +121,7 @@ class VariableManagerImpl(
                     continue
                 }
 
-                val provType = provider.first.type(provider.second)
+                val provType = provider.first.type(provider.second.parent)
                 if (commonType is Type.Union) {
                     changeInstructions[index].add(ScopeAdjustInstruction.Box(id, provType))
                 }
@@ -127,7 +135,7 @@ class VariableManagerImpl(
 
     private fun mergeAllocations(
         changeInstructions: List<MutableList<ScopeAdjustInstruction>>,
-        commonVariables: List<Triple<String, VariableProvider, List<Pair<VariableProvider, VariableMapping>>>>
+        commonVariables: List<Triple<String, VariableProvider, List<Pair<VariableProvider, VariableManager>>>>
     ) {
         val requiredAllocationChanges = commonVariables.filter { (_, nativeProv, providers) ->
             //if the variable was allocated before branching, then the names would be the same.
@@ -144,13 +152,13 @@ class VariableManagerImpl(
     private fun mergeAllocation(
         name: String,
         nativeProv: VariableProvider,
-        providers: List<Pair<VariableProvider, VariableMapping>>,
+        providers: List<Pair<VariableProvider, VariableManager>>,
         changeInstructions: List<MutableList<ScopeAdjustInstruction>>
     ) {
-        val ids = providers.map { (provider, variables) -> provider.physicalName?.let { variables.getId(it) }}
+        val ids = providers.map { (provider, variables) -> provider.physicalName?.let { variables.parent.getId(it) }}
 
         val commonType = providers
-            .map { (provider, variables) -> provider.type(variables) }
+            .map { (provider, variables) -> provider.type(variables.parent) }
             .reduce { acc, type -> acc.join(type) }
 
         val nativeId = nativeProv.physicalName?.let { parent.getId(it) }
@@ -190,7 +198,7 @@ class VariableManagerImpl(
             // and it seems to have been dropped in a scope
             val n = nativeProv.physicalName!!
             val newId = parent.change(n, commonType)
-            variables[name] = VariableBinding(name)
+            variables[name] = VariableBinding(n)
             generateAdjustOperation(ids, newId, commonType, providers, changeInstructions)
         }
 
@@ -200,7 +208,7 @@ class VariableManagerImpl(
         ids: List<Int?>,
         newId: Int,
         commonType: Type,
-        providers: List<Pair<VariableProvider, VariableMapping>>,
+        providers: List<Pair<VariableProvider, VariableManager>>,
         changeInstructions: List<MutableList<ScopeAdjustInstruction>>
     ) {
         ids.forEachIndexed { index, id ->

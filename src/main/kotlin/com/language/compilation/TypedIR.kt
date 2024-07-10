@@ -163,8 +163,9 @@ sealed interface TypedInstruction {
     data class Lambda(
         val captures: Map<String, TypedInstruction>,
         val signatureString: SignatureString,
-        val candidate: FunctionCandidate,
-        val body: Instruction // the reason we also carry the body itself is just so we can potentially inline
+        val constructorCandidate: FunctionCandidate, //the candidate for the constructor call (when we actually need a runtime instance)
+        val body: Instruction, // the reason we also carry the body itself is just so we can potentially inline
+        val args: List<String> // the same reasoning applies to the arg names
     ): PrimitiveConst {
         override val type: Type = Type.Lambda(signatureString)
     }

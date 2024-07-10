@@ -1,0 +1,26 @@
+use std::{testing, random}
+use java::util::List
+
+test "Generic Passing Over Functions" {
+    x = list[]
+    append(x, "Hello World")
+    testing.assertType(x, std.type!(List<str>))
+    append(x, 3)
+    testing.assertType(x, std.type!(List<str | int>))
+}
+
+func append(x, item) {
+    _ = x.add(item)
+}
+
+test "Generic Passing in branching" {
+    x = list[]
+    if random.randBool() {
+        x.add(1)
+        testing.assertType(x, std.type!(List<int>))
+    } else {
+        x.add("Hello World")
+        testing.assertType(x, std.type!(List<str>))
+    }
+    testing.assertType(x, std.type!(List<str | int>))
+}

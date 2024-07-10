@@ -9,6 +9,10 @@ import com.language.compilation.variables.*
 import com.language.lookup.IRLookup
 
 object NoopVariableMapping: VariableMapping {
+    override fun getName(id: Int): String {
+        error("Not supported")
+    }
+
     override fun change(name: String, type: Type): Int {
         error("Not supported")
     }
