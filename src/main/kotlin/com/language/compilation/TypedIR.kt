@@ -53,7 +53,8 @@ sealed interface TypedInstruction {
         val hasNextCall: FunctionCandidate,
         val nextCall: FunctionCandidate,
         val body: TypedConstructingArgument,
-        val preLoopAdjustments: ScopeAdjustment
+        val preLoopAdjustments: ScopeAdjustment,
+        val bodyFrame: VarFrame
     ) : TypedInstruction {
         override val type: Type = Type.Nothing
     }

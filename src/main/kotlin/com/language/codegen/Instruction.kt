@@ -840,7 +840,7 @@ inline fun compileForLoop(
     val start = Label()
     val end = Label()
     //create a new var frame so that the variables like the index are gone after the loop's execution
-    stackMap.pushVarFrame(VarFrameImpl(emptyList()), cloning = false)
+    stackMap.pushVarFrame(instruction.bodyFrame, cloning = false)
 
     if (instruction.indexId != null) {
         mv.visitInsn(Opcodes.ICONST_0)
@@ -864,6 +864,8 @@ inline fun compileForLoop(
         else -> Opcodes.ASTORE
     }
     mv.visitVarInsn(storeInstruction, instruction.itemId)
+    stackMap.changeVar(instruction.itemId, instruction.nextCall.oxideReturnType)
+
     compileInstruction(mv, instruction.body.instruction, stackMap)
     endOfBodyTask()
     if (instruction.indexId != null) {
@@ -871,15 +873,17 @@ inline fun compileForLoop(
     }
     mv.visitJumpInsn(Opcodes.GOTO, start)
     mv.visitLabel(end)
+    stackMap.popVarFrame()
 
     //pop the previously pushed var frame so that all the for-loop-stuff is gone
     stackMap.generateFrame(mv)
 
-    stackMap.popVarFrame()
-
     //cleanup (pop the iterator from the stack)
     mv.visitInsn(Opcodes.POP)
     stackMap.pop()
+
+
+
 }
 
 fun compilePattern(

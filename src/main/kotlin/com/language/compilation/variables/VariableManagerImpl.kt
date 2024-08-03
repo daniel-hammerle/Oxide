@@ -23,7 +23,8 @@ class VariableManagerImpl(
         }
 
         variables[name] = VariableBinding(name)
-        return parent.changeVar(name, value)
+        val id = parent.change(name, value.type)
+        return TypedInstruction.StoreVar(id, value)
     }
 
     override fun change(name: String, type: Type): Int {

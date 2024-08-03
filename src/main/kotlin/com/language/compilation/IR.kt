@@ -293,13 +293,27 @@ sealed class Instruction {
             val parent = lambdaParent.inferTypes(variables, lookup, handle)
             val args = args.map { it.inferTypes(variables, lookup, handle) }
 
+            //when lambda inlined
             if (parent is TypedInstruction.Lambda && parent in handle.inlinableLambdas) {
                 val scope = variables.clone()
-                for ((name, arg) in parent.args.zip(args)) {
-                    TODO()
+                val loadInstructions = mutableListOf<TypedInstruction>()
+                for ((value, typedArg) in parent.args.zip(this.args).zip(args)) {
+                    val (name, arg) = value
+                    when(arg) {
+                        is LoadVar -> scope.putVar(name, VariableBinding(arg.name))
+                        else -> loadInstructions.add(typedArg)
+                    }
                 }
-                return parent.body.inferTypes(scope, lookup, handle).also { variables.merge(listOf(scope)) }
+                val typedBody = parent.body.inferTypes(scope, lookup, handle)
+                variables.merge(listOf(scope))
+
+                return TypedInstruction.MultiInstructions(
+                    loadInstructions + typedBody,
+                    variables.toVarFrame()
+                )
             }
+
+            //when lambda invoked
             val candidate = when(val tp = parent.type) {
                 is Type.Lambda -> {
                     lookup.lookupLambdaInvoke(tp.signature, args.map { it.type })
@@ -650,6 +664,7 @@ data class ForLoop(val parent: Instruction, val name: String, val indexName: Str
     ): TypedInstruction.ForLoop {
         val bodyScope = variables.clone()
         val itemId = bodyScope.change(name, nextCall.oxideReturnType)
+        bodyScope.putVar(name, VariableBinding(name))
         val indexId = indexName?.let { bodyScope.change(indexName, Type.IntT) }
 
         val bodyScopePre = bodyScope.clone()
@@ -658,7 +673,7 @@ data class ForLoop(val parent: Instruction, val name: String, val indexName: Str
         val adjustments = bodyScopePre.loopMerge(bodyScope, variables)
         val body = body.inferTypes(bodyScopePre, lookup, handle)
         variables.merge(listOf(bodyScopePre))
-        return TypedInstruction.ForLoop(parent, itemId, indexId, hasNextCall, nextCall, body, adjustments)
+        return TypedInstruction.ForLoop(parent, itemId, indexId, hasNextCall, nextCall, body, adjustments, bodyScope.toVarFrame())
     }
 
 
@@ -1041,7 +1056,7 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
                 }
                 is TypedInstruction.Const -> scope.putVar(name, SemiConstBinding(it))
                 else ->  {
-                    actualArgInstruction += scope.changeVar(name, it)
+                    actualArgInstruction += scope.parent.changeVar(name, it)
                     scope.putVar(name, VariableBinding(name))
                 }
             }

@@ -28,3 +28,7 @@ impl<error E, T> E | T {
         }
     }
 }
+
+impl<T> T | null {
+
+}
