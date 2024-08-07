@@ -3,9 +3,9 @@ package com.language.compilation.variables
 import UnsetListType
 import com.language.compilation.Type
 import listType
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Test
 import union
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 
 class VariableMappingTest {

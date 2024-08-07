@@ -28,6 +28,10 @@ sealed interface TypedInstruction {
         override val type = parent.type
     }
 
+    data class Return(val returnValue: TypedInstruction): TypedInstruction {
+        override val type: Type = Type.Never
+    }
+
     data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type.BroadType, val tempArrayVariable: Int?) : TypedInstruction {
         val isConstList = items.all { it is TypedConstructingArgument.Normal }
         override val type: Type = Type.BasicJvmType(

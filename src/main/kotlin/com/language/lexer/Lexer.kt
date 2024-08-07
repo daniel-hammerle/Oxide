@@ -33,6 +33,7 @@ sealed interface Token {
     data object Self : KeyWord, Identifier {
         override val name: String = "self"
     }
+    data object Return : KeyWord
     sealed interface ModifierToken : Token {
         val modifier: Modifier
     }
@@ -115,6 +116,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "pub" -> Token.Public
         "null" -> Token.Null
         "inline" -> Token.Inline
+        "return" -> Token.Return
         else -> null
     }
 }
@@ -124,7 +126,6 @@ private fun tryParseNumber(string: String): Token.ConstNum? {
 }
 
 fun lexCode(code: String) = mutableListOf<Token>().apply {
-
     var buffer: StringBuilder = StringBuilder()
 
     fun flush() {

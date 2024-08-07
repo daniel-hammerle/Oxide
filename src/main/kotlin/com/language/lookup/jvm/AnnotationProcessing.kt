@@ -55,6 +55,7 @@ suspend fun ReflectType.toType(jvmLookup: JvmLookup, generics: Map<String, Type>
                 "double" -> Type.DoubleT
                 "boolean" -> Type.BoolUnknown
                 in generics -> generics[tp.typeName]!!
+                "?" -> Type.Object
                 else -> {
                     if (tp.typeName.endsWith("[]")) {
                         return Type.Array(Type.BroadType.Known(Type.BasicJvmType(SignatureString.fromDotNotation(tp.typeName.removeSuffix("[]")))))

@@ -1,6 +1,7 @@
 package com.language.lookup
 
 import com.language.TemplatedType
+import com.language.codegen.asUnboxed
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
@@ -18,9 +19,18 @@ class IRModuleLookup(
 ) : IRLookup {
 
     override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Type> {
-        return oxideLookup.lookUpGenericTypes(instance, funcName, argTypes, this)
-            ?: jvmLookup.lookUpGenericTypes(instance as Type.JvmType, funcName, argTypes, this)
-            ?: error("No function: $instance.$funcName($argTypes)")
+        oxideLookup.lookUpGenericTypes(instance, funcName, argTypes, this)?.let { return it }
+        if (instance is Type.Union) {
+            return instance.entries.map { lookUpGenericTypes(it, funcName, argTypes) }.reduce { acc, map -> acc + map }
+        }
+        if (instance.isUnboxedPrimitive()) {
+            return lookUpGenericTypes(instance.asBoxed(), funcName, argTypes)
+        }
+        jvmLookup.lookUpGenericTypes(instance as Type.JvmType, funcName, argTypes, this)?.let { return it }
+        if (instance.isBoxedPrimitive()) {
+            return lookUpGenericTypes(instance.asUnboxed(), funcName, argTypes)
+        }
+        error("No function: $instance.$funcName($argTypes)")
     }
 
     override suspend fun hasGenericReturnType(instance: Type, funcName: String, argTypes: List<Type>): Boolean {
@@ -51,8 +61,13 @@ class IRModuleLookup(
     override suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate {
         val candidate = runCatching { oxideLookup.lookupExtensionMethod(instance, funcName, argTypes, this) }.getOrNull()
         if (candidate != null) return candidate
-        return when(instance) {
-            is Type.JvmType -> jvmLookup.lookUpMethod(instance, funcName, argTypes, this) ?: error("No Method found on $instance.$funcName($argTypes)")
+        return when {
+            instance is Type.Union -> {
+                val candidates = instance.entries.associateWith { lookUpCandidate(it, funcName, argTypes) }
+                UnionFunctionCandidate(candidates)
+            }
+            instance.isUnboxedPrimitive() -> lookUpCandidate(instance.asBoxed(), funcName, argTypes)
+            instance is Type.JvmType -> jvmLookup.lookUpMethod(instance, funcName, argTypes, this) ?: error("No Method found on $instance.$funcName($argTypes)")
             else -> error("No Method found on $instance.$funcName($argTypes)")
         }
     }

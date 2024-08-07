@@ -1,9 +1,32 @@
 use std::{error, io, Box, arrays, lists, random}
 
 func main {
-    array = [1, 2, 3]
-    result = array.filter { |it| it >= 2 }
-    io.println(result.toList())
+    x = if io.input(">") == "3" {
+        return
+    } else {
+        23
+    }
+    io.println(x)
+}
+
+func foo(x) {
+    result = if x > 0 {
+        return
+    } else {
+        x + 3
+    }
+    io.println(result + 2)
+}
+
+func b(n, m) {
+    n * m
+}
+
+inline func a(n) {
+    if n == 3 {
+        io.println(n)
+    }
+    io.println("Hello")
 }
 
 impl<T> T {
@@ -57,6 +80,8 @@ x = "Hello World"
     bool = tryBool(i).unwrap("Failed")
     io.println(bool)
 }
+
+
 
 
 func run(closure, arg) {

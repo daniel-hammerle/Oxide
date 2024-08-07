@@ -144,6 +144,13 @@ fun compileStatement(statement: Statement, module: ModuleLookup, uctl: Boolean):
                 value = compileExpression(statement.value, module, uctl)
             )
         }
+
+        is Statement.Return -> Instruction.Return(
+            compileExpression(
+                statement.value ?: Expression.ReturningScope(emptyList()),
+                module, uctl
+            )
+        )
     }
 }
 

@@ -140,7 +140,7 @@ data class BasicJvmClassRepresentation(
         val constructor = clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes) } ?: return null
         val jvmArgs = constructor.parameterTypes.map { it.toType() }
 
-        val candidate = FunctionCandidate(
+        val candidate = SimpleFunctionCandidate(
             oxideArgs = argTypes,
             jvmArgs = jvmArgs,
             jvmReturnType = Type.Nothing,
@@ -189,7 +189,7 @@ data class JvmClassInfoRepresentation(
             val tp = method.returnType.populate(generics.asLazyTypeMap())
             evaluateReturnType(tp, argTypes, method)
         }
-        val candidate = FunctionCandidate(
+        val candidate = SimpleFunctionCandidate(
             listOf(instanceType) + argTypes,
             method.args.map { it.defaultVariant() },
             method.returnType.defaultVariant(),
@@ -209,7 +209,7 @@ data class JvmClassInfoRepresentation(
 
         val oxideReturnType = evaluateReturnType(function.returnType.defaultVariant(), argTypes, function)
 
-        val candidate = FunctionCandidate(
+        val candidate = SimpleFunctionCandidate(
             argTypes,
             function.args.map { it.defaultVariant() },
             function.returnType.defaultVariant(),
@@ -255,7 +255,7 @@ data class JvmClassInfoRepresentation(
     override suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
         val constructor = info.constructors.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
 
-        val candidate = FunctionCandidate(
+        val candidate = SimpleFunctionCandidate(
             argTypes,
             constructor.args.map { it.defaultVariant() },
             jvmReturnType = Type.Nothing,

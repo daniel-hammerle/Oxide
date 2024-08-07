@@ -53,7 +53,7 @@ class BasicOxideLookup(
         val func = mod.functions[funcName] ?: error("No Function `$funcName` on module `$module`")
         val returnType = runCatching { (func as BasicIRFunction).inferTypes(args, lookup, emptyMap()) }.getOrElse { it.printStackTrace(); throw it }
 
-        return FunctionCandidate(
+        return SimpleFunctionCandidate(
             oxideArgs = args,
             jvmArgs = args.map { it.toActualJvmType() },
             jvmReturnType = returnType.toActualJvmType(),
@@ -74,7 +74,7 @@ class BasicOxideLookup(
                     val func = impl.methods[funcName]!!
                     val returnType = runCatching { (func as BasicIRFunction).inferTypes(listOf(instance) + args, lookup, generics) }.getOrElse { it.printStackTrace(); throw it }
                     println("Method $instance.$funcName($args) returns $returnType")
-                    return FunctionCandidate(
+                    return SimpleFunctionCandidate(
                         oxideArgs = listOf(instance) + args,
                         jvmArgs = listOf(instance) + args.map { it.toActualJvmType() },
                         jvmReturnType = returnType.toActualJvmType(),
@@ -104,7 +104,7 @@ class BasicOxideLookup(
                 if (impl != null) {
                     val func = impl.associatedFunctions[funcName]!!
                     val returnType = (func as BasicIRFunction).inferTypes(args, lookup, emptyMap())
-                    return FunctionCandidate(
+                    return SimpleFunctionCandidate(
                         oxideArgs = args,
                         jvmArgs = args.map { it.toActualJvmType() },
                         jvmReturnType = returnType.toActualJvmType(),
@@ -137,7 +137,7 @@ class BasicOxideLookup(
 
         if (!result) error("Types did not match")
 
-        return FunctionCandidate(
+        return SimpleFunctionCandidate(
             oxideArgs = args,
             jvmArgs = fields.values.toList(),
             jvmReturnType = Type.Nothing,
@@ -164,7 +164,7 @@ class BasicOxideLookup(
     override suspend fun lookupLambdaInit(signatureString: SignatureString): FunctionCandidate {
         val lambda = modules[signatureString.modName]?.getLambda(signatureString)!!
         val args = lambda.captures.values.toList()
-        return FunctionCandidate(
+        return SimpleFunctionCandidate(
             args,
             args,
             Type.Nothing,
@@ -181,7 +181,7 @@ class BasicOxideLookup(
         val lambda = modules[signatureString.modName]?.getLambda(signatureString)!!
         val returnType = lambda.inferTypes(argTypes, lookup)
 
-        return FunctionCandidate(
+        return SimpleFunctionCandidate(
             listOf(Type.Lambda(signatureString)) + argTypes,
             argTypes,
             returnType,

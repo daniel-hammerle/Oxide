@@ -100,6 +100,7 @@ sealed interface Statement {
     data class Assign(val name: String, val value: Expression) : Statement
     data class AssignProperty(val parent: Expression, val name: String, val value: Expression) : Statement
     data class For(val forLoopConstruct: ForLoopConstruct) : Statement
+    data class Return(val value: Expression?) : Statement
 }
 
 data class Module(val children: Map<String, ModuleChild>, val implBlocks: Map<TemplatedType, Impl>, val imports: Map<String, SignatureString>)

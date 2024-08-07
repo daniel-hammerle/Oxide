@@ -16,10 +16,10 @@ import java.time.temporal.ChronoUnit
 import kotlin.concurrent.timerTask
 
 @OptIn(DelicateCoroutinesApi::class)
-fun compileProject(fileName: String) {
-    val (extensionClassLoader, compilationTime) = measureTime {
+fun compileCOde(code: String): Map<SignatureString, ByteArray> {
+    val (project, compilationTime) = measureTime {
         val (tokens, lexingTime) = measureTime {
-            lexCode(File(fileName).readText())
+            lexCode(code)
 
         }
 
@@ -59,27 +59,11 @@ fun compileProject(fileName: String) {
 
         println("> Compilation took ${compilationTime}ms")
 
-        val (_, writingTime) = measureTime {
-            for ((name, bytes) in project.entries) {
-                File("out/${name.toJvmNotation()}.class").apply {
-                    parentFile.mkdirs()
-                    createNewFile()
-                }.writeBytes(bytes)
-            }
-            createZipFile(project.mapKeys { it.key.value }, "out.jar")
-        }
-
-        println("> Writing took ${writingTime}ms")
-        println("Finished Writing to File✅")
-        extensionClassLoader
+        project
     }
 
     println("Full Compilation process took ${compilationTime}ms")
-
-    ExtensionClassLoader("out.jar", extensionClassLoader)
-        .loadClass("main")
-        .methods.first { it.name == "main_1" }
-        .invoke(null)
+    return project
 }
 
 

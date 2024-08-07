@@ -91,7 +91,7 @@ class BasicIRModuleLookup(
         if (nativeModules.any{ it.name == modName }) {
             val module = nativeModules.first{ it.name == modName }
             return (module.functions[funcName] as? BasicIRFunction)?.inferTypes(argTypes, this, emptyMap())?.let {
-                    FunctionCandidate(
+                    SimpleFunctionCandidate(
                     argTypes,
                     argTypes,
                     it,
@@ -108,7 +108,7 @@ class BasicIRModuleLookup(
             is Pair<IRImpl, IRFunction> -> {
                 val (implBlock, function) = result
                 return (function as? BasicIRFunction)?.inferTypes(argTypes, lookup = this, emptyMap())?.let {
-                    FunctionCandidate(
+                    SimpleFunctionCandidate(
                         argTypes,
                         argTypes.map { t -> t.toActualJvmType() },
                         it.toActualJvmType(),
@@ -137,7 +137,7 @@ class BasicIRModuleLookup(
         val returnType = method.returnType.toType()
         val actualArgTypes = method.parameterTypes.map { it.toType() }
         //oxide and jvm return types are the same since generics cant exist on static functions
-        return FunctionCandidate(
+        return SimpleFunctionCandidate(
             oxideArgs = argTypes,
             jvmArgs = actualArgTypes,
             jvmReturnType = returnType,
@@ -251,7 +251,7 @@ class BasicIRModuleLookup(
             is Triple<IRImpl, IRFunction, Map<String, Type>> -> {
                 val (implBlock, function, generics) = result
                 return (function as BasicIRFunction).inferTypes(listOf(instance) + argTypes, lookup = this, generics).let {
-                    FunctionCandidate(
+                    SimpleFunctionCandidate(
                         listOf(instance) + argTypes,
                         listOf(instance) + argTypes,
                         it.toActualJvmType(),
@@ -283,7 +283,7 @@ class BasicIRModuleLookup(
                     else -> returnType
                 }
 
-                FunctionCandidate(
+                SimpleFunctionCandidate(
                     oxideArgs = listOf(instance) + argTypes,
                     jvmArgs = actualArgTypes,
                     oxideReturnType = returnType,
@@ -303,7 +303,7 @@ class BasicIRModuleLookup(
             Type.Null -> error("Null does not have function $funcName")
             is Type.Union -> {
                 val types = instance.entries.map { lookUpCandidate(it, funcName, argTypes) }
-                types[0].copy(requireDispatch = true)
+                (types[0] as SimpleFunctionCandidate).copy(requireDispatch = true)
             }
             else -> error("Basic ir lookup does not support that feature")
         }
@@ -329,7 +329,7 @@ class BasicIRModuleLookup(
                     .zip(argTypes)
                     .forEach { (fieldType, argType) -> argType.assertIsInstanceOf(fieldType)
                 }
-                return FunctionCandidate(
+                return SimpleFunctionCandidate(
                     oxideArgs =typedFields.values.toList(),
                     jvmArgs = typedFields.values.toList(),
                     jvmReturnType = Type.Nothing,
@@ -351,7 +351,7 @@ class BasicIRModuleLookup(
                 .all{ (pType, argType) -> pType.canBe(argType) }
         }
         when(constructor) {
-            is Constructor<*> -> return FunctionCandidate(
+            is Constructor<*> -> return SimpleFunctionCandidate(
                 argTypes,
                 constructor.parameterTypes.map { it.toType() },
                 Type.Nothing,
@@ -458,10 +458,10 @@ class BasicIRModuleLookup(
 
 fun Class<*>.toType(): Type {
     return when(name) {
-        "void" -> Type.Nothing
-        "int" -> Type.IntT
-        "double" -> Type.DoubleT
-        "boolean" -> Type.BoolUnknown
+        "void", "V" -> Type.Nothing
+        "int", "I" -> Type.IntT
+        "double", "D" -> Type.DoubleT
+        "boolean", "Z" -> Type.BoolUnknown
         else -> {
             if (name.startsWith("[")) {
                 return Type.Array(Type.BroadType.Known(Class.forName(name.removePrefix("[L").removeSuffix(";")).toType()))

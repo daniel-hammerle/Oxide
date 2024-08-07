@@ -13,19 +13,23 @@ suspend fun compileCheckedFunction(
     static: Boolean = true,
     instanceType: Type? = null
 ) {
+    val accessModifiers = Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL or if (static) Opcodes.ACC_STATIC else 0
+    val methodName = jvmName(name, if (instanceType != null) listOf(instanceType) + argTypes else argTypes)
     val mv = cw.visitMethod(
-        Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL or if (static) Opcodes.ACC_STATIC else 0,
-        jvmName(name, if (instanceType != null) listOf(instanceType) + argTypes else argTypes),
+        accessModifiers,
+        methodName,
         generateJVMFunctionSignature(argTypes, metaData.returnType),
         null,
         arrayOf()
     )
+
     mv.visitMaxs(20, metaData.varCount + 1) // 1 for the instance
     val stackMap = StackMap.fromMax(20)
     stackMap.pushVarFrame(VarFrameImpl(argTypes), true)
     if (instanceType != null) {
         stackMap.changeVar(0, instanceType)
     }
+
     //compile body
     compileInstruction(mv, body, stackMap)
 
@@ -35,14 +39,13 @@ suspend fun compileCheckedFunction(
     }
 
     //return
-    when(body.type) {
-        is Type.JvmType, Type.Null, is Type.Union, is Type.Lambda -> mv.visitInsn(Opcodes.ARETURN)
-        Type.IntT,is Type.BoolT -> mv.visitInsn(Opcodes.IRETURN)
-        Type.DoubleT -> mv.visitInsn(Opcodes.DRETURN)
-        Type.Nothing -> mv.visitInsn(Opcodes.RETURN)
-        is Type.JvmArray -> mv.visitInsn(Opcodes.ARETURN)
-        Type.Never -> mv.visitInsn(Opcodes.RETURN)
+    if (body.type == Type.Never) {
+        return
     }
+
+    println(metaData.returnType)
+    val ins = returnInstruction(metaData.returnType)
+    mv.visitInsn(ins)
 }
 
 fun jvmName(name: String, argTypes: List<Type>): String {

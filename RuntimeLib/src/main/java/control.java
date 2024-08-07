@@ -4,12 +4,15 @@ import com.oxide.TypeParameter;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.Scanner;
+
 public class control {
     private control() {}
 
     @Contract(value = "_ -> fail")
     public static void exit(int code) {
         System.exit(code);
+        int x = 3;
     }
 
     public interface _Invokable {

@@ -414,7 +414,12 @@ sealed class Instruction {
         }
 
         override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
-            val typedInstructions = instructions.map { it.inferTypes(variables, lookup, handle) }
+            val typedInstructions = mutableListOf<TypedInstruction>()
+            for (instruction in instructions) {
+                val typedIns = instruction.inferTypes(variables, lookup, handle)
+                typedInstructions.add(typedIns)
+                if (typedIns.type == Type.Never) break //everything after that is dead code
+            }
             if (typedInstructions.size == 1) return typedInstructions.first()
             return TypedInstruction.MultiInstructions(typedInstructions, variables.toVarFrame())
         }
@@ -552,6 +557,19 @@ sealed class Instruction {
                 }
                 else -> typedIns
             }
+        }
+
+    }
+
+    data class Return(val instruction: Instruction) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
+            val returnValue = instruction.inferTypes(variables, lookup, handle)
+            handle.issueReturnTypeAppend(returnValue.type)
+            return TypedInstruction.Return(returnValue)
         }
 
     }
@@ -923,6 +941,8 @@ fun Type.join(other: Type): Type {
     val result = when {
         other == Type.Never -> this
         this == Type.Never -> other
+        this == Type.Nothing && other == Type.Nothing -> Type.Nothing
+        other == Type.Nothing && this != Type.Nothing -> error("Nothing cannot be in a union")
         this is Type.JvmType && other is Type.JvmType && signature == other.signature -> {
             //iterate over all generics and join their values
             val allGenerics = genericTypes.keys + other.genericTypes.keys
@@ -1299,7 +1319,7 @@ suspend fun List<TypedConstructingArgument>.itemType(lookup: IRLookup) = map { w
             }
             else -> error("Invalid error type")
         }
-        else -> it.type
+        else -> it.type.asBoxed()
     } }
     .reduceOrNull { acc, type -> type?.let { acc?.join(type) } ?: acc }
     .let { if (it == null) Type.BroadType.Unset else Type.BroadType.Known(it) }

@@ -75,7 +75,9 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             }
 
             //pop the result of the other branch for now
-            stackMap.pop()
+            if (instruction.body.type != Type.Nothing && instruction.body.type != Type.Never) {
+                stackMap.pop()
+            }
 
 
             //skip else body when body was executed
@@ -119,28 +121,14 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitLdcInsn(instruction.value).also { stackMap.push(Type.String) }
         }
         is TypedInstruction.LoadVar -> {
-            when(instruction.type) {
-                is Type.JvmType, is Type.JvmArray, is Type.Lambda -> mv.visitVarInsn(Opcodes.ALOAD, instruction.id)
-                Type.DoubleT -> mv.visitVarInsn(Opcodes.DLOAD, instruction.id)
-                Type.IntT, is Type.BoolT -> mv.visitVarInsn(Opcodes.ILOAD, instruction.id)
-                Type.Nothing -> mv.visitInsn(Opcodes.ACONST_NULL)
-                Type.Null -> mv.visitVarInsn(Opcodes.ALOAD, instruction.id)
-                is Type.Union -> mv.visitVarInsn(Opcodes.ALOAD, instruction.id)
-                Type.Never -> error("Cannot load variable of type Never")
-            }
+            val ins = loadInstruction(instruction.type)
+            mv.visitVarInsn(ins, instruction.id)
             stackMap.push(instruction.type)
         }
         is TypedInstruction.StoreVar -> {
             compileInstruction(mv, instruction.value, stackMap)
-            when(instruction.value.type) {
-                is Type.BoolT, Type.IntT -> mv.visitVarInsn(Opcodes.ISTORE, instruction.id)
-                Type.DoubleT -> mv.visitVarInsn(Opcodes.DSTORE, instruction.id)
-                is Type.JvmType, is Type.Lambda->  mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
-                Type.Nothing -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
-                Type.Null, is Type.JvmArray -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
-                is Type.Union -> mv.visitVarInsn(Opcodes.ASTORE, instruction.id)
-                Type.Never -> error("Cannot store variable of type never")
-            }
+            val ins = storeInstruction(instruction.value.type)
+            mv.visitVarInsn(ins, instruction.id)
             stackMap.changeVar(instruction.id, instruction.value.type)
             //storing removes an item from the stack
             stackMap.pop()
@@ -236,14 +224,14 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         is TypedInstruction.StaticCall -> {
             //load args
             mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
-            instruction.candidate.generateCall(mv)
+            instruction.candidate.generateCall(mv, stackMap)
             stackMap.pop(instruction.candidate.oxideArgs.size)
             stackMap.push(instruction.candidate.oxideReturnType)
         }
         is TypedInstruction.ModuleCall -> {
             //load args
             mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
-            instruction.candidate.generateCall(mv)
+            instruction.candidate.generateCall(mv, stackMap)
             stackMap.pop(instruction.candidate.oxideArgs.size)
             stackMap.push(instruction.candidate.oxideReturnType)
         }
@@ -253,7 +241,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             instruction.instructions.forEachIndexed { index, it ->
                 compileInstruction(mv, it, stackMap)
                 //if we leave garbage on the stack and are not the last instruction (which would return)
-                if (it.type != Type.Nothing && index != instruction.instructions.lastIndex)  {
+                if (it.type !in listOf(Type.Nothing, Type.Never) && index != instruction.instructions.lastIndex){
                     mv.visitInsn(Opcodes.POP)
                     stackMap.pop()
                 }
@@ -311,7 +299,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             //load args onto stack
             mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
             //call constructor
-            instruction.candidate.generateCall(mv)
+            instruction.candidate.generateCall(mv, stackMap)
             stackMap.pop(instruction.args.size)
             stackMap.push(instruction.candidate.oxideReturnType)
         }
@@ -690,6 +678,13 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             }
         }
 
+
+        is TypedInstruction.Return -> {
+            compileInstruction(mv, instruction.returnValue, stackMap)
+            mv.visitInsn(returnInstruction(instruction.returnValue.type))
+
+        }
+
         is TypedInstruction.Keep -> {
             mv.visitFieldInsn(
                 Opcodes.GETSTATIC,
@@ -725,7 +720,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             instruction.captures.values.forEach { ins ->
                 compileInstruction(mv, ins, stackMap)
             }
-            instruction.constructorCandidate.generateCall(mv)
+            instruction.constructorCandidate.generateCall(mv, stackMap)
             stackMap.pop(instruction.captures.size + 1)
         }
 
@@ -853,10 +848,10 @@ inline fun compileForLoop(
     mv.visitLabel(start)
     stackMap.generateFrame(mv)
     mv.visitInsn(Opcodes.DUP)
-    instruction.hasNextCall.generateCall(mv)
+    instruction.hasNextCall.generateCall(mv, stackMap)
     mv.visitJumpInsn(Opcodes.IFEQ, end)
     mv.visitInsn(Opcodes.DUP)
-    instruction.nextCall.generateCall(mv)
+    instruction.nextCall.generateCall(mv, stackMap)
     val storeInstruction = when(instruction.nextCall.oxideReturnType) {
         is Type.IntT -> Opcodes.ISTORE
         is Type.BoolT -> Opcodes.ISTORE
@@ -988,12 +983,18 @@ fun compileDynamicCall(
     //boxOrIgnore(mv, instruction.parent.type)
 
     mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
-    instruction.candidate.generateCall(mv)
+    if (instruction.parent.type.isUnboxedPrimitive() && instruction.candidate.jvmOwner.isBoxedPrimitive()) {
+        boxOrIgnore(mv, instruction.parent.type)
+    }
+    instruction.candidate.generateCall(mv, stackMap)
 
     stackMap.pop(instruction.candidate.oxideArgs.size) //args + instance
     stackMap.push(instruction.candidate.oxideReturnType)
 }
 
+fun SignatureString.isBoxedPrimitive(): Boolean {
+    return oxideNotation == "java::lang::Integer" || oxideNotation == "java::lang::Double" || oxideNotation == "java::lang::Boolean"
+}
 
 fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: List<TypedInstruction>, stackMap: StackMap) {
     val iter = args.zip(if (args.size == candidate.jvmArgs.size)
@@ -1011,6 +1012,7 @@ fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: List<TypedInstr
                 continue
             }
             boxOrIgnore(this, ins.type)
+            unboxOrIgnore(this, ins.type)
         }
     }
 }
@@ -1023,8 +1025,16 @@ inline fun MethodVisitor.dynamicDispatch(types: Iterable<Type>, elseType: Type, 
     types.forEach { type ->
         val skip = Label()
         visitInsn(Opcodes.DUP)
-        visitTypeInsn(Opcodes.INSTANCEOF, type.toJVMDescriptor().removeSuffix(";").removePrefix("L"))
-        visitJumpInsn(Opcodes.IFEQ, skip)
+        if (type.isUnboxedPrimitive()) {
+            error("Cannot dispatch unboxed primitive `$type` in `$types`")
+        }
+        if (type == Type.Null) {
+            visitJumpInsn(Opcodes.IFNONNULL, skip)
+        } else {
+            visitTypeInsn(Opcodes.INSTANCEOF, type.toJVMDescriptor().removeSuffix(";").removePrefix("L"))
+            visitJumpInsn(Opcodes.IFEQ, skip)
+        }
+
         stackMap.generateFrame(this)
 
         visitTypeInsn(Opcodes.CHECKCAST, type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
@@ -1285,4 +1295,13 @@ fun loadInstruction(type: Type) = when(type) {
     Type.Null, is Type.JvmArray -> Opcodes.ALOAD
     is Type.Union ->Opcodes.ALOAD
     Type.Never -> error("Cannot store variable of type never")
+}
+
+fun returnInstruction(type: Type) = when(type) {
+    Type.Nothing -> Opcodes.RETURN
+    Type.Never -> Opcodes.RETURN
+    Type.IntT, is Type.BoolT -> Opcodes.IRETURN
+    Type.DoubleT -> Opcodes.DRETURN
+    else -> Opcodes.ARETURN
+
 }

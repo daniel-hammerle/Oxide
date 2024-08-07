@@ -202,6 +202,17 @@ fun parseStatement(tokens: Tokens, variables: Variables): Statement {
             tokens.previous()
             Statement.For(parseForLoopConstruct(tokens, variables))
         }
+        is Token.Return -> {
+            if (tokens.visitNext() == Token.ClosingCurly) {
+                Statement.Return(null)
+            } else {
+                val expr = parseExpression(tokens, variables)
+                if (tokens.visitNext() != Token.ClosingCurly) {
+                    error("Dead code detected")
+                }
+                Statement.Return(expr)
+            }
+        }
         else -> {
             tokens.previous()
             val expr = parseExpression(tokens, variables)
@@ -707,8 +718,8 @@ private fun parseTypeBase(tokens: Tokens, generics: Set<String> = emptySet(), al
 
 
 private fun parseNumber(tokens: Tokens, initial: Int): Expression.ConstNum {
-    return when(tokens.visitNext()) {
-        is Token.Dot -> {
+    return when {
+        tokens.visitNext() is Token.Dot && tokens.visit2Next() is Token.ConstNum -> {
             tokens.next()
             val number = tokens.expect<Token.ConstNum>()
             Expression.ConstNum("${initial}.${number.value}".toDouble())

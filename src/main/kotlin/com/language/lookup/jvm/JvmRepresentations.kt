@@ -39,7 +39,7 @@ data class JvmStaticMethodRepresentation(
         val oxideReturnType = evaluateReturnType(argTypes, generics, method, jvmLookup, lookup)
 
         val jvmArgTypes = method.parameterTypes.map { it.toType() }
-        val candidate =  FunctionCandidate(
+        val candidate =  SimpleFunctionCandidate(
             argTypes,
             jvmArgTypes,
             oxideReturnType,
@@ -83,7 +83,7 @@ data class JvmMethodRepresentation(
         val oxideReturnType = evaluateReturnType(argTypes, generics, method, jvmLookup, lookup)
 
         val jvmArgTypes = method.parameterTypes.map { it.toType() }
-        val candidate =  FunctionCandidate(
+        val candidate =  SimpleFunctionCandidate(
             listOf(type) + argTypes,
             jvmArgTypes,
             method.returnType.toType(),
