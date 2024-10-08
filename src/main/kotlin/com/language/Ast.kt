@@ -17,6 +17,7 @@ sealed interface Expression {
         val arrayType: ArrayType
     }
 
+
     data class ConstArray(override val arrayType: ArrayType, val items: List<ConstructingArgument>): Array
     data class DefaultArray(override val arrayType: ArrayType, val defaultItem: Expression, val size: Expression) : Array
     data class CollectorArray(override val arrayType: ArrayType, val name: String, val parent: Expression, val body: ConstructingArgument): Array
@@ -24,6 +25,11 @@ sealed interface Expression {
     data class Invoke(val parent: Expression, val args: Map<String, Expression>): Expression
 
     data class AccessProperty(val parent: Expression, override val name: String): Invokable
+
+    /**
+     * @param accessor The expression used to access the array, which should either be a range for slicing or an index
+     */
+    data class ArrayAccess(val accessor: Expression) : Expression
 
     sealed interface Invokable : Expression {
         val name: String
@@ -38,11 +44,24 @@ sealed interface Expression {
 
     data class Math(val first: Expression, val second: Expression, val op: MathOp) : Expression
     data class Comparing(val first: Expression, val second: Expression, val op: CompareOp) : Expression
+    data class BooleanOperation(val first: Expression, val second: Expression, val op: BooleanOp): Expression
+    data class Not(val expr: Expression): Expression
     data class ReturningScope(val expressions: List<Statement>) : Expression
     data class Lambda(val args: List<String>, val body: Expression, val capturedVariables: Set<String>): Expression
     data class IfElse(val condition: Expression, val body: Expression, val elseBody: Expression?) : Expression
     data class Match(val matchable: Expression, val branches: List<Pair<Pattern, Expression>>) : Expression
     data class Keep(val value: Expression): Expression
+}
+
+enum class BooleanOp {
+    And,
+    Or,
+}
+
+sealed interface Range : Expression {
+    data class Normal(val lower: Expression, val upper: Expression, val upperInclusive: Boolean): Range
+    data class UntilUpper(val upper: Expression, val upperInclusive: Boolean): Range
+    data class FromLower(val lower: Expression): Range
 }
 
 sealed interface ConstructingArgument {

@@ -1,8 +1,10 @@
 package com.language.compilation
 
+import com.language.BooleanOp
 import com.language.CompareOp
 import com.language.MathOp
 import com.language.codegen.VarFrame
+import com.language.codegen.asUnboxedOrIgnore
 
 sealed interface TypedInstruction {
     val type: Type
@@ -154,15 +156,29 @@ sealed interface TypedInstruction {
         val cond: TypedInstruction,
         val body: TypedInstruction,
         val elseBody: TypedInstruction?,
-        val typeConversionsBody: Map<String, Pair<Type, Type>>,
-        val typeConversionsElseBody: Map<String, Pair<Type, Type>>
+        val bodyAdjust: ScopeAdjustment,
+        val elseBodyAdjust: ScopeAdjustment
     ) : TypedInstruction {
         override val type: Type =when {
             body.type == Type.Nothing && (elseBody?.type ?: Type.Nothing) == Type.Nothing -> Type.Nothing
             body.type == elseBody?.type -> body.type
-            else -> body.type.asBoxed().join(elseBody?.type?.asBoxed() ?: Type.Null)
+            else -> body.type.asBoxed().join(elseBody?.type?.asBoxed() ?: Type.Null).asUnboxedOrIgnore()
         }
 
+    }
+
+    data class Not(
+        val ins: TypedInstruction
+    ) : TypedInstruction {
+        override val type: Type = Type.BoolUnknown
+    }
+
+    data class LogicOperation(
+        val first: TypedInstruction,
+        val second: TypedInstruction,
+        val op: BooleanOp
+    ) : TypedInstruction {
+        override val type: Type = Type.BoolUnknown
     }
 
     data class Lambda(
@@ -177,10 +193,11 @@ sealed interface TypedInstruction {
 
     data class Match(
         val parent: TypedInstruction,
-        val patterns: List<Triple<TypedIRPattern, TypedInstruction, VarFrame>>
+        val patterns: List<CompiledMatchBranch>,
+        val temporaryId: Int
     ) : TypedInstruction {
         override val type: Type
-            get() = patterns.map { it.second.type }.reduce { acc, type -> acc.join(type)  }.let { if (it is Type.Union) it.asBoxed() else it }.simplifyUnbox()
+            get() = patterns.map { it.body.type }.reduce { acc, type -> acc.join(type)  }.let { if (it is Type.Union) it.asBoxed() else it }.simplifyUnbox()
     }
 
     data class While(
@@ -244,16 +261,29 @@ sealed interface TypedIRPattern {
 
     val bindings: Set<Pair<String, Type>>
 
-    data class Binding(val name: String, val id: Int, val origin: TypedInstruction): TypedIRPattern {
-        override val bindings: Set<Pair<String, Type>> = setOf(name to origin.type)
+    data class Binding(val name: String, val type: Type): TypedIRPattern {
+        override val bindings: Set<Pair<String, Type>> = setOf(name to type)
     }
-    data class Destructuring(val type: Type, val patterns: List<TypedIRPattern>, val origin: TypedInstruction, val isLast: Boolean, val castStoreId: Int?) : TypedIRPattern {
+    data class Destructuring(
+        val type: Type,
+        val patterns: List<TypedIRPattern>,
+        val loadItem: TypedInstruction,
+        val isLast: Boolean,
+        val castStoreId: Int
+    ) : TypedIRPattern {
         override val bindings: Set<Pair<String, Type>> = patterns.flatMap { it.bindings }.toSet()
     }
     data class Condition(val parent: TypedIRPattern, val condition: TypedInstruction) : TypedIRPattern {
         override val bindings: Set<Pair<String, Type>> = parent.bindings
     }
 }
+
+data class CompiledMatchBranch(
+    val pattern: TypedIRPattern,
+    val body: TypedInstruction,
+    val scopeAdjustment: ScopeAdjustment,
+    val varFrame: VarFrame
+)
 
 data class ScopeAdjustment(
     val instructions: List<ScopeAdjustInstruction>

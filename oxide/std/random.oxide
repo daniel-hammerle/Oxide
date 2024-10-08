@@ -1,11 +1,11 @@
 
 use java::util::Random
-func randBool {
+func bool {
     random = keep { Random() }
     random.nextBoolean()
 }
 
-func randInt {
+func int {
     random = keep { Random() }
     random.nextInt()
 }

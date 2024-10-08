@@ -2,7 +2,7 @@ package com.language.blackbox
 
 import kotlin.test.Test
 
-val TestFunctions = """
+val MinimalTestingLib = """
     use java::{lang::System, util::Scanner}
     inline func print(value) System.out.print(value)
     inline func println(value) System.out.println(value)
@@ -30,7 +30,6 @@ class Samples {
     fun testForLoops() {
         val code = """
             use java::lang::{System, Integer, Boolean}         
-         
             
             impl null {
                 func toString(self) {
@@ -56,7 +55,7 @@ class Samples {
     @Test
     fun testPrimitiveAutoBoxingForMethods() {
         //tests how ints are autmatically boxed to allow their boxed interface to be used
-        val code = TestFunctions + """
+        val code = MinimalTestingLib + """
             use java::lang::Double
             func main {
                 x = 3
@@ -74,18 +73,127 @@ class Samples {
     @Test
     fun testBranchingAndEarlyReturn() {
         //tests how ints are autmatically boxed to allow their boxed interface to be used
-        val code = TestFunctions + """
+        val code = MinimalTestingLib + """
             func main {
-                x = if read() == "3" {
+                foo(3)
+                foo(-4)
+            }
+            
+            func foo(y) {
+                x = if y > 0 {
                     return
                 } else {
-                    23
+                    y + 2
                 }
                 print(x)
             }
         """.trimIndent()
 
-        runCode(code, input = "3.2").out("23").returnValue(5.2)
+        runCode(code, input = "3.2").out("-2").returnValue(null)
     }
+
+    @Test
+    fun testReturn() {
+        //tests how ints are autmatically boxed to allow their boxed interface to be used
+        val code =  """
+            func main {
+                foo(-4)
+                foo(3)
+            }
+            
+            func foo(y) {
+                x = if y > 0 {
+                    return -37
+                } else {
+                    y + 2
+                }
+                return x * 2
+            }
+        """.trimIndent()
+
+        runCode(code, input = "3.2").out("").returnValue(-37)
+    }
+
+    @Test
+    fun testPatternMatching() {
+        //tests how ints are autmatically boxed to allow their boxed interface to be used
+
+        val code =  MinimalTestingLib+"""
+            func main {
+                instance = rand()
+                
+                match instance {
+                    A(name, age >= 18) -> {
+                        print(name)
+                    }
+                    B(name, _, _) -> {
+                        print(name)
+                    }
+                }
+            }
+            
+            struct A {
+                name str,
+                age i32
+            }
+            
+            struct B {
+                name str,
+                email str,
+                password str
+            }
+            
+            use java::util::Random
+            func rand {
+                random = keep { Random() }
+                if random.nextBoolean() {
+                    A("Tim", 18)
+                } else {
+                    B("Tim", "tim@mail.co", "1234556")
+                }
+            }
+            
+        """.trimIndent()
+        runCode(code).out("Tim").returnValue(null)
+    }
+
+    @Test
+    fun testPatternMatchingInstanceCasting() {
+        //tests how ints are autmatically boxed to allow their boxed interface to be used
+
+        val code =  MinimalTestingLib+"""
+            func main {
+                instance = rand()
+                match instance {
+                    A(name, age >= 18) -> print(name)
+                    B -> print(instance.name)
+                }
+            }
+            
+            struct A {
+                name str,
+                age i32
+            }
+            
+            struct B {
+                name str,
+                email str,
+                password str
+            }
+            
+            use java::util::Random
+            func rand {
+                random = keep { Random() }
+                if random.nextBoolean() {
+                    A("Tim", 18)
+                } else {
+                    B("Tim", "tim@mail.co", "1234556")
+                }
+            }
+            
+        """.trimIndent()
+        runCode(code).out("Tim").returnValue(null)
+    }
+
 
 }

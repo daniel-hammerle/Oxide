@@ -30,5 +30,36 @@ impl<error E, T> E | T {
 }
 
 impl<T> T | null {
+    func orDefault(self, value) {
+        match self {
+            null -> value
+            _ -> self
+        }
+    }
 
+    inline func map(self, closure) {
+        match self {
+            null -> null
+            T -> closure(self)
+        }
+    }
+
+    func unwrap(self, message) {
+        match self {
+            null -> std.panic(message)
+            T -> self
+        }
+    }
+}
+
+
+error struct ConversionError {
+    src str,
+    target str
+}
+
+impl ConversionError {
+    func new(src, target) {
+        ConversionError(src, target)
+    }
 }

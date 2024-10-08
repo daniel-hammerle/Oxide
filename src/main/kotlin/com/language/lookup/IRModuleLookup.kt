@@ -85,6 +85,7 @@ class IRModuleLookup(
         instance: TypedInstruction,
         funcName: String,
         args: List<TypedInstruction>,
+        untypedArgs: List<Instruction>,
         generics: Map<String, Type>
     ): TypedInstruction? {
         val function = runCatching { oxideLookup.findExtensionFunction(instance.type, funcName, this) }.getOrNull() ?: return null
@@ -94,7 +95,7 @@ class IRModuleLookup(
                 if (!isConstEvalAble) return null
                 runCatching { evalFunction(function, (listOf(instance) + args) as List<TypedInstruction.Const>, this, generics) }.getOrNull()
             }
-            is IRInlineFunction -> function.generateInlining(args, variables, instance, this, generics)
+            is IRInlineFunction -> function.generateInlining(args,untypedArgs, variables, instance, this, generics)
         }
     }
 
@@ -103,6 +104,7 @@ class IRModuleLookup(
         modName: SignatureString,
         funcName: String,
         args: List<TypedInstruction>,
+        untypedArgs: List<Instruction>,
         generics: Map<String, Type>
     ): TypedInstruction? {
         val function = runCatching { oxideLookup.findFunction(modName, funcName, this) }.getOrNull() ?: return null
@@ -112,7 +114,7 @@ class IRModuleLookup(
                 if (!isConstEvalAble) return null
                 runCatching { evalFunction(function, args as List<TypedInstruction.Const>, this, generics) }.getOrNull()
             }
-            is IRInlineFunction -> function.generateInlining(args, variables, null, this, generics)
+            is IRInlineFunction -> function.generateInlining(args, untypedArgs, variables, null, this, generics)
         }
     }
 

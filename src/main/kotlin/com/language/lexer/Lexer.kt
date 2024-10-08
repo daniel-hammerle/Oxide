@@ -69,6 +69,9 @@ sealed interface Token {
     data object ExclamationMark : Token
     data object SemiColon : Token
     data object Collector : Token
+    data object Range : Token
+    data object Or : Token
+    data object And : Token
 
     data object Arrow : Token
 
@@ -108,6 +111,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "_seq" -> Token.ESt
         "_arrow" -> Token.Arrow
         "_collector" -> Token.Collector
+        "_range" -> Token.Range
         "error" -> Token.Error
         "keep" -> Token.Keep
         "impl" -> Token.Impl
@@ -117,6 +121,8 @@ private fun tryFindKeyWord(string: String): Token? {
         "null" -> Token.Null
         "inline" -> Token.Inline
         "return" -> Token.Return
+        "_or" -> Token.Or
+        "_and" -> Token.And
         else -> null
     }
 }
@@ -146,6 +152,9 @@ fun lexCode(code: String) = mutableListOf<Token>().apply {
         .replace("!=", " _neq ")
         .replace("->", " _arrow ")
         .replace("...", " _collector ")
+        .replace("..", " _range ")
+        .replace("||", " _or ")
+        .replace("&&", " _and ")
         .toCharArray().iterator()
     while (iter.hasNext()) {
         val token = when (val c = iter.nextChar()) {

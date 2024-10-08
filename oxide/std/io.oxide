@@ -7,9 +7,12 @@ inline func print(value) System.out.print(value)
 
 func input(message) {
     print(message)
+    read()
+}
+
+func read {
     scanner = keep {
         Scanner(System.in)
     }
     scanner.nextLine()
 }
-

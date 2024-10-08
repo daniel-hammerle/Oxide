@@ -1,0 +1,29 @@
+mod arenas_proposal
+
+use std::{arenas, arenas::ext, io, errors}
+
+func main {
+    arena = arenas.new() //here custom options could be specified
+
+    instance = A("Tim", 18) //normal way to instantiate a struct
+    instance = A.new("Tim", 18) //best practice way using factory functions
+    //but the previous 2 were normal instantiations now lets use arenas
+    //to get a constructor to use with an arena we can do the following:
+    instance = arena.make<A>("Tim", 18)
+    secondInstance = arena.make<A>("Tom", 17)
+
+    arena.free()
+
+    io.println(instance) //segfault
+}
+
+struct A {
+    name str,
+    age i32
+}
+
+impl A {
+    func new(name, age) {
+        A(name, age)
+    }
+}

@@ -4,4 +4,6 @@ plugins {
 rootProject.name = 'DynamicJVMLangSpeedRun'
 include 'StdLib'
 include 'RuntimeLib'
+include 'arenas:Arenas'
+findProject(':arenas:Arenas')?.name = 'Arenas'
 

@@ -1,10 +1,7 @@
 package com.language.lookup
 
 import com.language.TemplatedType
-import com.language.compilation.FunctionCandidate
-import com.language.compilation.SignatureString
-import com.language.compilation.Type
-import com.language.compilation.TypedInstruction
+import com.language.compilation.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.variables.VariableManager
@@ -57,6 +54,7 @@ interface IRLookup {
         instance: TypedInstruction,
         funcName: String,
         args: List<TypedInstruction>,
+        untypedArgs: List<Instruction>,
         generics: Map<String, Type>
     ): TypedInstruction?
 
@@ -66,6 +64,7 @@ interface IRLookup {
         modName: SignatureString,
         funcName: String,
         args: List<TypedInstruction>,
+        untypedArgs: List<Instruction>,
         generics: Map<String, Type>
     ): TypedInstruction?
     /**

@@ -32,7 +32,63 @@ impl<T> ArrayList<T> {
         acc
     }
 
+
+    inline func len(self) self.size()
+
     inline func toArray(self) [...self]
 
     inline func toList(self) list[...self]
+}
+
+struct Slice<Container> {
+    container Container,
+    lower i32,
+    upper i32
+}
+
+impl<T> Slice<T> {
+    func get(self, idx) {
+        realIndex = self.lower + idx
+        if realIndex >= self.upper {
+            null
+        } else {
+            self.container.get(realIndex)
+        }
+    }
+
+    func set(self, idx, item) {
+        realIndex = self.lower + idx
+        if realIndex >= self.upper {
+            false
+        } else {
+            self.container.set(realIndex, item)
+        }
+    }
+
+    func len(self) {
+        self.upper - self.lower
+    }
+
+    func slice(self, range) {
+        if range.upper > self.len() {
+            return null
+        }
+        Slice.new(self.container, self.lower + range.lower, self.lower + range.upper)
+    }
+
+    func new(container, lower, upper) {
+        if lower < 0 {
+            return null
+        }
+
+        if upper > container.len() {
+            return null
+        }
+
+        if lower > upper {
+            return null
+        }
+
+        Slice(container, lower, upper)
+    }
 }

@@ -71,7 +71,7 @@ class VariableMappingImpl private constructor(
         varMax = max(varMax, count)
     }
 
-    override fun getName(id: Int): String = variableIds.toList().first { it.second == id }.first
+    override fun getName(id: Int): String = variableIds.entries.first { it.value == id }.key
 
     override fun change(name: String, type: Type): Int {
         return when {

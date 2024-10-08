@@ -1,5 +1,6 @@
 package com.language.eval
 
+import com.language.BooleanOp
 import com.language.CompareOp
 import com.language.compilation.TypedInstruction
 
@@ -19,3 +20,4 @@ fun evalComparison(
 
     return TypedInstruction.LoadConstBoolean(boolean)
 }
+

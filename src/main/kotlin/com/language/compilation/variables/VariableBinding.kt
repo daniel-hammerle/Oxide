@@ -12,8 +12,9 @@ class VariableBinding(val name: String) : VariableProvider {
         parent.deleteVar(name)
     }
 
-    override val physicalName: String
-        get() = name
+    override fun physicalName(parent: VariableMapping): String? {
+        return name
+    }
 
     override fun clone() = VariableBinding(name)
     override fun genericChangeRequest(parent: VariableMapping, genericName: String, type: Type) {

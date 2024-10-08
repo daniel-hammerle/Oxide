@@ -4,7 +4,6 @@ import com.language.*
 import com.language.Function
 import com.language.compilation.GenericType
 import com.language.compilation.SignatureString
-import com.language.compilation.Type
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
 import com.language.lexer.Token
@@ -293,7 +292,7 @@ fun parseExpressionAdd(tokens: Tokens, variables: Variables): Expression {
 }
 
 fun parseExpressionMul(tokens: Tokens, variables: Variables): Expression {
-    val first = parseExpressionCall(tokens, variables)
+    val first = parseExpressionRanges(tokens, variables)
     return when(tokens.visitNext()) {
         is Token.Star -> {
             tokens.next()
@@ -305,8 +304,46 @@ fun parseExpressionMul(tokens: Tokens, variables: Variables): Expression {
             val other = parseExpressionMul(tokens, variables)
             Expression.Math(first, other, MathOp.Div)
         }
+        is Token.Or -> {
+            tokens.next()
+            val other = parseExpressionMul(tokens, variables)
+            Expression.BooleanOperation(first, other, BooleanOp.Or)
+        }
+        is Token.And -> {
+            tokens.next()
+            val other = parseExpressionMul(tokens, variables)
+            Expression.BooleanOperation(first, other, BooleanOp.And)
+        }
         else -> first
     }
+}
+
+fun parseExpressionRanges(tokens: Tokens, variables: Variables): Expression {
+    if (tokens.visitNext() == Token.Range) {
+        tokens.expect<Token.Range>()
+        val upperInclusive = if (tokens.visitNext() == Token.EqualSign) {
+            tokens.expect<Token.EqualSign>()
+            true
+        } else {
+            false
+        }
+        val bound = parseExpressionCall(tokens, variables)
+        return Range.UntilUpper(bound, upperInclusive)
+    }
+
+    val lower = parseExpressionCall(tokens, variables)
+    if (tokens.visitNext() != Token.Range) return lower
+    tokens.expect<Token.Range>()
+
+    val upperInclusive = if (tokens.visitNext() == Token.EqualSign) {
+        tokens.expect<Token.EqualSign>()
+        true
+    } else {
+        false
+    }
+
+    val upper = parseExpressionCall(tokens, variables)
+    return Range.Normal(lower, upper, upperInclusive)
 }
 
 fun parseExpressionCall(tokens: Tokens, variables: Variables): Expression {
@@ -413,6 +450,10 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
                     Expression.UnknownSymbol(tk.name)
                 }
             }
+        }
+        is Token.ExclamationMark -> {
+            tokens.expect<Token.ExclamationMark>()
+            Expression.Not(parseExpressionRanges(tokens, variables))
         }
         is Token.Keep -> {
             tokens.expect<Token.Keep>()
@@ -535,7 +576,7 @@ fun parseConst(tokens: Tokens): Expression.Const {
         is Token.True -> Expression.ConstBool(true)
         is Token.False -> Expression.ConstBool(false)
         is Token.Null -> Expression.ConstNull
-        else -> error("Cannot")
+        else -> error("Cannot $token")
     }
 }
 
@@ -607,29 +648,41 @@ private fun parsePattern(tokens: Tokens, variables: Variables): Pattern {
 }
 
 private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
-    return when(val tk = tokens.visitNext()) {
-        is Token.Identifier -> {
-            runCatching { parseType(tokens, allowGenerics = false) }.fold(
-                onSuccess = { type ->
-                    when(tokens.visitNext()) {
-                        is Token.OpenBracket -> {
-                            tokens.expect<Token.OpenBracket>()
-
-                            val patterns = parsePatterns(tokens, variables)
-                            Pattern.Destructuring(type, patterns)
-                        }
-                        else -> Pattern.Destructuring(type, emptyList())
-                    }
-                },
-                onFailure = {
-                    Pattern.Binding(tk.name)
-                }
-            )
-        }
-        else -> {
-            Pattern.Const(parseConst(tokens))
-        }
+    val tk = tokens.visitNext()
+    if (tk !is Token.Identifier) {
+        return Pattern.Const(parseConst(tokens))
     }
+
+    if (tokens.visit2Next() is Token.Comparison) {
+        tokens.expect<Token.Identifier>()
+        val op = tokens.expect<Token.Comparison>()
+        val expr = parseExpression(tokens, variables)
+        return Pattern.Conditional(
+            condition= Expression.Comparing(
+                first =Expression.VariableSymbol(tk.name),
+                second =expr,
+                op = op.toCompareOp()
+            ),
+            parent = Pattern.Binding(tk.name)
+        )
+    }
+
+    return runCatching { parseType(tokens, allowGenerics = false) }.fold(
+        onSuccess = { type ->
+            when(tokens.visitNext()) {
+                is Token.OpenBracket -> {
+                    tokens.expect<Token.OpenBracket>()
+                    val patterns = parsePatterns(tokens, variables)
+                    Pattern.Destructuring(type, patterns)
+                }
+                else -> Pattern.Destructuring(type, emptyList())
+            }
+        },
+        onFailure = {
+            Pattern.Binding(tk.name)
+        }
+    )
+
 
 }
 
@@ -694,10 +747,10 @@ private fun parseTypeBase(tokens: Tokens, generics: Set<String> = emptySet(), al
     is Token.Identifier -> {
         when(tk.name) {
             in generics -> TemplatedType.Generic(tk.name).also { tokens.next() }
-            "int" -> TemplatedType.IntT.also { tokens.next() }
-            "double" ->  TemplatedType.DoubleT.also { tokens.next() }
+            "i32" ->  TemplatedType.IntT.also { tokens.next() }
+            "f64" ->  TemplatedType.DoubleT.also { tokens.next() }
             "str" ->  TemplatedType.String.also { tokens.next() }
-            "bool" ->  TemplatedType.BoolT.also { tokens.next() }
+            "bool" -> TemplatedType.BoolT.also { tokens.next() }
             else -> {
                 TemplatedType.Complex(
                     runCatching { parseSignature(tokens).first }.getOrNull() ?: error("Invalid type ${tk.name}"),

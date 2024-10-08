@@ -1,0 +1,5 @@
+struct Range<Idx> {
+    lower Idx,
+    upper Idx
+}
+

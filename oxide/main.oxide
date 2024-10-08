@@ -1,22 +1,75 @@
-use std::{error, io, Box, arrays, lists, random}
+use std::{io, errors, arrays, lists}
+
+use std::{errors, io, Box, arrays, lists, random}
+
+
+func hello(a, b) {
+    a > b
+}
+
+func doSomething(n1, n2) {
+    modifier = if n2 < 0 {
+        -1*n2 * 2
+    } else {
+        n2
+    }
+
+    n1 * { modifier + 1 }
+}
 
 func main {
-    x = if io.input(">") == "3" {
-        return
-    } else {
-        23
+    io.println("Hello World")
+    x = magic()
+    match x {
+        "f" -> io.println(2)
+        _ -> io.println("Help!")
     }
-    io.println(x)
 }
 
-func foo(x) {
-    result = if x > 0 {
-        return
+
+func magic {
+    if random.bool() {
+        "Hello"
     } else {
-        x + 3
+        "Hello"
     }
-    io.println(result + 2)
 }
+
+func matchingIssue {
+
+    instance = rand()
+    match instance {
+        A(_, age >= 18) -> io.println(age)
+        A("Tim", _) -> io.println("Tüüüüüüüüüm")
+        A(name, _) -> io.println(name)
+        B(name, _, _) -> io.println(name)
+        "Hello World" -> io.println("Goodbye world")
+    }
+    io.println("end")
+}
+
+struct A {
+    name str,
+    age i32
+}
+
+struct B {
+    name str,
+    email str,
+    password str
+}
+
+use java::util::Random
+func rand {
+    if random.bool() {
+        A("Tim", 18)
+    } else if random.bool() {
+        B("Tim", "tim@mail.co", "1234556")
+    } else {
+        "Hello World"
+    }
+}
+
 
 func b(n, m) {
     n * m
@@ -26,6 +79,7 @@ inline func a(n) {
     if n == 3 {
         io.println(n)
     }
+    "3.2".tryF64().unwrap("Failed to parse double")
     io.println("Hello")
 }
 
@@ -103,6 +157,8 @@ impl MyComplexType {
     }
 }
 
+
+
 error struct ConversionError {
     message str
 }
@@ -119,7 +175,3 @@ func tryBool(input) {
         _ -> ConversionError("failed to convert!")
     }
 }
-
-
-
-

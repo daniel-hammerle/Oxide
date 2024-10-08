@@ -1,5 +1,6 @@
 package com.language.codegen
 
+import com.language.BooleanOp
 import com.language.CompareOp
 import com.language.MathOp
 import com.language.compilation.*
@@ -66,7 +67,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             if (instruction.type != instruction.body.type) {
                 boxOrIgnore(mv, instruction.body.type)
             }
-            //TODO("Apply changes to variables")
+            compileScopeAdjustment(mv, instruction.bodyAdjust, stackMap)
 
             if(instruction.elseBody == null && instruction.body.type == Type.Nothing) {
                 mv.visitLabel(betweenBodyAndElseBody)
@@ -80,8 +81,11 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             }
 
 
-            //skip else body when body was executed
-            mv.visitJumpInsn(Opcodes.GOTO, afterElseBody)
+            if (instruction.body.type != Type.Never) {
+                //skip else body when body was executed
+                //if type is never we dont need that
+                mv.visitJumpInsn(Opcodes.GOTO, afterElseBody)
+            }
 
             stackMap.generateFrame(mv)
             //here is the between body and else body label
@@ -89,15 +93,17 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             //else body
             compileInstruction(mv, instruction.elseBody ?: TypedInstruction.Null, stackMap)
             if (instruction.type != instruction.elseBody?.type) {
-                boxOrIgnore(mv, instruction.elseBody?.type ?: Type.Null)
+                if (boxOrIgnore(mv, instruction.elseBody?.type ?: Type.Null)) {
+                    stackMap.generateFrame(mv)
+                }
             }
-            //TODO("Apply changes to variables")
+            compileScopeAdjustment(mv, instruction.elseBodyAdjust, stackMap)
             //label after else body
             mv.visitLabel(afterElseBody)
+            stackMap.generateFrame(mv)
 
             stackMap.pop()
             stackMap.push(instruction.type)
-            stackMap.generateFrame(mv)
 
         }
         is TypedInstruction.LoadConstBoolean -> {
@@ -681,8 +687,9 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
 
         is TypedInstruction.Return -> {
             compileInstruction(mv, instruction.returnValue, stackMap)
+            if (instruction.returnValue.type != Type.Nothing && instruction.returnValue.type != Type.Never)
+                stackMap.pop()
             mv.visitInsn(returnInstruction(instruction.returnValue.type))
-
         }
 
         is TypedInstruction.Keep -> {
@@ -755,74 +762,51 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             }
 
         }
-    }
-}
+        is TypedInstruction.Not -> {
 
-fun compileMatch(
-    mv: MethodVisitor,
-    instruction: TypedInstruction.Match,
-    stackMap: StackMap
-) {
-    //load the matchable parent onto the stack
-    compileInstruction(mv, instruction.parent, stackMap)
-    val end = Label()
-    var idx = 0
-    for ((pattern, body, varFrame) in instruction.patterns) {
-        stackMap.generateFrame(mv)
-        stackMap.pushVarFrame(varFrame, cloning = false)
-        if (idx != instruction.patterns.lastIndex) {
-            mv.visitInsn(Opcodes.DUP)
-            stackMap.dup()
-            if (pattern is TypedIRPattern.Binding) mv.visitInsn(Opcodes.DUP)
-        }
-
-        val patternFail = Label()
-        compilePattern(mv, pattern, stackMap, patternFail)
-        //mv.visitInsn(Opcodes.POP)
-        //stackMap.pop()
-        compileInstruction(mv, body, stackMap)
-        if (body.type == Type.Never) {
-            mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException")
-            mv.visitInsn(Opcodes.DUP)
-            mv.visitLdcInsn("@Contract(fail) broken")
-            mv.visitMethodInsn(
-                Opcodes.INVOKESPECIAL,
-                "java/lang/IllegalStateException",
-                "<init>",
-                "(Ljava/lang/String;)V",
-                false
-            )
-            mv.visitInsn(Opcodes.ATHROW)
-        }
-        if (instruction.type != body.type) {
-            boxOrIgnore(mv, body.type)
-            unboxOrIgnore(mv, body.type)
-        }
-        if (idx != instruction.patterns.lastIndex) {
-            if (body.type !in listOf(Type.Nothing, Type.Never)) {
-                mv.visitInsn(Opcodes.SWAP)
-            }
-            if (body.type != Type.Never)
-                mv.visitInsn(Opcodes.POP)
-        }
-        if (body.type != Type.Never)
-            mv.visitJumpInsn(Opcodes.GOTO, end)
-
-        if (body.type != Type.Nothing) {
-            //we pop the value produced by the body in this loop since we dont need it rn
-            //on the stackmap however, we keep it in the actual bytecode
+            val skip = Label()
+            val end = Label()
+            compileInstruction(mv, instruction.ins, stackMap)
+            mv.visitJumpInsn(Opcodes.IFNE, skip) //jump to load 0 when condition is true
             stackMap.pop()
+            mv.visitInsn(Opcodes.ICONST_1) //load true if jump not completed
+            mv.visitJumpInsn(Opcodes.GOTO, end) //bypass loading 0
+            mv.visitLabel(skip)
+            stackMap.generateFrame(mv)
+            mv.visitInsn(Opcodes.ICONST_0)
+            stackMap.push(Type.BoolUnknown)
+            mv.visitLabel(end)
+            stackMap.generateFrame(mv)
         }
+        is TypedInstruction.LogicOperation -> {
+            val condIns = when(instruction.op) {
+                BooleanOp.And -> Opcodes.IFEQ
+                BooleanOp.Or -> Opcodes.IFNE
+            }
 
-        mv.visitLabel(patternFail)
-        stackMap.popVarFrame()
-        idx++
+            val condMetLabel = Label()
+            val skipLabel = Label()
+
+            //load and jump for short-circuiting if needed
+            compileInstruction(mv, instruction.first, stackMap)
+            mv.visitJumpInsn(condIns, condMetLabel)
+            stackMap.pop()
+
+            //load and jump for short-circuiting if needed
+            compileInstruction(mv, instruction.second, stackMap)
+            mv.visitJumpInsn(condIns, condMetLabel)
+            stackMap.pop()
+            mv.visitInsn(Opcodes.ICONST_0)
+            mv.visitJumpInsn(Opcodes.GOTO, skipLabel)
+            mv.visitLabel(condMetLabel)
+            stackMap.generateFrame(mv)
+            mv.visitInsn(Opcodes.ICONST_1)
+            mv.visitLabel(skipLabel)
+            stackMap.push(Type.BoolUnknown)
+            stackMap.generateFrame(mv)
+
+        }
     }
-    mv.visitLabel(end)
-    if (instruction.type != Type.Nothing) {
-        stackMap.push(instruction.type)
-    }
-    stackMap.generateFrame(mv)
 }
 
 inline fun compileForLoop(
@@ -881,6 +865,77 @@ inline fun compileForLoop(
 
 }
 
+
+fun compileMatch(
+    mv: MethodVisitor,
+    instruction: TypedInstruction.Match,
+    stackMap: StackMap
+) {
+    //load the matchee into the temporary variable
+    compileInstruction(mv, TypedInstruction.StoreVar(instruction.temporaryId, instruction.parent), stackMap)
+
+    val end = Label()
+    for ((pattern, body, scopeAdjustment, varFrame) in instruction.patterns) {
+        stackMap.generateFrame(mv)
+        stackMap.pushVarFrame(varFrame, cloning = false)
+
+        val patternFail = Label()
+        compilePattern(mv, pattern, stackMap, patternFail)
+        compileInstruction(mv, body, stackMap)
+        if (body.type == Type.Never) {
+            mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException")
+            mv.visitInsn(Opcodes.DUP)
+            mv.visitLdcInsn("@Contract(fail) broken")
+            mv.visitMethodInsn(
+                Opcodes.INVOKESPECIAL,
+                "java/lang/IllegalStateException",
+                "<init>",
+                "(Ljava/lang/String;)V",
+                false
+            )
+            mv.visitInsn(Opcodes.ATHROW)
+        }
+        if (instruction.type != body.type) {
+            boxOrIgnore(mv, body.type)
+            unboxOrIgnore(mv, body.type)
+        }
+        if (body.type != Type.Never)
+            mv.visitJumpInsn(Opcodes.GOTO, end)
+
+        if (body.type !in listOf(Type.Nothing, Type.Never)) {
+            //we pop the value produced by the body in this loop since we dont need it rn
+            //on the stackmap however, we keep it in the actual bytecode
+            stackMap.pop()
+        }
+
+        mv.visitLabel(patternFail)
+        stackMap.popVarFrame()
+    }
+    //Fall-through-branch which is only reachable on type system manipulation or compiler errors
+    stackMap.generateFrame(mv)
+    mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalArgumentException")
+    mv.visitInsn(Opcodes.DUP)
+    mv.visitLdcInsn(
+        "Argument supplied to match statement does not fit its assigned type constraints. " +
+            "This can be through invalid unchecked casting or a compiler error"
+    )
+    mv.visitMethodInsn(
+        Opcodes.INVOKESPECIAL,
+        "java/lang/IllegalArgumentException",
+        "<init>",
+        "(Ljava/lang/String;)V",
+        false
+    )
+    mv.visitInsn(Opcodes.ATHROW)
+    stackMap.generateFrame(mv)
+
+    mv.visitLabel(end)
+    if (instruction.type != Type.Nothing) {
+        stackMap.push(instruction.type)
+    }
+}
+
+
 fun compilePattern(
     mv: MethodVisitor,
     pattern: TypedIRPattern,
@@ -889,17 +944,14 @@ fun compilePattern(
 ) {
     when(pattern) {
         is TypedIRPattern.Binding -> {
-            //bind the binding (move it into its variable slot)
-            compileInstruction(mv, TypedInstruction.StoreVar(pattern.id, pattern.origin), stackMap)
+            //gracefully ignore since there is nothing that actually needs to be done
         }
         is TypedIRPattern.Condition -> {
-
             compilePattern(mv, pattern.parent, stackMap, patternFail)
             compileInstruction(mv, pattern.condition, stackMap)
             //if condition equal to is 0 (false) go to the fail stage
             val skip = Label()
             mv.visitJumpInsn(Opcodes.IFNE, skip)
-            //mv.visitInsn(Opcodes.POP)
             mv.visitJumpInsn(Opcodes.GOTO, patternFail)
             mv.visitLabel(skip)
             stackMap.pop()
@@ -916,60 +968,35 @@ fun compilePatternDestructuring(
     stackMap: StackMap,
     patternFail: Label
 ) {
-    if (pattern.isLast) {
-        when(pattern.castStoreId) {
-            null -> {
-                mv.visitInsn(Opcodes.POP)
-                stackMap.pop()
-            }
-            else -> {
-                mv.visitTypeInsn(Opcodes.CHECKCAST, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
-                compileInstruction(mv, TypedInstruction.StoreVar(pattern.castStoreId, TypedInstruction.Noop(pattern.type)), stackMap)
-            }
-        }
-        return
-    }
 
     val success = Label()
-    compileInstruction(mv, pattern.origin, stackMap)
-    if (pattern.patterns.isNotEmpty()) {
-        mv.visitInsn(Opcodes.DUP)
-        stackMap.dup()
-    }
-
+    compileInstruction(mv, pattern.loadItem, stackMap)
+    mv.visitInsn(Opcodes.DUP)
+    stackMap.dup()
     mv.visitTypeInsn(Opcodes.INSTANCEOF, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
     stackMap.pop()
+
     stackMap.push(Type.BoolUnknown)
     mv.visitJumpInsn(Opcodes.IFNE, success)
     stackMap.pop()
-
     //IF FAIL
-    if (pattern.patterns.isNotEmpty()) {
-        mv.visitInsn(Opcodes.POP)
-    }
-
+    mv.visitInsn(Opcodes.POP)
+    stackMap.pop()
     //instance of check failed so go to the fail stage
     mv.visitJumpInsn(Opcodes.GOTO, patternFail)
     //END IF FAIL
-
+    stackMap.push(pattern.loadItem.type)
     //IF SUCCESS
     mv.visitLabel(success)
     stackMap.generateFrame(mv)
     mv.visitTypeInsn(Opcodes.CHECKCAST, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
-
-    if (pattern.castStoreId != null) {
-        compileInstruction(mv, TypedInstruction.StoreVar(pattern.castStoreId, TypedInstruction.Dup(pattern.type)), stackMap)
-    }
+    stackMap.pop()
+    stackMap.push(pattern.type)
+    compileInstruction(mv, TypedInstruction.StoreVar(pattern.castStoreId, TypedInstruction.Noop(pattern.type)), stackMap)
 
     //compile all the desturcturing patterns
     pattern.patterns.forEach {
-        mv.visitInsn(Opcodes.DUP)
-        stackMap.dup()
         compilePattern(mv, it, stackMap, patternFail)
-    }
-    if (pattern.patterns.isNotEmpty()) {
-        mv.visitInsn(Opcodes.POP)
-        stackMap.pop()
     }
 }
 
@@ -1276,6 +1303,7 @@ fun Type.asUnboxed() = when (this) {
     else -> error("Cannot unbox $this")
 }
 
+fun Type.asUnboxedOrIgnore() = runCatching { asUnboxed() }.getOrElse { this }
 
 fun storeInstruction(type: Type) = when(type) {
     is Type.BoolT, Type.IntT -> Opcodes.ISTORE

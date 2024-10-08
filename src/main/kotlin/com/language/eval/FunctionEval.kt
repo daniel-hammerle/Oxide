@@ -96,3 +96,4 @@ suspend fun evalFunction(
     if (result !is TypedInstruction.Const) error("Failed")
     return result
 }
+

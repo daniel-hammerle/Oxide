@@ -77,8 +77,6 @@ class VariableManagerImpl(
         return ScopeAdjustment(changeInstructions)
     }
 
-
-    //@everyone who needs to debug variable merging: im sorry
     override fun merge(branches: List<VariableManager>): List<ScopeAdjustment> {
         val commonVariables = variables.mapNotNull { (name, provider) ->
             val branchesProviders = branches.mapNotNull { it.variables[name]?.let { a -> a to it }  }
@@ -114,7 +112,7 @@ class VariableManagerImpl(
                 .map { (provider, variables) -> provider.type(variables.parent) }
                 .reduce { acc, type -> acc.join(type) }
             for ((index, provider) in providers.withIndex()) {
-                val id = provider.first.physicalName?.let { provider.second.parent.getId(it) }
+                val id = provider.first.physicalName(provider.second.parent)?.let { provider.second.parent.getId(it) }
 
                 //gracefully ignore type conversions on values that are not allocated
                 //(since they don't have a type anyway)
@@ -142,7 +140,7 @@ class VariableManagerImpl(
             //if the variable was allocated before branching, then the names would be the same.
             //if both haven't been allocated, they would also be the same.
             //and if one of the branches is allocated, then there is a change to be made.
-            providers.any { it.first.physicalName == nativeProv.physicalName }
+            providers.any { (prov, manager) -> prov.physicalName(manager.parent) == nativeProv.physicalName(parent) }
         }
 
         for ((name, nativeProv, providers) in requiredAllocationChanges) {
@@ -156,13 +154,13 @@ class VariableManagerImpl(
         providers: List<Pair<VariableProvider, VariableManager>>,
         changeInstructions: List<MutableList<ScopeAdjustInstruction>>
     ) {
-        val ids = providers.map { (provider, variables) -> provider.physicalName?.let { variables.parent.getId(it) }}
+        val ids = providers.map { (provider, variables) -> provider.physicalName(variables.parent)?.let { variables.parent.getId(it) }}
 
         val commonType = providers
             .map { (provider, variables) -> provider.type(variables.parent) }
             .reduce { acc, type -> acc.join(type) }
 
-        val nativeId = nativeProv.physicalName?.let { parent.getId(it) }
+        val nativeId = nativeProv.physicalName(parent)?.let { parent.getId(it) }
 
         //true when we don't have an allocation on this scope but on all other scopes the same (or none)
         if (nativeId == null) {
@@ -197,7 +195,7 @@ class VariableManagerImpl(
         } else {
             //the native scope seems to already have an allocation for that,
             // and it seems to have been dropped in a scope
-            val n = nativeProv.physicalName!!
+            val n = nativeProv.physicalName(parent)!!
             val newId = parent.change(n, commonType)
             variables[name] = VariableBinding(n)
             generateAdjustOperation(ids, newId, commonType, providers, changeInstructions)
@@ -252,6 +250,10 @@ class VariableManagerImpl(
         variables[name] = provider
     }
 
+    override fun reference(newName: String, oldName: String) {
+        val value = variables[oldName] ?: error("No variable with `$oldName` exists")
+        variables[newName] = value
+    }
 
 
 }

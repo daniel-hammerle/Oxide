@@ -250,6 +250,18 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
 
         is Expression.DefaultArray -> TODO()
         is Expression.CollectorArray -> TODO()
+        is Expression.ArrayAccess -> TODO()
+
+        is Range.FromLower -> TODO()
+        is Range.Normal -> TODO()
+        is Range.UntilUpper -> TODO()
+
+        is Expression.BooleanOperation -> Instruction.LogicalOperation(
+            compileExpression(expression.first, module, uctl),
+            compileExpression(expression.second, module, uctl = false), //unconditional top level is false because of possible short-circuiting
+            expression.op
+        )
+        is Expression.Not -> Instruction.Not(compileExpression(expression.expr, module, uctl))
     }
 }
 

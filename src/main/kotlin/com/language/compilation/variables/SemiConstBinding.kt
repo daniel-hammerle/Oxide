@@ -10,9 +10,7 @@ class SemiConstBinding(
     @Volatile
     private var name: String? = null
 
-
-    override val physicalName: String?
-        get() = synchronized(this) { name }
+    override fun physicalName(parent: VariableMapping): String? = synchronized(this) { name }
 
     override fun clone(): VariableProvider {
         return SemiConstBinding(value).also { it.name = this.name }

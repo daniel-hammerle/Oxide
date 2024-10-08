@@ -11,6 +11,7 @@ import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
+@Deprecated("", replaceWith = ReplaceWith("IRModuleLookup", "com.language.lookup.IRModuleLookup"))
 class BasicIRModuleLookup(
     val nativeModules: Set<IRModule>,
     private val externalJars: ClassLoader,
@@ -170,6 +171,7 @@ class BasicIRModuleLookup(
         instance: TypedInstruction,
         funcName: String,
         args: List<TypedInstruction>,
+        untypedArgs: List<Instruction>,
         generics: Map<String, Type>
     ): TypedInstruction? {
         error("Basic ir lookup does not support inlining")
@@ -181,6 +183,7 @@ class BasicIRModuleLookup(
         modName: SignatureString,
         funcName: String,
         args: List<TypedInstruction>,
+        untypedArgs: List<Instruction>,
         generics: Map<String, Type>
     ): TypedInstruction? {
         error("Basic ir lookup does not support inlining")

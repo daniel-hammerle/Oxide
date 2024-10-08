@@ -34,8 +34,8 @@ suspend fun compileCheckedFunction(
     compileInstruction(mv, body, stackMap)
 
     when(body.type) {
-        Type.Nothing -> assert(stackMap.stackSize == 0)
-        else -> assert(stackMap.stackSize == 1)
+        Type.Nothing, Type.Never-> assert(stackMap.stackSize == 0) { "Expected 0 but was ${stackMap.stackSize} ${body.type} $name" }
+        else -> assert(stackMap.stackSize == 1) { "Expected 1 but was ${stackMap.stackSize} ${body.type} $name" }
     }
 
     //return

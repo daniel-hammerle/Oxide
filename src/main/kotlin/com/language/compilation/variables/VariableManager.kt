@@ -9,6 +9,13 @@ import com.language.compilation.TypedInstruction
 interface VariableManager : ReadOnlyVariableManager {
     fun putVar(name: String, provider: VariableProvider)
 
+    fun getExternal(provider: VariableProvider): TypedInstruction {
+        return provider.get(parent)
+    }
+
+    fun reference(newName: String, oldName: String)
+
+
     override fun clone(): VariableManager
 }
 

@@ -4,7 +4,7 @@ import com.language.compilation.*
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 
-fun boxOrIgnore(mv: MethodVisitor, type: Type) {
+fun boxOrIgnore(mv: MethodVisitor, type: Type): Boolean {
     when(type) {
         Type.IntT -> mv.visitMethodInsn(
             Opcodes.INVOKESTATIC,
@@ -27,8 +27,9 @@ fun boxOrIgnore(mv: MethodVisitor, type: Type) {
             "(Z)Ljava/lang/Boolean;",
             false
         )
-        else -> {} //gracefully ignore
+        else -> return true //gracefully ignore
     }
+    return false
 }
 
 
