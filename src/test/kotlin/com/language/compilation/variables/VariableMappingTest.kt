@@ -1,7 +1,10 @@
 package com.language.compilation.variables
 
 import UnsetListType
+import com.language.compilation.ArrayType
+import com.language.compilation.ScopeAdjustInstruction
 import com.language.compilation.Type
+import com.language.compilation.TypedInstruction
 import listType
 import union
 import kotlin.test.Test
@@ -33,10 +36,23 @@ class VariableMappingTest {
     }
 
     @Test
+    fun testLoopMerging() {
+        val vars = variables()
+        vars.changeVar("items", TypedInstruction.LoadConstArray(listOf(TypedInstruction.LoadConstInt(234)), ArrayType.Object, Type.BroadType.Known(Type.Int)))
+        val scope = vars.clone()
+        scope.change("item", Type.Int)
+        val scopePostFirst = scope.clone()
+        val loopAdjustments = vars.loopMerge(scopePostFirst, vars)
+        assertEquals(emptyList(), loopAdjustments.instructions)
+        val adjust = vars.merge(listOf(scope))
+        assertEquals(emptyList(), adjust[0].instructions)
+
+    }
+
+    @Test
     fun testGenericsMergingPhysical() {
         val manager = variables()
         manager.change("x", UnsetListType)
-        manager.putVar("x", VariableBinding("x"))
         assert(manager.hasVar("x"))
         assertEquals(UnsetListType, manager.getType("x"))
         val scope = manager.clone()
@@ -91,7 +107,6 @@ class VariableMappingTest {
         val manager = variables()
         //Put an unset list in the parent scope (list[])
         manager.change("x", UnsetListType)
-        manager.putVar("x", VariableBinding("x"))
         assert(manager.hasVar("x"))
         assertEquals(UnsetListType, manager.getType("x"))
 
@@ -115,4 +130,4 @@ class VariableMappingTest {
     }
 }
 
-fun variables() = VariableManagerImpl(VariableMappingImpl.fromVariables(emptyMap()))
+fun variables() = VariableManagerImpl.fromVariables(mapOf())

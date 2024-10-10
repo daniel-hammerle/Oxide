@@ -1,51 +1,15 @@
-use std::{io, errors, arrays, lists}
-
-use std::{errors, io, Box, arrays, lists, random}
-
-
-func hello(a, b) {
-    a > b
-}
-
-func doSomething(n1, n2) {
-    modifier = if n2 < 0 {
-        -1*n2 * 2
-    } else {
-        n2
-    }
-
-    n1 * { modifier + 1 }
-}
+use std::io
+use java::util::Random
+use std::lists
 
 func main {
-    io.println("Hello World")
-    x = magic()
-    match x {
-        "f" -> io.println(2)
-        _ -> io.println("Help!")
-    }
-}
-
-
-func magic {
-    if random.bool() {
-        "Hello"
-    } else {
-        "Hello"
-    }
-}
-
-func matchingIssue {
-
     instance = rand()
+
     match instance {
-        A(_, age >= 18) -> io.println(age)
-        A("Tim", _) -> io.println("Tüüüüüüüüüm")
-        A(name, _) -> io.println(name)
+        A(name, age) if age >= 18 -> io.println(name)
         B(name, _, _) -> io.println(name)
-        "Hello World" -> io.println("Goodbye world")
     }
-    io.println("end")
+
 }
 
 struct A {
@@ -59,119 +23,11 @@ struct B {
     password str
 }
 
-use java::util::Random
 func rand {
-    if random.bool() {
-        A("Tim", 18)
-    } else if random.bool() {
-        B("Tim", "tim@mail.co", "1234556")
+    random = keep { Random() }
+    if random.nextBoolean() {
+        A("Tim", 17)
     } else {
-        "Hello World"
-    }
-}
-
-
-func b(n, m) {
-    n * m
-}
-
-inline func a(n) {
-    if n == 3 {
-        io.println(n)
-    }
-    "3.2".tryF64().unwrap("Failed to parse double")
-    io.println("Hello")
-}
-
-impl<T> T {
-    func log(self) {
-        io.println(self)
-        self
-    }
-}
-
-func f {
-    x = 56 - { 15641 * 165 }
-    x = 4 * 25 + x
-    io.println(x)
-    x = 3 - x
-    io.println(x)
-    x = 2 * x
-    io.println(x)
-    if x + 1 == { x - 2 } + 3  {
-        io.println(x  + 1)
-    }
-    
-    y = add(3, 2)
-    x = io.input(">")
-    io.println(x + y)
-
-}
-
-func add(a, b) {
-    a + b
-}
-
-func doSth(someList) {
-    result = [
-        for item in someList item + 1,
-        "Hello World",
-        true,
-        false
-    ]
-    io.println(result)
-}
-
-func olderMain {
-x = "Hello World"
-    myClosure = { |a|
-        x + a
-    }
-    io.println(myClosure("!"))
-    io.println(myClosure(1))
-
-    i = io.input("Enter a boolean >")
-    bool = tryBool(i).unwrap("Failed")
-    io.println(bool)
-}
-
-
-
-
-func run(closure, arg) {
-    closure(arg)
-}
-
-struct MyComplexType {
-    someField str,
-    amount int
-}
-
-impl MyComplexType {
-    func new(someField, amount) {
-        MyComplexType(someField, amount)
-    }
-
-    func deepClone(self) {
-        MyComplexType.new(self.someField, self.amount)
-    }
-}
-
-
-
-error struct ConversionError {
-    message str
-}
-
-struct Person {
-    name str,
-    age int
-}
-
-func tryBool(input) {
-    match input {
-        "true" -> true
-        "false" -> false
-        _ -> ConversionError("failed to convert!")
+        B("Tom", "tim@mail.co", "1234556")
     }
 }

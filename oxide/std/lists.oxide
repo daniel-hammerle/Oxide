@@ -1,6 +1,6 @@
 use java::util::{List, ArrayList}
 impl<T> ArrayList<T> {
-    func map(self, closure) {
+    inline func map(self, closure) {
         list[for item in self closure(item)]
     }
 

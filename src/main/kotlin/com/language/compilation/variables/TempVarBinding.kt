@@ -4,33 +4,24 @@ import com.language.compilation.Type
 import com.language.compilation.TypedInstruction
 
 class TempVarBinding(private val variable: TempVariable): VariableProvider {
-    private lateinit var name: String
 
     override fun get(parent: VariableMapping): TypedInstruction {
-        if (!this::name.isInitialized) {
-            name= parent.getName(variable.id)
-        }
-         return parent.loadVar(name)
+         return parent.loadVar(variable.id)
     }
 
     override fun put(value: TypedInstruction, parent: VariableMapping): TypedInstruction {
-        if (!this::name.isInitialized) {
-            name= parent.getName(variable.id)
+        val (id, ins) = parent.changeVar(variable.id, value)
+        if (id != null) {
+            error("Invalid type temp variable cannot change type sizes")
         }
-        return parent.changeVar(name, value)
+        return ins
     }
 
-    override fun physicalName(parent: VariableMapping): String {
-        return parent.getName(variable.id)
-    }
 
     override fun clone() = TempVarBinding(variable)
 
     override fun genericChangeRequest(parent: VariableMapping, genericName: String, type: Type) {
-        if (!this::name.isInitialized) {
-            name= parent.getName(variable.id)
-        }
-        parent.genericChangeRequest(name, genericName, type)
+        parent.genericChangeRequest(variable.id, genericName, type)
     }
 
 }

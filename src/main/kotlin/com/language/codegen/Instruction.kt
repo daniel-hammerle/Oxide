@@ -59,7 +59,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             val afterElseBody = Label()
             //if the condition is false goto else
             mv.visitJumpInsn(Opcodes.IFEQ, betweenBodyAndElseBody)
-            //the ifeq removes the bool from the stakc
+            //the ifeq removes the bool from the stack
             stackMap.pop()
             //stackMap.generateFrame(mv)
             //body
@@ -83,7 +83,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
 
             if (instruction.body.type != Type.Never) {
                 //skip else body when body was executed
-                //if type is never we dont need that
+                //if a type is never we don't need that
                 mv.visitJumpInsn(Opcodes.GOTO, afterElseBody)
             }
 
@@ -93,18 +93,17 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             //else body
             compileInstruction(mv, instruction.elseBody ?: TypedInstruction.Null, stackMap)
             if (instruction.type != instruction.elseBody?.type) {
-                if (boxOrIgnore(mv, instruction.elseBody?.type ?: Type.Null)) {
-                    stackMap.generateFrame(mv)
-                }
+                 boxOrIgnore(mv, instruction.elseBody?.type ?: Type.Null)
             }
             compileScopeAdjustment(mv, instruction.elseBodyAdjust, stackMap)
             //label after else body
             mv.visitLabel(afterElseBody)
-            stackMap.generateFrame(mv)
 
             stackMap.pop()
             stackMap.push(instruction.type)
 
+
+            stackMap.generateFrame(mv)
         }
         is TypedInstruction.LoadConstBoolean -> {
             when(instruction.value) {
@@ -211,9 +210,9 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                     return
                 }
                 compileInstruction(mv, instruction.first, stackMap)
-                unboxOrIgnore(mv, instruction.first.type)
+                unboxOrIgnore(mv, instruction.first.type, instruction.first.type.asUnboxed())
                 compileInstruction(mv, instruction.second, stackMap)
-                unboxOrIgnore(mv, instruction.second.type)
+                unboxOrIgnore(mv, instruction.second.type, instruction.first.type.asUnboxed())
                 mv.visitInsn(when (instruction.op) {
                     MathOp.Add -> Opcodes.IADD
                     MathOp.Sub -> Opcodes.ISUB
@@ -238,6 +237,20 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             //load args
             mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
             instruction.candidate.generateCall(mv, stackMap)
+
+            if (instruction.candidate.oxideReturnType == Type.Never) {
+                mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException")
+                mv.visitInsn(Opcodes.DUP)
+                mv.visitLdcInsn("@Contract(fail) broken")
+                mv.visitMethodInsn(
+                    Opcodes.INVOKESPECIAL,
+                    "java/lang/IllegalStateException",
+                    "<init>",
+                    "(Ljava/lang/String;)V",
+                    false
+                )
+                mv.visitInsn(Opcodes.ATHROW)
+            }
             stackMap.pop(instruction.candidate.oxideArgs.size)
             stackMap.push(instruction.candidate.oxideReturnType)
         }
@@ -852,6 +865,7 @@ inline fun compileForLoop(
     }
     mv.visitJumpInsn(Opcodes.GOTO, start)
     mv.visitLabel(end)
+
     stackMap.popVarFrame()
 
     //pop the previously pushed var frame so that all the for-loop-stuff is gone
@@ -860,6 +874,7 @@ inline fun compileForLoop(
     //cleanup (pop the iterator from the stack)
     mv.visitInsn(Opcodes.POP)
     stackMap.pop()
+    compileScopeAdjustment(mv, instruction.postLoopAdjustments, stackMap)
 
 
 
@@ -882,23 +897,16 @@ fun compileMatch(
         val patternFail = Label()
         compilePattern(mv, pattern, stackMap, patternFail)
         compileInstruction(mv, body, stackMap)
-        if (body.type == Type.Never) {
-            mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException")
-            mv.visitInsn(Opcodes.DUP)
-            mv.visitLdcInsn("@Contract(fail) broken")
-            mv.visitMethodInsn(
-                Opcodes.INVOKESPECIAL,
-                "java/lang/IllegalStateException",
-                "<init>",
-                "(Ljava/lang/String;)V",
-                false
-            )
-            mv.visitInsn(Opcodes.ATHROW)
-        }
+        /*
+
+
+         */
         if (instruction.type != body.type) {
             boxOrIgnore(mv, body.type)
-            unboxOrIgnore(mv, body.type)
+            unboxOrIgnore(mv, body.type, instruction.type)
         }
+        compileScopeAdjustment(mv, scopeAdjustment, stackMap)
+
         if (body.type != Type.Never)
             mv.visitJumpInsn(Opcodes.GOTO, end)
 
@@ -907,6 +915,7 @@ fun compileMatch(
             //on the stackmap however, we keep it in the actual bytecode
             stackMap.pop()
         }
+
 
         mv.visitLabel(patternFail)
         stackMap.popVarFrame()
@@ -1015,6 +1024,20 @@ fun compileDynamicCall(
     }
     instruction.candidate.generateCall(mv, stackMap)
 
+    if (instruction.candidate.oxideReturnType == Type.Never) {
+        mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException")
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitLdcInsn("@Contract(fail) broken")
+        mv.visitMethodInsn(
+            Opcodes.INVOKESPECIAL,
+            "java/lang/IllegalStateException",
+            "<init>",
+            "(Ljava/lang/String;)V",
+            false
+        )
+        mv.visitInsn(Opcodes.ATHROW)
+    }
+
     stackMap.pop(instruction.candidate.oxideArgs.size) //args + instance
     stackMap.push(instruction.candidate.oxideReturnType)
 }
@@ -1039,7 +1062,7 @@ fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: List<TypedInstr
                 continue
             }
             boxOrIgnore(this, ins.type)
-            unboxOrIgnore(this, ins.type)
+            unboxOrIgnore(this, ins.type, type)
         }
     }
 }

@@ -4,7 +4,7 @@ import com.language.compilation.IRImpl
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
-suspend fun compileImpl(impl: IRImpl): ByteArray {
+suspend fun compileImpl(impl: IRImpl): ByteArray? {
     val cw = ClassWriter(0)
 
     cw.visit(
@@ -16,17 +16,23 @@ suspend fun compileImpl(impl: IRImpl): ByteArray {
         null
     )
 
+    var isUsed = false
+
     impl.associatedFunctions.forEach { (name, func) ->
         func.checkedVariants().map { (argTypes, body) ->
+            isUsed = true
             compileCheckedFunction(cw, name, body.first,body.second, argTypes)
         }
     }
 
     impl.methods.forEach { (name, func) ->
         func.checkedVariants().map { (argTypes, body) ->
+            isUsed = true
             compileCheckedFunction(cw, name, body.first,body.second, argTypes)
         }
     }
+
+    if (!isUsed) return null
 
     return cw.toByteArray()
 }

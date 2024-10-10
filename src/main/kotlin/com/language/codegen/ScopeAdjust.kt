@@ -36,7 +36,7 @@ fun compileScopeAdjustInstruction(
         }
         is ScopeAdjustInstruction.Unbox -> {
             mv.visitVarInsn(loadInstruction(ins.type), ins.src)
-            unboxOrIgnore(mv, ins.type)
+            unboxOrIgnore(mv, ins.type, ins.type.asUnboxed())
             mv.visitVarInsn(storeInstruction(ins.type), ins.src)
         }
     }

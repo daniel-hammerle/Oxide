@@ -82,7 +82,7 @@ class StackMapImpl(
     }
 
     override fun push(type: Type) {
-        if (type == Type.Nothing) return
+        if (type == Type.Nothing || type == Type.Never) return
         if (currentStackPtr == stack.lastIndex) {
             error("Stackoverflow (Stack si1ze too small) (Internal Error) ${stack.contentDeepToString()}")
         }
@@ -143,13 +143,16 @@ class StackMapImpl(
 
 
          */
-         mv.visitFrame(
-            Opcodes.F_FULL,
-            variables.variables.size,
-            variables.variables.map { it?.toFrameSignature() ?: Opcodes.TOP }.toTypedArray(),
-            currentStackPtr,
-            stack.map { it?.toFrameSignature() }.toTypedArray()
-        )
+        try {
+            mv.visitFrame(
+                Opcodes.F_FULL,
+                variables.variables.size,
+                variables.variables.map { it?.toFrameSignature() ?: Opcodes.TOP }.toTypedArray(),
+                currentStackPtr,
+                stack.map { it?.toFrameSignature() }.toTypedArray()
+            )
+        }catch (_: Exception) {}
+
     }
 
     override fun generateFrame(mv: MethodVisitor, varFrame: VarFrame) {

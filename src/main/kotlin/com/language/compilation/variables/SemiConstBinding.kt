@@ -8,18 +8,17 @@ class SemiConstBinding(
     var value: TypedInstruction.Const
 ) : VariableProvider, AllocationRecord {
     @Volatile
-    private var name: String? = null
+    private var id: Int? = null
 
-    override fun physicalName(parent: VariableMapping): String? = synchronized(this) { name }
 
     override fun clone(): VariableProvider {
-        return SemiConstBinding(value).also { it.name = this.name }
+        return SemiConstBinding(value).also { it.value = this.value }
     }
 
     override fun genericChangeRequest(parent: VariableMapping, genericName: String, type: Type) {
         synchronized(this) {
-            when(val n = name) {
-                is String -> parent.genericChangeRequest(n, genericName, type)
+            when(val n = id) {
+                is Int -> parent.genericChangeRequest(n, genericName, type)
                 else -> error("Cannot change generic type of const")
             }
         }
@@ -27,38 +26,55 @@ class SemiConstBinding(
 
     override fun get(parent: VariableMapping): TypedInstruction {
         return synchronized(this) {
-            when(name) {
-                is String -> parent.loadVar(name!!)
+            when(val id = id) {
+                is Int -> parent.loadVar(id)
                 else -> value
             }
         }
     }
 
-    private fun isStillConst() = synchronized(this) { name == null }
 
     override fun put(value: TypedInstruction, parent: VariableMapping): TypedInstruction {
-        if (isStillConst() && value is TypedInstruction.Const) {
-            synchronized(this) { this.value = value }
+        if (allocated && value is TypedInstruction.Const) {
+            synchronized(this) {
+                //if we had a physical allocation, we can now remove it since we now have a constant value
+                if (id != null) {
+                    parent.deleteVar(id!!)
+                    id = null
+                }
+                this.value = value
+            }
             return TypedInstruction.Noop(Type.Nothing)
         }
-        val name = synchronized(this) {
-            when(name) {
-                is String -> name!!
-                else -> "__semiConst__${generateName()}".also { name = it }
+        val ins = synchronized(this) {
+            when(val i = id) {
+                is Int -> {
+                    val (id, ins) = parent.changeVar(i, value)
+                    if (id != null) {
+                        this.id = id
+                    }
+                    ins
+                }
+                else -> {
+                    this.id = parent.new(value.type)
+                    return TypedInstruction.StoreVar(id!!, value)
+                }
             }
         }
-        return parent.changeVar(name, value)
+        return ins
     }
 
     override fun delete(parent: VariableMapping) {
         synchronized(this) {
-            when(val n = name) {
-                is String -> parent.deleteVar(n)
+            when(val id = id) {
+                is Int -> parent.deleteVar(id)
                 else -> {}
             }
         }
     }
 
+    override val physicalId: Int? = synchronized(this) { id }
+
     override val allocated: Boolean
-        get() = name != null
+        get() = id != null
 }

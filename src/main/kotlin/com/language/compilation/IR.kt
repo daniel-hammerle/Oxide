@@ -300,7 +300,10 @@ sealed class Instruction {
                 for ((value, typedArg) in parent.args.zip(this.args).zip(args)) {
                     val (name, arg) = value
                     when (arg) {
-                        is LoadVar -> scope.putVar(name, VariableBinding(arg.name))
+                        is LoadVar -> {
+                            val provider = variables.variables[arg.name] ?: error("Underlying arg doesnt exist")
+                            scope.putVar(name, provider) //use the same provider with 2 names
+                        }
                         else -> loadInstructions.add(typedArg)
                     }
                 }
@@ -590,11 +593,11 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataHandle
         ) : Triple<TypedIRPattern, TypedInstruction, VariableManager> {
-            if (this@Match.parent is LoadVar && typedPattern is TypedIRPattern.Destructuring) {
-                bodyScope.change(this@Match.parent.name, typedPattern.type)
+            if (typedPattern is TypedIRPattern.Destructuring) {
+                //populate the scope with bindings
+                typedPattern.bindings.map { (name, tp) -> bodyScope.putVar(name, FieldBinding(TypedInstruction.LoadVar(typedPattern.castStoreId, typedPattern.type), tp, name)) }
             }
-            //populate the scope with bindings
-            typedPattern.bindings.map { bodyScope.change(it.first, it.second) }
+
             val typedBody = body.inferTypes(bodyScope, lookup, handle)
 
             return Triple(typedPattern, typedBody, bodyScope)
@@ -773,7 +776,6 @@ data class ForLoop(val parent: Instruction, val name: String, val indexName: Str
     ): TypedInstruction.ForLoop {
         val bodyScope = variables.clone()
         val itemId = bodyScope.change(name, nextCall.oxideReturnType)
-        bodyScope.putVar(name, VariableBinding(name))
         val indexId = indexName?.let { bodyScope.change(indexName, Type.IntT) }
 
         val bodyScopePre = bodyScope.clone()
@@ -781,8 +783,8 @@ data class ForLoop(val parent: Instruction, val name: String, val indexName: Str
         body.inferTypes(bodyScope, lookup, handle)
         val adjustments = bodyScopePre.loopMerge(bodyScope, variables)
         val body = body.inferTypes(bodyScopePre, lookup, handle)
-        variables.merge(listOf(bodyScopePre))
-        return TypedInstruction.ForLoop(parent, itemId, indexId, hasNextCall, nextCall, body, adjustments, bodyScope.toVarFrame())
+        val postLoopAdjustments = variables.merge(listOf(bodyScopePre))[0]
+        return TypedInstruction.ForLoop(parent, itemId, indexId, hasNextCall, nextCall, body, adjustments, postLoopAdjustments, bodyScope.toVarFrame())
     }
 
 
@@ -1155,7 +1157,7 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
         val actualArgInstruction = mutableListOf<TypedInstruction>()
         if (instance != null) {
             if (instance is TypedInstruction.LoadVar) {
-                scope.putFromId(instance.id, "self")
+                scope.putVar("self", VariableBinding(instance.id))
             } else {
                 actualArgInstruction += scope.changeVar("self", instance)
             }
@@ -1171,15 +1173,16 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
                 return@forEach
             }
             when (typed) {
-                is TypedInstruction.LoadVar -> scope.putFromId(typed.id, name)
+                is TypedInstruction.LoadVar -> {
+                    scope.putVar(name, VariableBinding(typed.id))
+                }
                 is TypedInstruction.Lambda -> {
                     scope.putVar(name, ConstBinding(typed))
                     inlinableLambdas.add(typed)
                 }
                 is TypedInstruction.Const -> scope.putVar(name, SemiConstBinding(typed))
                 else ->  {
-                    actualArgInstruction += scope.parent.changeVar(name, typed)
-                    scope.putVar(name, VariableBinding(name))
+                    actualArgInstruction += scope.changeVar(name, typed)
                 }
             }
         }
@@ -1199,11 +1202,6 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
         return typedBody
     }
 
-}
-
-fun VariableManager.putFromId(id: Int, name: String) {
-    val oldName = mapping().getName(id)
-    putVar(name, VariableBinding(realName(oldName)))
 }
 
 data class BasicIRFunction(override val args: List<String>, override val body: Instruction, override val imports: Set<SignatureString>, override val module: LambdaAppender): IRFunction {
@@ -1227,15 +1225,14 @@ data class BasicIRFunction(override val args: List<String>, override val body: I
             error("Expected ${this.args.size} but got ${argTypes.size} arguments when calling $args (TypeChecking)")
         }
         val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList())
-        val variables = VariableMappingImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
-        val varMan = VariableManagerImpl(variables)
-        val result = body.inferTypes(varMan, lookup.newModFrame(imports), metaDataHandle)
+        val variables = VariableManagerImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
+        val result = body.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle)
 
         val returnType =  if (metaDataHandle.hasReturnType()) result.type.join(metaDataHandle.returnType) else result.type
         metaDataHandle.issueReturnTypeAppend(returnType)
         mutex.withLock {
             keepBlocks.putAll(metaDataHandle.keepBlocks)
-            checkedVariants[argTypes] = (result) to metaDataHandle.apply { varCount = variables.varCount() }.toMetaData()
+            checkedVariants[argTypes] = (result) to metaDataHandle.apply { varCount = variables.parent.varCount() }.toMetaData()
         }
         return returnType
     }
@@ -1358,12 +1355,11 @@ data class LambdaContainer(
             error("Expected ${this.argNames.size} but got ${argTypes.size} arguments when calling $argNames (TypeChecking)")
         }
         val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList())
-        val variables = VariableMappingImpl.fromVariables(argTypes.zip(argNames).associate { (tp, name) -> name to tp }, reserveThis = true)
-        val varMan = VariableManagerImpl(variables)
+        val variables = VariableManagerImpl.fromVariables(argTypes.zip(argNames).associate { (tp, name) -> name to tp }, reserveThis = true)
         captures.forEach { (name, type) ->
-            varMan.putVar(name, FieldBinding(TypedInstruction.LoadVar(0, Type.BasicJvmType(signature)), type, name))
+            variables.putVar(name, FieldBinding(TypedInstruction.LoadVar(0, Type.BasicJvmType(signature)), type, name))
         }
-        val result = closureBody.inferTypes(varMan, lookup.newModFrame(imports), metaDataHandle)
+        val result = closureBody.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle)
         val requireImplicitNull = metaDataHandle.hasReturnType() && result.type == Type.Nothing
 
         val returnType = if (requireImplicitNull) Type.Null else result.type
@@ -1375,7 +1371,7 @@ data class LambdaContainer(
                     else
                         result
                     ) to metaDataHandle.apply {
-                        varCount = variables.varCount()
+                        varCount = variables.parent.varCount()
                     }.toMetaData()
         }
         return returnType

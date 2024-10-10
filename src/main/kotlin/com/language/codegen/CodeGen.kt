@@ -15,7 +15,8 @@ suspend fun compileProject(modules: Set<IRModule>): Map<SignatureString, ByteArr
             val modPath = module.name
             val (modCode, structCode, implBlocks, lambdas)  = compileModule(module)
             mutex.withLock {
-                entries[modPath] = modCode
+                if (modCode != null)
+                    entries[modPath] = modCode
                 for ((structPath, bytes) in structCode) {
                     entries[modPath + structPath] = bytes
                 }
@@ -34,7 +35,7 @@ suspend fun compileProject(modules: Set<IRModule>): Map<SignatureString, ByteArr
 }
 
 data class CompiledModuleOutput(
-    val modCode: ByteArray,
+    val modCode: ByteArray?,
     val structs: Map<String, ByteArray>,
     val impls: Map<SignatureString, ByteArray>,
     val lambdaClasses: Map<SignatureString, ByteArray>
@@ -61,9 +62,9 @@ data class CompiledModuleOutput(
 }
 
 suspend fun compileModule(module: IRModule): CompiledModuleOutput = coroutineScope {
-    val structs = module.structs.mapValues { (name, struct) ->
+    val structs = module.structs.map { (name, struct) ->
         async {
-            compileStruct(module.name, name, struct)
+            compileStruct(module.name, name, struct)?.let { name to it }
         }
     }
 
@@ -90,6 +91,8 @@ suspend fun compileModule(module: IRModule): CompiledModuleOutput = coroutineSco
         null
     )
 
+    var isUsed = false
+
     module.functions.flatMap { (name, function) ->
         function.keepBlocks.forEach { (name, type) ->
             cw.visitField(
@@ -101,14 +104,16 @@ suspend fun compileModule(module: IRModule): CompiledModuleOutput = coroutineSco
             )
         }
         function.checkedVariants().map { (argTypes, body) ->
+            isUsed =true
             compileCheckedFunction(cw, name, body.first, body.second, argTypes)
         }
     }
 
+
     return@coroutineScope CompiledModuleOutput(
-        cw.toByteArray(),
-        structs.mapValues { it.value.await() },
-        impls.associate { it.first to it.second.await() },
+        if (isUsed) cw.toByteArray() else null,
+        structs.mapNotNull { it.await() }.toMap(),
+        impls.mapNotNull { it.second.await()?.let { a -> it.first to a } }.toMap(),
         lambdas.mapValues { it.value.await() }
     )
 }

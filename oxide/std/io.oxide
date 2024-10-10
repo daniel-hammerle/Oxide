@@ -1,5 +1,4 @@
-use java::lang::System
-use java::util::Scanner
+use java::{lang::System, util::Scanner}
 
 inline func println(value) System.out.println(value)
 

@@ -479,6 +479,7 @@ fun Class<*>.toType(): Type {
 fun Class<*>.canBe(type: Type, strict: Boolean = false, nullable: Boolean = false): Boolean {
     if (!strict && (name == "double" || name == "java.lang.Double") && (type == Type.IntT || type == Type.Int)) return true
     if (name == "java.lang.Object") return true
+    if (name.startsWith("[")) return false
     return when(type) {
         is Type.JvmType -> SignatureString(this.name.replace(".", "::")) == type.signature || name == "java.lang.Object"
         Type.DoubleT -> name == "double"

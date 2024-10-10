@@ -9,69 +9,56 @@ import com.language.compilation.variables.*
 import com.language.lookup.IRLookup
 
 object NoopVariableMapping: VariableMapping {
-    override fun getName(id: Int): String {
-        error("Not supported")
+    override fun new(type: Type): Int {
+        TODO("Not yet implemented")
     }
 
-    override fun change(name: String, type: Type): Int {
-        error("Not supported")
+    override fun getType(id: Int): Type {
+        TODO("Not yet implemented")
     }
 
-    override fun getType(name: String): Type {
-        error("Not supported")
-    }
-
-    override fun hasVar(name: String): Boolean {
-        error("Not supported")
+    override fun hasVar(id: Int): Boolean {
+        TODO("Not yet implemented")
     }
 
     override fun varCount(): Int {
-        error("Not supported")
+        TODO("Not yet implemented")
     }
 
-    override fun getId(name: String): Int {
-        error("Not supported")
-    }
-
-    override fun clone(): VariableMapping = this
-
-    override fun merge1(branches: List<VariableMapping>): List<Map<String, Pair<Type, Type>>> {
-        error("Not supported")
+    override fun clone(): VariableMapping {
+        TODO("Not yet implemented")
     }
 
     override fun toVarFrame(): VarFrame {
-        error("Not supported")
+        TODO("Not yet implemented")
     }
 
-    override fun deleteVar(name: String) {
-        error("Not supported")
-    }
-
-    override fun registerUnchecked(name: String, id: Int) {
-        error("Not supported")
+    override fun deleteVar(id: Int) {
+        TODO("Not yet implemented")
     }
 
     override fun minVarCount(count: Int) {
-        error("Not supported")
+        TODO("Not yet implemented")
     }
 
-    override fun changeVar(name: String, value: TypedInstruction): TypedInstruction {
-        error("Not supported")
+    override fun changeVar(id: Int, value: TypedInstruction): Pair<Int?, TypedInstruction> {
+        TODO("Not yet implemented")
     }
 
-    override fun loadVar(name: String): TypedInstruction {
-        error("Not supported")
+    override fun loadVar(id: Int): TypedInstruction {
+        TODO("Not yet implemented")
     }
 
     override fun getTempVar(type: Type): TempVariable {
-        error("Not supported")
+        TODO("Not yet implemented")
     }
 
-    override fun tryAllocateId(id: Int, name: String, type: Type): Boolean {
-        error("Not supported")
+    override fun tryAllocateId(id: Int, type: Type): Boolean {
+        TODO("Not yet implemented")
     }
 
-    override fun genericChangeRequest(name: String, genericName: String, type: Type) {
+    override fun genericChangeRequest(id: Int, genericName: String, type: Type) {
+        TODO("Not yet implemented")
     }
 
 }

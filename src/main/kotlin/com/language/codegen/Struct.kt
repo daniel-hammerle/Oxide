@@ -6,7 +6,7 @@ import com.language.compilation.Type
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
-fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct): ByteArray {
+fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct): ByteArray? {
     val cw = ClassWriter(0)
     val structJVMName = modName.toJvmNotation() + "/$structName"
     cw.visit(
@@ -17,8 +17,9 @@ fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct
         "java/lang/Object",
         null
     )
+    //return null if the struct is unused, meaning no variant was generated
     if (struct.defaultVariant == null) {
-        return cw.toByteArray()
+        return null
     }
     //create fields
     for ((name, type) in struct.defaultVariant!!) {

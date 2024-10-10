@@ -38,7 +38,6 @@ interface ReadOnlyVariableManager {
 
     val variables: Map<String, VariableProvider>
 
-    fun realName(name: String): String
 
     fun merge(branches: List<VariableManager>): List<ScopeAdjustment>
 
