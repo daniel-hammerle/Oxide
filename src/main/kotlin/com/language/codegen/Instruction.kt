@@ -7,15 +7,50 @@ import com.language.compilation.*
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import java.util.Stack
 
+class CleanUpFrame(val cleanUp: (Boolean) -> Unit) //bool decides whether the escape operation has a value on the stack
 
-fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMap: StackMap) {
+class CleanupStack(private val tasks: MutableList<CleanUpFrame>) {
+    fun useBreak(withValueOnStack: Boolean) {
+        tasks.last().cleanUp(withValueOnStack)
+    }
+
+    fun useReturn(withValueOnStack: Boolean) {
+        tasks.forEach { it.cleanUp(withValueOnStack) }
+    }
+
+    fun push(clean: CleanUpFrame) {
+        tasks.add(clean)
+    }
+
+    fun pop() {
+        tasks.removeLast()
+    }
+}
+
+fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMap: StackMap, clean: CleanupStack) {
     when(instruction) {
-        is TypedInstruction.DynamicCall -> compileDynamicCall(mv, instruction, stackMap)
+        is TypedInstruction.DynamicCall -> compileDynamicCall(mv, instruction, stackMap, clean)
         is TypedInstruction.Noop -> {}
+        is TypedInstruction.Ignore -> {
+            compileInstruction(mv, instruction.other, stackMap, clean)
+            if (instruction.other.type !in listOf(Type.Nothing, Type.Never)) {
+                mv.visitInsn(Opcodes.POP)
+            }
+        }
+        is TypedInstruction.InlineBody -> {
+            compileInstruction(mv, instruction.body, stackMap, CleanupStack(mutableListOf()))
+            if (instruction.body.type != Type.Nothing) {
+                stackMap.pop()
+            }
+            stackMap.push(instruction.type)
+            mv.visitLabel(instruction.endLabel)
+            stackMap.generateFrame(mv)
+        }
         is TypedInstruction.DynamicPropertyAccess -> {
             //load instance onto the stack
-            compileInstruction(mv, instruction.parent, stackMap)
+            compileInstruction(mv, instruction.parent, stackMap, clean)
             when(instruction.parent.type) {
                 is Type.Union -> {
                     mv.dynamicDispatch((instruction.parent.type as Type.Union).entries, elseType = instruction.type, stackMap) { type ->
@@ -41,8 +76,8 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         }
         is TypedInstruction.DynamicPropertyAssignment -> {
             //load instance onto the stack
-            compileInstruction(mv, instruction.parent, stackMap)
-            compileInstruction(mv, instruction.value, stackMap)
+            compileInstruction(mv, instruction.parent, stackMap, clean)
+            compileInstruction(mv, instruction.value, stackMap, clean)
 
             mv.visitFieldInsn(
                 Opcodes.PUTFIELD,
@@ -53,7 +88,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         }
         is TypedInstruction.If -> {
             //eval condition
-            compileInstruction(mv, instruction.cond, stackMap)
+            compileInstruction(mv, instruction.cond, stackMap, clean)
 
             val betweenBodyAndElseBody = Label()
             val afterElseBody = Label()
@@ -63,11 +98,11 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             stackMap.pop()
             //stackMap.generateFrame(mv)
             //body
-            compileInstruction(mv, instruction.body, stackMap)
+            compileInstruction(mv, instruction.body, stackMap, clean)
             if (instruction.type != instruction.body.type) {
                 boxOrIgnore(mv, instruction.body.type)
             }
-            compileScopeAdjustment(mv, instruction.bodyAdjust, stackMap)
+            compileScopeAdjustment(mv, instruction.bodyAdjust, stackMap, clean)
 
             if(instruction.elseBody == null && instruction.body.type == Type.Nothing) {
                 mv.visitLabel(betweenBodyAndElseBody)
@@ -91,11 +126,11 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             //here is the between body and else body label
             mv.visitLabel(betweenBodyAndElseBody)
             //else body
-            compileInstruction(mv, instruction.elseBody ?: TypedInstruction.Null, stackMap)
+            compileInstruction(mv, instruction.elseBody ?: TypedInstruction.Null, stackMap, clean)
             if (instruction.type != instruction.elseBody?.type) {
                  boxOrIgnore(mv, instruction.elseBody?.type ?: Type.Null)
             }
-            compileScopeAdjustment(mv, instruction.elseBodyAdjust, stackMap)
+            compileScopeAdjustment(mv, instruction.elseBodyAdjust, stackMap, clean)
             //label after else body
             mv.visitLabel(afterElseBody)
 
@@ -131,7 +166,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             stackMap.push(instruction.type)
         }
         is TypedInstruction.StoreVar -> {
-            compileInstruction(mv, instruction.value, stackMap)
+            compileInstruction(mv, instruction.value, stackMap, clean)
             val ins = storeInstruction(instruction.value.type)
             mv.visitVarInsn(ins, instruction.id)
             stackMap.changeVar(instruction.id, instruction.value.type)
@@ -143,8 +178,8 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             val firstType = instruction.first.type
 
             if (instruction.op == MathOp.Add && instruction.first.type == Type.String) {
-                compileInstruction(mv, instruction.first, stackMap)
-                compileInstruction(mv, instruction.second, stackMap)
+                compileInstruction(mv, instruction.first, stackMap, clean)
+                compileInstruction(mv, instruction.second, stackMap, clean)
                 if (secondType != Type.String) {
                     val tp = when(secondType) {
                         Type.IntT -> "I"
@@ -175,18 +210,18 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             if (firstType.isDouble() || secondType.isDouble()) {
                 when {
                     firstType.isDouble() && secondType.isDouble() -> {
-                        compileInstruction(mv, instruction.first, stackMap)
-                        compileInstruction(mv, instruction.second, stackMap)
+                        compileInstruction(mv, instruction.first, stackMap, clean)
+                        compileInstruction(mv, instruction.second, stackMap, clean)
                     }
                     firstType.isDouble() -> {
-                        compileInstruction(mv, instruction.first, stackMap)
-                        compileInstruction(mv, instruction.second, stackMap)
+                        compileInstruction(mv, instruction.first, stackMap, clean)
+                        compileInstruction(mv, instruction.second, stackMap, clean)
                         mv.visitInsn(Opcodes.I2D)
                     }
                     secondType.isDouble() -> {
-                        compileInstruction(mv, instruction.first, stackMap)
+                        compileInstruction(mv, instruction.first, stackMap, clean)
                         mv.visitInsn(Opcodes.I2D)
-                        compileInstruction(mv, instruction.second, stackMap)
+                        compileInstruction(mv, instruction.second, stackMap, clean)
                     }
                 }
                 mv.visitInsn(when (instruction.op) {
@@ -200,18 +235,18 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             } else {
                 //integers
                 if (instruction.op == MathOp.Div) {
-                    compileInstruction(mv, instruction.first, stackMap)
+                    compileInstruction(mv, instruction.first, stackMap, clean)
                     if (firstType != Type.DoubleT)
                         mv.visitInsn(Opcodes.I2D)
-                    compileInstruction(mv, instruction.second, stackMap)
+                    compileInstruction(mv, instruction.second, stackMap, clean)
                     if (secondType != Type.DoubleT)
                         mv.visitInsn(Opcodes.I2D)
                     mv.visitInsn(Opcodes.DDIV)
                     return
                 }
-                compileInstruction(mv, instruction.first, stackMap)
+                compileInstruction(mv, instruction.first, stackMap, clean)
                 unboxOrIgnore(mv, instruction.first.type, instruction.first.type.asUnboxed())
-                compileInstruction(mv, instruction.second, stackMap)
+                compileInstruction(mv, instruction.second, stackMap, clean)
                 unboxOrIgnore(mv, instruction.second.type, instruction.first.type.asUnboxed())
                 mv.visitInsn(when (instruction.op) {
                     MathOp.Add -> Opcodes.IADD
@@ -224,41 +259,37 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             }
         }
         is TypedInstruction.Comparing -> {
-            compileComparison(mv, instruction, stackMap)
+            compileComparison(mv, instruction, stackMap, clean)
         }
         is TypedInstruction.StaticCall -> {
             //load args
-            mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
-            instruction.candidate.generateCall(mv, stackMap)
+            mv.loadAndBox(instruction.candidate, instruction.args, stackMap, clean)
             stackMap.pop(instruction.candidate.oxideArgs.size)
+
+            instruction.candidate.generateCall(mv, stackMap)
+            if (instruction.candidate.oxideReturnType == Type.Never) {
+                neverAssertException(mv)
+            }
+
             stackMap.push(instruction.candidate.oxideReturnType)
         }
         is TypedInstruction.ModuleCall -> {
             //load args
-            mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
+            mv.loadAndBox(instruction.candidate, instruction.args, stackMap, clean)
+            stackMap.pop(instruction.candidate.oxideArgs.size)
+
             instruction.candidate.generateCall(mv, stackMap)
 
             if (instruction.candidate.oxideReturnType == Type.Never) {
-                mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException")
-                mv.visitInsn(Opcodes.DUP)
-                mv.visitLdcInsn("@Contract(fail) broken")
-                mv.visitMethodInsn(
-                    Opcodes.INVOKESPECIAL,
-                    "java/lang/IllegalStateException",
-                    "<init>",
-                    "(Ljava/lang/String;)V",
-                    false
-                )
-                mv.visitInsn(Opcodes.ATHROW)
+                neverAssertException(mv)
             }
-            stackMap.pop(instruction.candidate.oxideArgs.size)
             stackMap.push(instruction.candidate.oxideReturnType)
         }
         is TypedInstruction.MultiInstructions -> {
             stackMap.pushVarFrame(instruction.varFrame)
             //stackMap.generateFrame(mv)
             instruction.instructions.forEachIndexed { index, it ->
-                compileInstruction(mv, it, stackMap)
+                compileInstruction(mv, it, stackMap, clean)
                 //if we leave garbage on the stack and are not the last instruction (which would return)
                 if (it.type !in listOf(Type.Nothing, Type.Never) && index != instruction.instructions.lastIndex){
                     mv.visitInsn(Opcodes.POP)
@@ -284,13 +315,15 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitLabel(top)
             //compile condition
             stackMap.generateFrame(mv)
-            compileInstruction(mv, instruction.cond, stackMap)
+            if (!instruction.infinite) {
+                compileInstruction(mv, instruction.cond, stackMap, clean)
+                //if the condition is false (equal to 0), jump to end
+                mv.visitJumpInsn(Opcodes.IFEQ, end)
+                stackMap.pop()
+            }
 
-            //if the condition is false (equal to 0), jump to end
-            mv.visitJumpInsn(Opcodes.IFEQ, end)
-            stackMap.pop()
             //compile body
-            compileInstruction(mv, instruction.body, stackMap)
+            compileInstruction(mv, instruction.body, stackMap, clean)
 
             if (instruction.body.type != Type.Nothing) {
                 mv.visitInsn(Opcodes.POP)
@@ -303,6 +336,9 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitJumpInsn(Opcodes.GOTO, top)
             mv.visitLabel(end)
             stackMap.generateFrame(mv)
+            if (instruction.infinite) {
+                neverAssertException(mv)
+            }
         }
         TypedInstruction.Null -> {
             mv.visitInsn(Opcodes.ACONST_NULL)
@@ -316,7 +352,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitTypeInsn(Opcodes.NEW, instruction.className.toJvmNotation())
             mv.visitInsn(Opcodes.DUP)
             //load args onto stack
-            mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
+            mv.loadAndBox(instruction.candidate, instruction.args, stackMap, clean)
             //call constructor
             instruction.candidate.generateCall(mv, stackMap)
             stackMap.pop(instruction.args.size)
@@ -327,7 +363,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitInsn(Opcodes.DUP)
             stackMap.dup()
         }
-        is TypedInstruction.Match -> compileMatch(mv, instruction, stackMap)
+        is TypedInstruction.Match -> compileMatch(mv, instruction, stackMap, clean)
         is TypedInstruction.LoadList -> {
 
             mv.visitTypeInsn(Opcodes.NEW, "java/util/ArrayList")
@@ -335,7 +371,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitInsn(Opcodes.DUP)
             stackMap.dup()
             if (instruction.isConstList) {
-                compileInstruction(mv, TypedInstruction.LoadConstInt(instruction.items.size), stackMap)
+                compileInstruction(mv, TypedInstruction.LoadConstInt(instruction.items.size), stackMap, clean)
             }
             if (instruction.isConstList) {
                 mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/util/ArrayList", "<init>", "(I)V", false)
@@ -350,7 +386,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
 
                 when(item) {
                     is TypedConstructingArgument.Collected -> {
-                        compileInstruction(mv, item.instruction, stackMap)
+                        compileInstruction(mv, item.instruction, stackMap, clean)
 
                         //if it's an array, convert it to a collection first
                         if (item.type is Type.Array) {
@@ -368,7 +404,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                         stackMap.pop(2)
                     }
                     is TypedConstructingArgument.Normal -> {
-                        compileInstruction(mv, item.instruction, stackMap)
+                        compileInstruction(mv, item.instruction, stackMap, clean)
                         boxOrIgnore(mv, item.type)
                         mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/util/ArrayList", "add", "(Ljava/lang/Object;)Z", false)
                         mv.visitInsn(Opcodes.POP)
@@ -379,7 +415,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                         mv.visitVarInsn(Opcodes.ASTORE, instruction.tempArrayVariable!!)
                         stackMap.changeVar(instruction.tempArrayVariable, Type.BasicJvmType(SignatureString("java::util::ArrayList")))
                         stackMap.pop()
-                        compileForLoop(mv, item.instruction, stackMap) {
+                        compileForLoop(mv, item.instruction, stackMap, clean) {
                             //box the item of the body if necessary
                             boxOrIgnore(mv, item.instruction.body.type)
                             mv.visitVarInsn(Opcodes.ALOAD, instruction.tempArrayVariable)
@@ -394,7 +430,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             }
         }
         is TypedInstruction.LoadConstArray -> {
-            compileInstruction(mv, TypedInstruction.LoadConstInt(instruction.items.size), stackMap)
+            compileInstruction(mv, TypedInstruction.LoadConstInt(instruction.items.size), stackMap, clean)
             when(instruction.arrayType) {
                 ArrayType.Int -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT)
                 ArrayType.Double -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_DOUBLE)
@@ -407,8 +443,8 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             instruction.items.forEachIndexed { index, item ->
                 mv.visitInsn(Opcodes.DUP)
                 stackMap.dup()
-                compileInstruction(mv, TypedInstruction.LoadConstInt(index), stackMap)
-                compileInstruction(mv, item, stackMap)
+                compileInstruction(mv, TypedInstruction.LoadConstInt(index), stackMap, clean)
+                compileInstruction(mv, item, stackMap, clean)
                 if (instruction.arrayType == ArrayType.Object) {
                     boxOrIgnore(mv, item.type)
                 }
@@ -431,7 +467,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                     is TypedConstructingArgument.Collected -> {
                         when(item.instruction.type) {
                             is Type.Array -> {
-                                compileInstruction(mv, item.instruction, stackMap)
+                                compileInstruction(mv, item.instruction, stackMap, clean)
                                 stackMap.pop()
                                 mv.visitMethodInsn(
                                     Opcodes.INVOKEVIRTUAL,
@@ -443,7 +479,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                                 mv.visitTypeInsn(Opcodes.CHECKCAST, "[Ljava/lang/Object;")
                             }
                             is Type.JvmType -> {
-                                compileInstruction(mv, item.instruction, stackMap)
+                                compileInstruction(mv, item.instruction, stackMap, clean)
                                 stackMap.pop()
                                 mv.visitMethodInsn(
                                     Opcodes.INVOKEINTERFACE,
@@ -475,7 +511,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                         stackMap.changeVar(instruction.tempArrayVarId, Type.BasicJvmType(SignatureString("java::util::ArrayList")))
 
                         //compile the for-loop and add the resulting items to the arraylist
-                        compileForLoop(mv, item.instruction, stackMap) {
+                        compileForLoop(mv, item.instruction, stackMap, clean) {
                             mv.visitVarInsn(Opcodes.ALOAD, instruction.tempArrayVarId)
                             mv.visitInsn(Opcodes.SWAP)
                             boxOrIgnore(mv, item.instruction.body.type)
@@ -513,7 +549,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 when(item) {
 
                     is TypedConstructingArgument.Collected -> {
-                        compileInstruction(mv, item.instruction, stackMap)
+                        compileInstruction(mv, item.instruction, stackMap, clean)
                         if (instruction.arrayType == ArrayType.Object) {
                             boxOrIgnore(mv, item.instruction.type)
                         }
@@ -541,7 +577,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                         mv.visitVarInsn(Opcodes.ISTORE, instruction.tempIndexVarId)
                     }
                     is TypedConstructingArgument.Normal -> {
-                        compileInstruction(mv, item.instruction, stackMap)
+                        compileInstruction(mv, item.instruction, stackMap, clean)
                         if (instruction.arrayType == ArrayType.Object) {
                             boxOrIgnore(mv, item.instruction.type)
                         }
@@ -569,7 +605,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                         stackMap.changeVar(instruction.tempArrayVarId, Type.BasicJvmType(SignatureString("java::util::ArrayList")))
 
                         //compile the for-loop and add the resulting items to the arraylist
-                        compileForLoop(mv, item.instruction, stackMap) {
+                        compileForLoop(mv, item.instruction, stackMap, clean) {
                             mv.visitVarInsn(Opcodes.ALOAD, instruction.tempArrayVarId)
                             mv.visitInsn(Opcodes.SWAP)
                             boxOrIgnore(mv, item.instruction.body.type)
@@ -674,7 +710,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         }
 
         is TypedInstruction.ForLoop -> {
-            compileForLoop(mv, instruction, stackMap) {
+            compileForLoop(mv, instruction, stackMap, clean) {
                 when (instruction.body.type) {
                     Type.Nothing -> {}
                     else -> {
@@ -685,7 +721,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             }
         }
         is TypedInstruction.Try -> {
-            compileInstruction(mv, instruction.parent, stackMap)
+            compileInstruction(mv, instruction.parent, stackMap, clean)
             for (signature in instruction.errorTypes) {
                 mv.visitInsn(Opcodes.DUP)
                 mv.visitTypeInsn(Opcodes.INSTANCEOF, signature.toJvmNotation())
@@ -699,10 +735,15 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
 
 
         is TypedInstruction.Return -> {
-            compileInstruction(mv, instruction.returnValue, stackMap)
+            compileInstruction(mv, instruction.returnValue, stackMap, clean)
             if (instruction.returnValue.type != Type.Nothing && instruction.returnValue.type != Type.Never)
                 stackMap.pop()
-            mv.visitInsn(returnInstruction(instruction.returnValue.type))
+            if (instruction.label == null) {
+                mv.visitInsn(returnInstruction(instruction.returnValue.type))
+            } else {
+                clean.useReturn(instruction.returnValue.type != Type.Nothing)
+                mv.visitJumpInsn(Opcodes.GOTO, instruction.label)
+            }
         }
 
         is TypedInstruction.Keep -> {
@@ -719,7 +760,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitInsn(Opcodes.POP)
             stackMap.pop()
 
-            compileInstruction(mv, instruction.value, stackMap)
+            compileInstruction(mv, instruction.value, stackMap, clean)
             boxOrIgnore(mv, instruction.type)
             mv.visitInsn(Opcodes.DUP)
             mv.visitFieldInsn(
@@ -738,14 +779,14 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitInsn(Opcodes.DUP)
             stackMap.push(instruction.type)
             instruction.captures.values.forEach { ins ->
-                compileInstruction(mv, ins, stackMap)
+                compileInstruction(mv, ins, stackMap, clean)
             }
             instruction.constructorCandidate.generateCall(mv, stackMap)
             stackMap.pop(instruction.captures.size + 1)
         }
 
         is TypedInstruction.LoadConstConstArray -> {
-            compileInstruction(mv, TypedInstruction.LoadConstInt(instruction.items.size), stackMap)
+            compileInstruction(mv, TypedInstruction.LoadConstInt(instruction.items.size), stackMap, clean)
             when(instruction.arrayType) {
                 ArrayType.Int -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT)
                 ArrayType.Double -> mv.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_DOUBLE)
@@ -758,8 +799,8 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             instruction.items.forEachIndexed { index, item ->
                 mv.visitInsn(Opcodes.DUP)
                 stackMap.dup()
-                compileInstruction(mv, TypedInstruction.LoadConstInt(index), stackMap)
-                compileInstruction(mv, item, stackMap)
+                compileInstruction(mv, TypedInstruction.LoadConstInt(index), stackMap, clean)
+                compileInstruction(mv, item, stackMap, clean)
                 if (instruction.arrayType == ArrayType.Object) {
                     boxOrIgnore(mv, item.type)
                 }
@@ -779,7 +820,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
 
             val skip = Label()
             val end = Label()
-            compileInstruction(mv, instruction.ins, stackMap)
+            compileInstruction(mv, instruction.ins, stackMap, clean)
             mv.visitJumpInsn(Opcodes.IFNE, skip) //jump to load 0 when condition is true
             stackMap.pop()
             mv.visitInsn(Opcodes.ICONST_1) //load true if jump not completed
@@ -801,12 +842,12 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             val skipLabel = Label()
 
             //load and jump for short-circuiting if needed
-            compileInstruction(mv, instruction.first, stackMap)
+            compileInstruction(mv, instruction.first, stackMap, clean)
             mv.visitJumpInsn(condIns, condMetLabel)
             stackMap.pop()
 
             //load and jump for short-circuiting if needed
-            compileInstruction(mv, instruction.second, stackMap)
+            compileInstruction(mv, instruction.second, stackMap, clean)
             mv.visitJumpInsn(condIns, condMetLabel)
             stackMap.pop()
             mv.visitInsn(Opcodes.ICONST_0)
@@ -819,6 +860,29 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             stackMap.generateFrame(mv)
 
         }
+
+        is TypedInstruction.Catch -> {
+            val tryStart = Label()
+            val tryEnd = Label()
+            val catch = Label()
+            val end = Label()
+
+            mv.visitLabel(tryStart)
+            compileInstruction(mv, instruction.parent, stackMap, clean)
+            stackMap.pop() //doesn't corespond to a real instruction just wipes
+            // it from the compiler internal stackmap record
+            mv.visitLabel(tryEnd)
+            mv.visitJumpInsn(Opcodes.GOTO, end)
+
+            mv.visitLabel(catch)
+            stackMap.generateFrame(mv)
+
+            for(type in instruction.errorTypes) {
+                mv.visitTryCatchBlock(tryStart, tryEnd, catch, type.toJvmNotation())
+            }
+
+            stackMap.push(instruction.type) //push the return type of the given instruction onto the stack
+        }
     }
 }
 
@@ -826,9 +890,10 @@ inline fun compileForLoop(
     mv: MethodVisitor,
     instruction: TypedInstruction.ForLoop,
     stackMap: StackMap,
-    endOfBodyTask: () -> Unit,
+    clean: CleanupStack,
+    endOfBodyTask: () -> Unit
 ) {
-    compileInstruction(mv, instruction.parent, stackMap)
+    compileInstruction(mv, instruction.parent, stackMap, clean)
     val start = Label()
     val end = Label()
     //create a new var frame so that the variables like the index are gone after the loop's execution
@@ -840,8 +905,13 @@ inline fun compileForLoop(
         mv.visitVarInsn(Opcodes.ISTORE, instruction.indexId)
     }
 
-    compileScopeAdjustment(mv, instruction.preLoopAdjustments, stackMap)
-
+    compileScopeAdjustment(mv, instruction.preLoopAdjustments, stackMap, clean)
+    clean.push(CleanUpFrame {
+        if (it) {
+            mv.visitInsn(Opcodes.SWAP)
+        }
+        mv.visitInsn(Opcodes.POP)
+    })
     mv.visitLabel(start)
     stackMap.generateFrame(mv)
     mv.visitInsn(Opcodes.DUP)
@@ -858,14 +928,14 @@ inline fun compileForLoop(
     mv.visitVarInsn(storeInstruction, instruction.itemId)
     stackMap.changeVar(instruction.itemId, instruction.nextCall.oxideReturnType)
 
-    compileInstruction(mv, instruction.body.instruction, stackMap)
+    compileInstruction(mv, instruction.body.instruction, stackMap, clean)
     endOfBodyTask()
     if (instruction.indexId != null) {
         mv.visitIincInsn(instruction.indexId, 1)
     }
     mv.visitJumpInsn(Opcodes.GOTO, start)
     mv.visitLabel(end)
-
+    clean.pop()
     stackMap.popVarFrame()
 
     //pop the previously pushed var frame so that all the for-loop-stuff is gone
@@ -874,20 +944,18 @@ inline fun compileForLoop(
     //cleanup (pop the iterator from the stack)
     mv.visitInsn(Opcodes.POP)
     stackMap.pop()
-    compileScopeAdjustment(mv, instruction.postLoopAdjustments, stackMap)
-
-
-
+    compileScopeAdjustment(mv, instruction.postLoopAdjustments, stackMap, clean)
 }
 
 
 fun compileMatch(
     mv: MethodVisitor,
     instruction: TypedInstruction.Match,
-    stackMap: StackMap
+    stackMap: StackMap,
+    clean: CleanupStack
 ) {
     //load the matchee into the temporary variable
-    compileInstruction(mv, TypedInstruction.StoreVar(instruction.temporaryId, instruction.parent), stackMap)
+    compileInstruction(mv, TypedInstruction.StoreVar(instruction.temporaryId, instruction.parent), stackMap, clean)
 
     val end = Label()
     for ((pattern, body, scopeAdjustment, varFrame) in instruction.patterns) {
@@ -895,8 +963,8 @@ fun compileMatch(
         stackMap.pushVarFrame(varFrame, cloning = false)
 
         val patternFail = Label()
-        compilePattern(mv, pattern, stackMap, patternFail)
-        compileInstruction(mv, body, stackMap)
+        compilePattern(mv, pattern, stackMap, patternFail, clean)
+        compileInstruction(mv, body, stackMap, clean)
         /*
 
 
@@ -905,10 +973,11 @@ fun compileMatch(
             boxOrIgnore(mv, body.type)
             unboxOrIgnore(mv, body.type, instruction.type)
         }
-        compileScopeAdjustment(mv, scopeAdjustment, stackMap)
 
-        if (body.type != Type.Never)
+        if (body.type != Type.Never) {
+            compileScopeAdjustment(mv, scopeAdjustment, stackMap, clean)
             mv.visitJumpInsn(Opcodes.GOTO, end)
+        }
 
         if (body.type !in listOf(Type.Nothing, Type.Never)) {
             //we pop the value produced by the body in this loop since we dont need it rn
@@ -936,12 +1005,12 @@ fun compileMatch(
         false
     )
     mv.visitInsn(Opcodes.ATHROW)
-    stackMap.generateFrame(mv)
 
     mv.visitLabel(end)
     if (instruction.type != Type.Nothing) {
         stackMap.push(instruction.type)
     }
+    stackMap.generateFrame(mv)
 }
 
 
@@ -949,15 +1018,16 @@ fun compilePattern(
     mv: MethodVisitor,
     pattern: TypedIRPattern,
     stackMap: StackMap,
-    patternFail: Label
+    patternFail: Label,
+    clean: CleanupStack
 ) {
     when(pattern) {
         is TypedIRPattern.Binding -> {
             //gracefully ignore since there is nothing that actually needs to be done
         }
         is TypedIRPattern.Condition -> {
-            compilePattern(mv, pattern.parent, stackMap, patternFail)
-            compileInstruction(mv, pattern.condition, stackMap)
+            compilePattern(mv, pattern.parent, stackMap, patternFail, clean)
+            compileInstruction(mv, pattern.condition, stackMap, clean)
             //if condition equal to is 0 (false) go to the fail stage
             val skip = Label()
             mv.visitJumpInsn(Opcodes.IFNE, skip)
@@ -966,7 +1036,7 @@ fun compilePattern(
             stackMap.pop()
             stackMap.generateFrame(mv)
         }
-        is TypedIRPattern.Destructuring -> compilePatternDestructuring(mv, pattern, stackMap, patternFail)
+        is TypedIRPattern.Destructuring -> compilePatternDestructuring(mv, pattern, stackMap, patternFail, clean)
     }
 }
 
@@ -975,11 +1045,12 @@ fun compilePatternDestructuring(
     mv: MethodVisitor,
     pattern: TypedIRPattern.Destructuring,
     stackMap: StackMap,
-    patternFail: Label
+    patternFail: Label,
+    clean: CleanupStack
 ) {
 
     val success = Label()
-    compileInstruction(mv, pattern.loadItem, stackMap)
+    compileInstruction(mv, pattern.loadItem, stackMap, clean)
     mv.visitInsn(Opcodes.DUP)
     stackMap.dup()
     mv.visitTypeInsn(Opcodes.INSTANCEOF, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
@@ -1001,41 +1072,32 @@ fun compilePatternDestructuring(
     mv.visitTypeInsn(Opcodes.CHECKCAST, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
     stackMap.pop()
     stackMap.push(pattern.type)
-    compileInstruction(mv, TypedInstruction.StoreVar(pattern.castStoreId, TypedInstruction.Noop(pattern.type)), stackMap)
+    compileInstruction(mv, TypedInstruction.StoreVar(pattern.castStoreId, TypedInstruction.Noop(pattern.type)), stackMap, clean)
 
     //compile all the desturcturing patterns
     pattern.patterns.forEach {
-        compilePattern(mv, it, stackMap, patternFail)
+        compilePattern(mv, it, stackMap, patternFail, clean)
     }
 }
 
 fun compileDynamicCall(
     mv: MethodVisitor,
     instruction: TypedInstruction.DynamicCall,
-    stackMap: StackMap
+    stackMap: StackMap,
+    clean: CleanupStack
 ) {
     //load instance onto the stack
-    compileInstruction(mv, instruction.parent, stackMap)
+    compileInstruction(mv, instruction.parent, stackMap, clean)
     //boxOrIgnore(mv, instruction.parent.type)
 
-    mv.loadAndBox(instruction.candidate, instruction.args, stackMap)
+    mv.loadAndBox(instruction.candidate, instruction.args, stackMap, clean)
     if (instruction.parent.type.isUnboxedPrimitive() && instruction.candidate.jvmOwner.isBoxedPrimitive()) {
         boxOrIgnore(mv, instruction.parent.type)
     }
     instruction.candidate.generateCall(mv, stackMap)
 
     if (instruction.candidate.oxideReturnType == Type.Never) {
-        mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException")
-        mv.visitInsn(Opcodes.DUP)
-        mv.visitLdcInsn("@Contract(fail) broken")
-        mv.visitMethodInsn(
-            Opcodes.INVOKESPECIAL,
-            "java/lang/IllegalStateException",
-            "<init>",
-            "(Ljava/lang/String;)V",
-            false
-        )
-        mv.visitInsn(Opcodes.ATHROW)
+        neverAssertException(mv)
     }
 
     stackMap.pop(instruction.candidate.oxideArgs.size) //args + instance
@@ -1046,7 +1108,7 @@ fun SignatureString.isBoxedPrimitive(): Boolean {
     return oxideNotation == "java::lang::Integer" || oxideNotation == "java::lang::Double" || oxideNotation == "java::lang::Boolean"
 }
 
-fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: List<TypedInstruction>, stackMap: StackMap) {
+fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: List<TypedInstruction>, stackMap: StackMap, clean: CleanupStack) {
     val iter = args.zip(if (args.size == candidate.jvmArgs.size)
         candidate.jvmArgs
     else if (candidate.jvmArgs.size == 1)
@@ -1054,8 +1116,23 @@ fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: List<TypedInstr
     else
         candidate.jvmArgs.subList(1, candidate.jvmArgs.size)
     )
-    for ((ins, type) in iter) {
-        compileInstruction(this, ins, stackMap)
+    for ((i, item) in iter.enumerate()) {
+        val (ins, type) = item
+        val idx = candidate.varargInfo?.first
+
+        if (i == idx) {
+            //load count onto the stack
+            compileInstruction(this, TypedInstruction.LoadConstInt(candidate.jvmArgs.size - idx), stackMap, clean)
+            //create the array
+            visitTypeInsn(Opcodes.ANEWARRAY, candidate.varargInfo!!.second.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+        }
+
+        if (idx != null && i >= idx) {
+            visitInsn(Opcodes.DUP)
+            compileInstruction(this, TypedInstruction.LoadConstInt(i - idx), stackMap, clean)
+        }
+
+        compileInstruction(this, ins, stackMap, clean)
         if (type != ins.type) {
             if (ins.type.isInt() && type.isDouble()) {
                 visitInsn(Opcodes.I2D)
@@ -1064,6 +1141,19 @@ fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: List<TypedInstr
             boxOrIgnore(this, ins.type)
             unboxOrIgnore(this, ins.type, type)
         }
+        val insType = ins.type
+        
+        if (insType is Type.Union && type is Type.JvmType && Type.Null in insType.entries && type in insType.entries) {
+            visitTypeInsn(Opcodes.CHECKCAST, type.signature.toJvmNotation())
+        }
+
+        if (idx != null && i >= idx) {
+            visitInsn(Opcodes.AASTORE)
+        }
+    }
+    if (candidate.varargInfo?.first == candidate.jvmArgs.size - 1) {
+        visitInsn(Opcodes.ICONST_0)
+        visitTypeInsn(Opcodes.ANEWARRAY, candidate.varargInfo!!.second.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
     }
 }
 
@@ -1116,7 +1206,8 @@ inline fun MethodVisitor.dynamicDispatch(types: Iterable<Type>, elseType: Type, 
 fun compileComparison(
     mv: MethodVisitor,
     instruction: TypedInstruction.Comparing,
-    stackMap: StackMap
+    stackMap: StackMap,
+    clean: CleanupStack
 ) {
     val firstType = instruction.first.type
     val secondType = instruction.second.type
@@ -1124,7 +1215,7 @@ fun compileComparison(
         CompareOp.Eq, CompareOp.Neq -> {
             when {
                 firstType.isNumType() && secondType.isNumType() ->
-                    compileNumberComparison(mv, instruction.first, instruction.second, instruction.op, stackMap)
+                    compileNumberComparison(mv, instruction.first, instruction.second, instruction.op, stackMap, clean)
 
                 //when we compare a primitive non-number to a number, it will always be false, so we can evaluate that at compiletime:
                 firstType.isUnboxedPrimitive() && !firstType.isNumType() && secondType.isNumType() ->
@@ -1137,8 +1228,8 @@ fun compileComparison(
                 firstType.isUnboxedPrimitive() && secondType.isUnboxedPrimitive() -> {
                     //sanity-check
                     assert(firstType is Type.BoolT && secondType is Type.BoolT)
-                    compileInstruction(mv, instruction.first, stackMap)
-                    compileInstruction(mv, instruction.second, stackMap)
+                    compileInstruction(mv, instruction.first, stackMap, clean)
+                    compileInstruction(mv, instruction.second, stackMap, clean)
                     stackMap.pop(2)
                     val toElse = Label()
                     val end = Label()
@@ -1169,7 +1260,7 @@ fun compileComparison(
                     mv.visitInsn(if (instruction.op == CompareOp.Neq) Opcodes.ICONST_1 else Opcodes.ICONST_0)
                 }
                 secondType == Type.Null -> {
-                    compileInstruction(mv, instruction.first, stackMap)
+                    compileInstruction(mv, instruction.first, stackMap, clean)
                     val elseBody = Label()
                     val end = Label()
                     mv.visitJumpInsn(Opcodes.IFNULL, elseBody)
@@ -1184,7 +1275,7 @@ fun compileComparison(
                     stackMap.generateFrame(mv)
                 }
                 firstType == Type.Null -> {
-                    compileInstruction(mv, instruction.second, stackMap)
+                    compileInstruction(mv, instruction.second, stackMap, clean)
                     val elseBody = Label()
                     val end = Label()
                     mv.visitJumpInsn(Opcodes.IFNULL, elseBody)
@@ -1200,10 +1291,10 @@ fun compileComparison(
                 }
                 //complex objects so we have a .equals method
                 else -> {
-                    compileInstruction(mv, instruction.first, stackMap)
+                    compileInstruction(mv, instruction.first, stackMap, clean)
                     //boxes the element if unboxed, and if it's a boxed-type or a complex type it does nothing
                     boxOrIgnore(mv, firstType)
-                    compileInstruction(mv, instruction.second, stackMap)
+                    compileInstruction(mv, instruction.second, stackMap, clean)
                     //boxes the element if unboxed, and if it's a boxed-type or a complex type it does nothing
                     boxOrIgnore(mv, instruction.second.type)
                     mv.visitMethodInsn(
@@ -1231,7 +1322,7 @@ fun compileComparison(
 
         }
         //any operation but EQ and NEQ can only be evaluated for numbers anyway
-        else -> compileNumberComparison(mv, instruction.first, instruction.second, instruction.op, stackMap)
+        else -> compileNumberComparison(mv, instruction.first, instruction.second, instruction.op, stackMap, clean)
     }
 }
 
@@ -1240,14 +1331,15 @@ private fun compileNumberComparison(
     first: TypedInstruction,
     second: TypedInstruction,
     op: CompareOp,
-    stackMap: StackMap
+    stackMap: StackMap,
+    clean: CleanupStack
 ) {
     val firstType = first.type
     val secondType = second.type
     assert(firstType.isNumType() && secondType.isNumType())
     val isIntCmp = firstType.isInt() && secondType.isInt()
 
-    compileInstruction(mv, first, stackMap)
+    compileInstruction(mv, first, stackMap, clean)
     if (firstType.isBoxedPrimitive()) {
         stackMap.pop()
         stackMap.push(secondType.asUnboxed())
@@ -1256,7 +1348,7 @@ private fun compileNumberComparison(
     if (firstType.isInt() && !isIntCmp) {
         mv.visitInsn(Opcodes.I2D)
     }
-    compileInstruction(mv, second, stackMap)
+    compileInstruction(mv, second, stackMap, clean)
     if (secondType.isBoxedPrimitive()) {
         stackMap.pop()
         stackMap.push(secondType.asUnboxed())
@@ -1355,4 +1447,18 @@ fun returnInstruction(type: Type) = when(type) {
     Type.DoubleT -> Opcodes.DRETURN
     else -> Opcodes.ARETURN
 
+}
+
+fun neverAssertException(mv: MethodVisitor) {
+    mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException")
+    mv.visitInsn(Opcodes.DUP)
+    mv.visitLdcInsn("@Contract(fail) broken")
+    mv.visitMethodInsn(
+        Opcodes.INVOKESPECIAL,
+        "java/lang/IllegalStateException",
+        "<init>",
+        "(Ljava/lang/String;)V",
+        false
+    )
+    mv.visitInsn(Opcodes.ATHROW)
 }

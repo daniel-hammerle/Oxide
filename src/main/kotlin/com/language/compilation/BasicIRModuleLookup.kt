@@ -101,7 +101,8 @@ class BasicIRModuleLookup(
                     jvmOwner = modName,
                     name = funcName,
                     true,
-                        requireDispatch = false
+                        requireDispatch = false,
+                        isInterface = false
                 )
             } ?: error("Function $funcName in $modName with variants $argTypes not found")
         }
@@ -454,6 +455,7 @@ class BasicIRModuleLookup(
         TemplatedType.BoolT -> Type.BoolUnknown
         TemplatedType.Null -> Type.Null
         is TemplatedType.Union -> Type.Union(types.map { it.populate(generics) }.toSet())
+        TemplatedType.Never -> Type.Never
     }
 
 }

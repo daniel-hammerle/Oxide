@@ -3,17 +3,13 @@ use std::{errors, errors::ConversionError}
 use java::lang::{NumberFormatException, Integer, Double}
 
 impl str {
-    func tryI32(self) {
-        result = std.catch { | |
-            Integer.parseInt(self)
-        }
+    func toI32(self) {
+        result = Integer.parseInt(self)
         result.mapError { |_| ConversionError.new("str", "i32") }
     }
 
-    func tryF64(self) {
-        result = std.catch { | |
-            Double.parseDouble(self)
-        }
+    func toF64(self) {
+        result = Double.parseDouble(self)
         result.mapError { |_| ConversionError.new("str", "f64") }
     }
 }

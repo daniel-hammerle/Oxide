@@ -19,16 +19,23 @@ class IRModuleLookup(
 ) : IRLookup {
 
     override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Type> {
+        return lookUpGenericTypesInternal(instance, funcName, argTypes)
+    }
+
+    private suspend fun lookUpGenericTypesInternal(instance: Type, funcName: String, argTypes: List<Type>, checkUnboxed: Boolean = true, checkBoxed: Boolean = true): Map<String, Type> {
         oxideLookup.lookUpGenericTypes(instance, funcName, argTypes, this)?.let { return it }
         if (instance is Type.Union) {
             return instance.entries.map { lookUpGenericTypes(it, funcName, argTypes) }.reduce { acc, map -> acc + map }
         }
-        if (instance.isUnboxedPrimitive()) {
-            return lookUpGenericTypes(instance.asBoxed(), funcName, argTypes)
+        if (checkUnboxed && instance.isUnboxedPrimitive()) {
+            return lookUpGenericTypesInternal(instance.asBoxed(), funcName, argTypes, checkUnboxed = false, checkBoxed)
         }
-        jvmLookup.lookUpGenericTypes(instance as Type.JvmType, funcName, argTypes, this)?.let { return it }
-        if (instance.isBoxedPrimitive()) {
-            return lookUpGenericTypes(instance.asUnboxed(), funcName, argTypes)
+        if (instance !is Type.JvmType) {
+            error("No function: $instance.$funcName($argTypes)")
+        }
+        jvmLookup.lookUpGenericTypes(instance, funcName, argTypes, this)?.let { return it }
+        if (checkBoxed && instance.isBoxedPrimitive()) {
+            return lookUpGenericTypesInternal(instance.asUnboxed(), funcName, argTypes, checkUnboxed, checkBoxed = false)
         }
         error("No function: $instance.$funcName($argTypes)")
     }
@@ -88,14 +95,14 @@ class IRModuleLookup(
         untypedArgs: List<Instruction>,
         generics: Map<String, Type>
     ): TypedInstruction? {
-        val function = runCatching { oxideLookup.findExtensionFunction(instance.type, funcName, this) }.getOrNull() ?: return null
+        val (function, implGenerics) = runCatching { oxideLookup.findExtensionFunction(instance.type, funcName, this) }.getOrNull() ?: return null
         val isConstEvalAble = args.all { it is TypedInstruction.Const } && instance is TypedInstruction.Const
         return when(function) {
             is BasicIRFunction -> {
                 if (!isConstEvalAble) return null
-                runCatching { evalFunction(function, (listOf(instance) + args) as List<TypedInstruction.Const>, this, generics) }.getOrNull()
+                runCatching { evalFunction(function, (listOf(instance) + args) as List<TypedInstruction.Const>, this, implGenerics + generics) }.getOrNull()
             }
-            is IRInlineFunction -> function.generateInlining(args,untypedArgs, variables, instance, this, generics)
+            is IRInlineFunction -> function.generateInlining(args,untypedArgs, variables, instance, this, implGenerics + generics)
         }
     }
 
@@ -177,18 +184,20 @@ class IRModuleLookup(
     }
 
 
-    private suspend fun getStructGenerics(structSig: SignatureString): Map<String, Modifiers> {
-        return runCatching { oxideLookup.lookupStructGenericModifiers(structSig) }.getOrNull() ?: emptyMap()
+
+    private suspend fun getStructGenericNames(structSig: SignatureString): List<String> {
+        return runCatching { oxideLookup.lookupStructGenericModifiers(structSig).keys.toList() }.getOrNull() ?: jvmLookup.lookUpGenericsDefinitionOrder(structSig)
     }
 
     override suspend fun TemplatedType.populate(generics: Map<String, Type>): Type = when(this) {
         is TemplatedType.Array -> Type.Array(Type.BroadType.Known(itemType.populate(generics)))
         is TemplatedType.Complex -> {
-            val availableGenerics = getStructGenerics(signatureString)
+            val availableGenerics = getStructGenericNames(signatureString)
             val entries = availableGenerics.toList().mapIndexed { index, s ->
-                s.first to Type.BroadType.Known(this.generics[index].populate(generics))
-            }.toTypedArray()
-            Type.BasicJvmType(signatureString, linkedMapOf(*entries))
+                s to Type.BroadType.Known(this.generics[index].populate(generics))
+            }.toMap()
+
+            Type.BasicJvmType(signatureString,entries)
         }
         TemplatedType.Nothing -> Type.Nothing
         is TemplatedType.Generic -> generics[name]!!
@@ -197,5 +206,6 @@ class IRModuleLookup(
         TemplatedType.BoolT -> Type.BoolUnknown
         TemplatedType.Null -> Type.Null
         is TemplatedType.Union -> Type.Union(types.map { it.populate(generics) }.toSet())
+        TemplatedType.Never -> Type.Never
     }
 }

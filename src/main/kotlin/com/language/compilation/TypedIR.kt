@@ -5,6 +5,7 @@ import com.language.CompareOp
 import com.language.MathOp
 import com.language.codegen.VarFrame
 import com.language.codegen.asUnboxedOrIgnore
+import org.objectweb.asm.Label
 
 sealed interface TypedInstruction {
     val type: Type
@@ -26,11 +27,23 @@ sealed interface TypedInstruction {
         override val type: Type = if(value) Type.BoolTrue else Type.BoolFalse
     }
 
+    data class Ignore(val other: TypedInstruction) : TypedInstruction {
+        override val type: Type
+            get() = Type.Nothing
+    }
+
+    data class InlineBody(val body: TypedInstruction, val endLabel: Label, override val type: Type): TypedInstruction {
+    }
+
     data class Try(val parent: TypedInstruction, val errorTypes: List<SignatureString>): TypedInstruction {
         override val type = parent.type
     }
 
-    data class Return(val returnValue: TypedInstruction): TypedInstruction {
+    data class Catch(val parent: TypedInstruction, val errorTypes: Set<SignatureString>, val errorType: Type): TypedInstruction {
+        override val type = parent.type.join(errorType)
+    }
+
+    data class Return(val returnValue: TypedInstruction, val label: Label?): TypedInstruction {
         override val type: Type = Type.Never
     }
 
@@ -203,9 +216,10 @@ sealed interface TypedInstruction {
 
     data class While(
         val cond: TypedInstruction,
-        val body: TypedInstruction
+        val body: TypedInstruction,
+        val infinite: Boolean,
     ) : TypedInstruction {
-        override val type: Type = Type.Nothing
+        override val type: Type = if (infinite) Type.Never else Type.Nothing
     }
 
     data class StoreVar(val id: Int, val value: TypedInstruction) : TypedInstruction {

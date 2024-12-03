@@ -1,12 +1,19 @@
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.IOException;
+import java.net.URI;
+import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileAttribute;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 
 public class arrays {
 
     public static int len(Object[] array) {
+        var path = Path.of("");
         return array.length;
     }
 

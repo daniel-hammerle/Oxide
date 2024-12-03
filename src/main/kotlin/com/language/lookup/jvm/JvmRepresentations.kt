@@ -1,5 +1,6 @@
 package com.language.lookup.jvm
 
+import com.language.codegen.Box
 import com.language.codegen.getOrDefault
 import com.language.codegen.getOrThrow
 import com.language.compilation.*
@@ -28,6 +29,7 @@ fun ReflectType.toType(generics: Map<String, Type.BroadType>) = when(val tp = ge
 
 data class JvmStaticMethodRepresentation(
     private val ownerSignature: SignatureString,
+    private val ownerIsInterface: Boolean,
     private val name: String,
     private val methods: Set<Method>,
     private val variants: Cache<List<Type>, FunctionCandidate>
@@ -35,29 +37,54 @@ data class JvmStaticMethodRepresentation(
     suspend fun lookupVariant(argTypes: List<Type>, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>, lookup: IRLookup): FunctionCandidate? {
         if (variants.contains(argTypes)) return variants.get(argTypes)
 
-        val method = methods.firstOrNull { it.fitsArgTypes(argTypes) } ?: return null
+        val (vararg, method) = methods.firstNotNullOfOrNull {
+            val result = it.fitsArgTypes(argTypes)
+            Box(result.first).takeIf { result.second }?.let { a -> a to it }
+        } ?: return null
+
         val oxideReturnType = evaluateReturnType(argTypes, generics, method, jvmLookup, lookup)
+        val errorTypes = getErrorTypes(method)
+
+        val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
 
         val jvmArgTypes = method.parameterTypes.map { it.toType() }
         val candidate =  SimpleFunctionCandidate(
             argTypes,
             jvmArgTypes,
             oxideReturnType,
-            oxideReturnType,
+            actualReturnType,
             Opcodes.INVOKESTATIC,
             ownerSignature,
             name,
             obfuscateName = false,
-            requireDispatch = false
+            requireDispatch = false,
+            isInterface = ownerIsInterface,
+            varargInfo = vararg.item,
+            requiresCatch = errorTypes
         )
 
         variants.set(argTypes, candidate)
         return candidate
     }
+    fun getErrorTypes(argTypes: List<Type>): Set<SignatureString> {
+        val (_, method) = methods.firstNotNullOfOrNull {
+            val result = it.fitsArgTypes(argTypes)
+            Box(result.first).takeIf { result.second }?.let { a -> a to it }
+        } ?: error("No method found")
+
+        return getErrorTypes(method)
+    }
+
+    private fun getErrorTypes(method: Method): Set<SignatureString> {
+        val exceptions = method.exceptionTypes.map { SignatureString.fromDotNotation(it.name) }
+
+        return exceptions.toSet()
+    }
 }
 
 data class JvmMethodRepresentation(
     private val ownerSignature: SignatureString,
+    private val ownerIsInterface: Boolean,
     private val name: String,
     private val methods: Set<Method>,
     private val variants: Cache<Pair<Map<String, Type.BroadType>, List<Type>>, FunctionCandidate>,
@@ -65,10 +92,10 @@ data class JvmMethodRepresentation(
 ) {
 
     fun hasGenericReturnType(argTypes: List<Type>): Boolean =
-        methods.first { it.fitsArgTypes(argTypes) }.let { it.genericReturnType.typeName != it.returnType.name }
+        methods.first { it.fitsArgTypes(argTypes).second }.let { it.genericReturnType.typeName != it.returnType.name }
 
     suspend fun lookupGenericTypes(argTypes: List<Type>, lookup: IRLookup): Map<String, Type>? {
-        val method = methods.firstOrNull { it.fitsArgTypes(argTypes) } ?: return null
+        val method = methods.firstOrNull { it.fitsArgTypes(argTypes).second } ?: return null
         val result = method.genericParameterTypes
             .zip(argTypes)
             .fold(emptyMap<String, Type>()) { acc, (reflectType, tp) -> acc + reflectType.extract(tp, lookup).asLazyTypeMap() }
@@ -78,26 +105,51 @@ data class JvmMethodRepresentation(
     suspend fun lookupVariant(type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, jvmLookup: JvmLookup, lookup: IRLookup): FunctionCandidate? {
         if (variants.contains(generics to argTypes)) return variants.get(generics to argTypes)
 
-        val method = methods.firstOrNull { it.fitsArgTypes(argTypes) } ?: return null
+        val (vararg, method) = methods.firstNotNullOfOrNull {
+            val result = it.fitsArgTypes(argTypes)
+            Box(result.first).takeIf { result.second }?.let { a -> a to it }
+        } ?: return null
 
         val oxideReturnType = evaluateReturnType(argTypes, generics, method, jvmLookup, lookup)
+
+        val errorTypes = getErrorTypes(method)
+
+        val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
 
         val jvmArgTypes = method.parameterTypes.map { it.toType() }
         val candidate =  SimpleFunctionCandidate(
             listOf(type) + argTypes,
             jvmArgTypes,
             method.returnType.toType(),
-            oxideReturnType,
+            actualReturnType,
             if (isOwnerInterface) Opcodes.INVOKEINTERFACE else Opcodes.INVOKEVIRTUAL,
             ownerSignature,
             name,
             obfuscateName = false,
             requireDispatch = false,
-            castReturnType = hasGenericReturnType(argTypes)
+            castReturnType = hasGenericReturnType(argTypes),
+            isInterface = ownerIsInterface,
+            varargInfo = vararg.item,
+            errorTypes
         )
 
         variants.set(generics to argTypes, candidate)
         return candidate
+    }
+
+    fun getErrorTypes(argTypes: List<Type>): Set<SignatureString> {
+        val (_, method) = methods.firstNotNullOfOrNull {
+            val result = it.fitsArgTypes(argTypes)
+            Box(result.first).takeIf { result.second }?.let { a -> a to it }
+        } ?: error("No method found")
+
+        return getErrorTypes(method)
+    }
+
+    private fun getErrorTypes(method: Method): Set<SignatureString> {
+        val exceptions = method.exceptionTypes.map { SignatureString.fromDotNotation(it.name) }
+
+        return exceptions.toSet()
     }
 }
 

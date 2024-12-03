@@ -1,4 +1,9 @@
-use java::{lang::System, util::Scanner}
+use java::{
+    lang::System,
+    util::Scanner,
+    nio::file::{Files, Path},
+    net::URI
+}
 
 inline func println(value) System.out.println(value)
 
@@ -15,3 +20,32 @@ func read {
     }
     scanner.nextLine()
 }
+
+error struct IoError {
+    message str
+}
+
+inline func file(path) Path.of(path)
+
+impl Path {
+    inline func text(self) {
+        Files.readString(self)
+    }
+
+    func write(self, content) {
+        match content {
+            str -> Files.writeString(self, content)
+            _ -> Files.write(content)
+        }
+    }
+
+    func bytes(self) {
+        Files.readAllBytes(self)
+    }
+
+    func createFile(self) {
+         Files.createFile(self)
+    }
+
+}
+

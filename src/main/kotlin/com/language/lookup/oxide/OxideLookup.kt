@@ -28,7 +28,7 @@ interface OxideLookup {
 
     suspend fun lookupStructGenericModifiers(structSig: SignatureString): Map<String, Modifiers>
 
-    suspend fun findExtensionFunction(instance: Type, funcName: String, lookup: IRLookup): IRFunction
+    suspend fun findExtensionFunction(instance: Type, funcName: String, lookup: IRLookup): Pair<IRFunction, Map<String, Type>>
     suspend fun findFunction(modName: SignatureString, funcName: String, lookup: IRLookup): IRFunction
 
 }

@@ -1,6 +1,13 @@
 package com.language.blackbox
 
-import com.language.controlflow.compileCOde
+import com.language.compilation.*
+import com.language.controlflow.measureTime
+import com.language.lexer.lexCode
+import com.language.lookup.IRModuleLookup
+import com.language.lookup.jvm.CachedJvmLookup
+import com.language.lookup.oxide.BasicOxideLookup
+import com.language.parser.parse
+import kotlinx.coroutines.*
 import org.jetbrains.annotations.Contract
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -54,8 +61,8 @@ inline fun<T> customStdIn(input: String, closure: () -> T): T {
 data class DebugOutput(val stdOut: String, val returnValue: Any?)
 
 @Contract("_ -> this")
-fun DebugOutput.out(expected: String): DebugOutput {
-    assertEquals(expected, stdOut)
+fun DebugOutput.out(vararg expected: String): DebugOutput {
+    assert(stdOut in expected)
     return this
 }
 
@@ -79,4 +86,56 @@ fun runCode(code: String, input: String = ""): DebugOutput {
 
     }
     return DebugOutput(stdOut, returnValue)
+}
+
+
+@OptIn(DelicateCoroutinesApi::class)
+fun compileCOde(code: String): Map<SignatureString, ByteArray> {
+    val (project, compilationTime) = measureTime {
+        val (tokens, lexingTime) = measureTime {
+            lexCode(code)
+
+        }
+
+        println("> Lexing took ${lexingTime}ms")
+
+        val (module, parsingTime) = measureTime {
+            parse(tokens)
+        }
+        println("> Parsing took ${parsingTime}ms")
+
+        val dispatcher = newFixedThreadPoolContext(Runtime.getRuntime().availableProcessors(), "Compilation")
+        val scope = CoroutineScope(dispatcher)
+
+        val runtimeLib = "./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar"
+        val extensionClassLoader = ExtensionClassLoader(runtimeLib, ClassLoader.getSystemClassLoader())
+        val lookup = BasicModuleLookup(module, SignatureString("main"), mapOf(SignatureString("main") to module), extensionClassLoader, SignatureString("main"))
+
+        val result = compile(lookup)
+        val irLookup =  IRModuleLookup(CachedJvmLookup(extensionClassLoader), BasicOxideLookup(mapOf(result.name to result), emptyMap()))
+
+        val (type, typeCheckingTime) = measureTime {
+            runBlocking {
+                scope.async {
+                    (result.functions["main"]!! as BasicIRFunction).inferTypes(listOf(), irLookup, emptyMap())
+                }.await()
+            }
+        }
+        println("> Type-Inference took ${typeCheckingTime}ms")
+
+        val (project, compilationTime) = measureTime {
+            runBlocking {
+                scope.async {
+                    com.language.codegen.compileProject(setOf(result))
+                }.await()
+            }
+        }
+
+        println("> Compilation took ${compilationTime}ms")
+
+        project
+    }
+
+    println("Full Compilation process took ${compilationTime}ms")
+    return project
 }

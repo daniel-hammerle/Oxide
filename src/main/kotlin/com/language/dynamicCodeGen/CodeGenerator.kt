@@ -2,6 +2,7 @@ package com.language.dynamicCodeGen
 
 import com.language.MathOp
 import com.language.compilation.*
+import com.language.lexer.MetaInfo
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
@@ -82,7 +83,7 @@ class CodeGenerator {
                 mv.visitJumpInsn(Opcodes.GOTO, afterElseBody)
                 //register label between body and else body
                 mv.visitLabel(betweenBodyAndElseBody)
-                compileInstruction(mv, instruction.elseBody ?: Instruction.Null)
+                compileInstruction(mv, instruction.elseBody ?: Instruction.Null(MetaData(MetaInfo(0), SignatureString("nothing"))))
                 mv.visitLabel(afterElseBody)
             }
             is Instruction.LoadVar -> mv.visitVarInsn(Opcodes.ALOAD, 0)

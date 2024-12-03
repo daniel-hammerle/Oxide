@@ -2,12 +2,25 @@ package com.language.blackbox
 
 import kotlin.test.Test
 
+//Instead of compiling the entire std lib for the black box sample tests, this minimal testing lib is used.
 val MinimalTestingLib = """
     use java::{lang::System, util::Scanner}
     inline func print(value) System.out.print(value)
     inline func println(value) System.out.println(value)
     
-    func read() {
+    use java::util::Random
+    
+    func randBool {
+        random = keep { Random() }
+        random.nextBoolean()
+    }
+    
+    func panic(message) {
+        print(message)
+        while true {}
+    }
+    
+    func read {
         scanner = keep { Scanner(System.in) }
         scanner.nextLine()
     }
@@ -158,6 +171,90 @@ class Samples {
     }
 
     @Test
+    fun testImplBlockAndInliningWithReturnKeyword() {
+        val code = """
+            use java::{util::List, lang::System}
+
+            impl<T> List<T> {
+                inline func first(self, closure) {
+                    for item in self {
+                        if closure(item) {
+                            return item
+                        }
+                    }
+                    null
+                }
+            }
+
+            //some comment
+            func main() { //some more comments
+                result = list[1,2,3].first { |it| it * 2 == 4 }
+                System.out.println(result)
+            }
+
+        """.trimIndent()
+        runCode(code).out("2\n").returnValue(null)
+
+    }
+
+
+    @Test
+    fun testOrDefaultApplicationOnNullableTypes() {
+        val code = MinimalTestingLib+"""
+
+            func main {
+                result = if randBool() {
+                    "Hello World"
+                } else {
+                    null
+                }
+
+                result = result.orDefault("Hello")
+                print(result)
+            }
+
+            impl<T> T | null {
+                func orDefault(self, value) {
+                    match self {
+                        null -> value
+                        T -> self
+                    }
+                }
+            }
+
+        """.trimIndent()
+        runCode(code).out("Hello", "Hello World").returnValue(null)
+    }
+
+    @Test
+    fun testImplBlockGenericPassingForInlineFunctions() {
+        val code = MinimalTestingLib+"""
+            
+            func main {
+                result = if randBool() {
+                    "Hello World"
+                } else {
+                    null
+                }
+
+                result = result.orDefault("Hello")
+                print(result)
+            }
+
+
+            impl<T> T | null {
+                inline func orDefault(self, value) {
+                    match self {
+                        null -> value
+                        T -> self
+                    }
+                }
+            }
+        """.trimIndent()
+        runCode(code).out("Hello", "Hello World").returnValue(null)
+    }
+
+    @Test
     fun testPatternMatchingInstanceCasting() {
         //tests how ints are autmatically boxed to allow their boxed interface to be used
 
@@ -195,5 +292,127 @@ class Samples {
         runCode(code).out("Tim").returnValue(null)
     }
 
+    @Test
+    fun testGenericPassingOutOfFields() {
+        val code = MinimalTestingLib+ """
+           use java::util::List
 
+           func main {
+               instance = Foo(list[A()], list["Hello World"])
+
+               for _ in instance.items {
+                   print("A")
+               }
+
+               for item in instance.items2 {
+                   print(item)
+               }
+           }
+
+           struct A
+
+           struct Foo {
+               items List<A>,
+               items2 List<str>
+           }
+        """.trimIndent()
+
+        runCode(code).out("AHello World").returnValue(null)
+    }
+
+    @Test
+    fun testPassingUnionOfStringAndNullIntoJavaFunctionAsString() {
+        val code = MinimalTestingLib + """
+            impl<T> T | null {
+                inline func map(self, closure) {
+                    match self {
+                        null -> self
+                        T -> closure(self)
+                    }
+                }
+            }
+
+            func main {
+                result = example().map { |it| it.name }
+                print(result)
+            }
+            struct A {
+                name str
+            }
+
+            func example {
+                if randBool() {
+                    A("Hello")
+                } else {
+                    null
+                }
+            }
+
+        """.trimIndent()
+        runCode(code).out("Hello", "null").returnValue(null)
+
+    }
+
+    @Test
+    fun testNeverTypesInMatchStatements()  {
+        val code = MinimalTestingLib + """
+
+        use java::{lang::System, util::Scanner}
+        inline func print(value) System.out.print(value)
+        inline func println(value) System.out.println(value)
+        
+        use java::util::Random
+        
+        func randBool {
+            random = keep { Random() }
+            random.nextBoolean()
+        }
+        
+        func read {
+            scanner = keep { Scanner(System.in) }
+            scanner.nextLine()
+        }
+       
+        
+        impl<T> T | null {
+            inline func unwrap(self, message) {
+                match self {
+                    null -> panic(message)
+                    T -> self
+                }
+            }
+        }
+        
+        func main {
+            result = example().unwrap("expected value")
+            print(result.toString())
+        }
+        
+        struct A
+        
+        impl A {
+            func toString(self) {
+                "A"
+            }
+        }
+        
+        func magic(value) {
+            if randBool() {
+                value
+            } else {
+                value
+            }
+        }
+        
+        func example {
+            if magic(true) {
+                A()
+            } else {
+                null
+            }
+        }
+        """.trimIndent()
+
+        runCode(code).out("A").returnValue(null)
+    }
 }

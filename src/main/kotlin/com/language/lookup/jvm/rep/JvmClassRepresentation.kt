@@ -1,6 +1,7 @@
 package com.language.lookup.jvm.rep
 
 import com.language.TemplatedType
+import com.language.codegen.getOrThrow
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
@@ -8,6 +9,7 @@ import com.language.compilation.templatedType.matches
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.*
 import com.language.lookup.jvm.parsing.ClassInfo
+import com.language.lookup.jvm.parsing.ExceptionInfo
 import com.language.lookup.jvm.parsing.FunctionInfo
 import com.language.lookup.oxide.lazyTransform
 import org.objectweb.asm.Opcodes
@@ -16,9 +18,22 @@ import java.lang.reflect.Field
 interface JvmClassRepresentation {
     suspend fun methodHasGenericReturnType(name: String, argTypes: List<Type>, lookup: IRLookup): Boolean
 
-    suspend fun lookupMethod(name: String, type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup): FunctionCandidate?
+    suspend fun lookupMethod(
+        name: String,
+        type: Type,
+        generics: Map<String, Type.BroadType>,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): FunctionCandidate?
 
-    suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>): FunctionCandidate?
+    suspend fun lookUpAssociatedFunction(
+        name: String,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup,
+        generics: Map<String, Type.BroadType>
+    ): FunctionCandidate?
 
     suspend fun lookUpField(name: String, generics: Map<String, Type.BroadType>, lookup: IRLookup): Type?
 
@@ -32,6 +47,22 @@ interface JvmClassRepresentation {
 
     fun getGenericDefinitionOrder(): List<String>
 
+    suspend fun getErrorTypesAssociatedFunction(
+        visited: MutableSet<FunctionInfo>,
+        name: String,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Set<SignatureString>
+
+    suspend fun getErrorTypesMethod(
+        visited: MutableSet<FunctionInfo>,
+        name: String,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Set<SignatureString>
+
     val modifiers: Modifiers
 }
 
@@ -42,7 +73,7 @@ data class BasicJvmClassRepresentation(
     private val associatedFunctions: Cache<String, JvmStaticMethodRepresentation> = Cache(),
     private val associatedFields: Cache<String, Type> = Cache(),
     private val fields: Cache<String, Field> = Cache()
-): JvmClassRepresentation {
+) : JvmClassRepresentation {
 
     override val modifiers: Modifiers = parseModifiers()
 
@@ -51,13 +82,13 @@ data class BasicJvmClassRepresentation(
         if (ReflectModifiers.isPublic(clazz.modifiers)) setPublic()
     }
 
-    override suspend fun methodHasGenericReturnType(name: String, argTypes: List<Type>, lookup: IRLookup): Boolean
-            = getMethod(name).hasGenericReturnType(argTypes)
+    override suspend fun methodHasGenericReturnType(name: String, argTypes: List<Type>, lookup: IRLookup): Boolean =
+        getMethod(name).hasGenericReturnType(argTypes)
 
     private fun hasSuperType(signatureString: SignatureString): Boolean {
         var current = clazz.superclass
         while (true) {
-            return when(current?.name) {
+            return when (current?.name) {
                 signatureString.toDotNotation() -> true
                 SignatureString("java::lang::Object").toDotNotation() -> false
                 null -> false
@@ -73,7 +104,14 @@ data class BasicJvmClassRepresentation(
         methods.get(name)?.let { return it }
 
         val collectedMethods = clazz.methods.filter { it.name == name && !ReflectModifiers.isStatic(it.modifiers) }
-        val rep = JvmMethodRepresentation(SignatureString.fromDotNotation(clazz.name), name, collectedMethods.toSet(), Cache(), clazz.isInterface)
+        val rep = JvmMethodRepresentation(
+            SignatureString.fromDotNotation(clazz.name),
+            clazz.isInterface,
+            name,
+            collectedMethods.toSet(),
+            Cache(),
+            clazz.isInterface
+        )
         methods.set(name, rep)
         return rep
     }
@@ -82,29 +120,48 @@ data class BasicJvmClassRepresentation(
         associatedFunctions.get(name)?.let { return it }
 
         val collectedMethods = clazz.methods.filter { it.name == name && ReflectModifiers.isStatic(it.modifiers) }
-        val rep = JvmStaticMethodRepresentation(SignatureString.fromDotNotation(clazz.name), name, collectedMethods.toSet(), Cache())
+        val rep = JvmStaticMethodRepresentation(
+            SignatureString.fromDotNotation(clazz.name),
+            clazz.isInterface,
+            name,
+            collectedMethods.toSet(),
+            Cache()
+        )
         associatedFunctions.set(name, rep)
         return rep
     }
 
-    override suspend fun lookupMethod(name: String, type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup): FunctionCandidate? =
+    override suspend fun lookupMethod(
+        name: String, type: Type,
+        generics: Map<String, Type.BroadType>,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): FunctionCandidate? =
         getMethod(name).lookupVariant(type, generics, argTypes, jvmLookup, lookup)
 
-    override suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>): FunctionCandidate? =
+    override suspend fun lookUpAssociatedFunction(
+        name: String, argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup,
+        generics: Map<String, Type.BroadType>
+    ): FunctionCandidate? =
         getAssociatedFunction(name).lookupVariant(argTypes, jvmLookup, generics, lookup)
 
     override suspend fun lookUpField(name: String, generics: Map<String, Type.BroadType>, lookup: IRLookup): Type? {
         if (fields.contains(name)) {
             return fields.get(name)!!.toType(generics)
         }
-        val field = clazz.fields.firstOrNull { it.name == name && !ReflectModifiers.isStatic(it.modifiers) } ?: return null
+        val field =
+            clazz.fields.firstOrNull { it.name == name && !ReflectModifiers.isStatic(it.modifiers) } ?: return null
         fields.set(name, field)
         return field.toType(generics)
     }
 
     override suspend fun lookUpStaticField(name: String): Type? {
         if (associatedFields.contains(name)) return associatedFields.get(name)
-        val field = clazz.fields.firstOrNull { ReflectModifiers.isStatic(it.modifiers) && it.name == name } ?: return null
+        val field =
+            clazz.fields.firstOrNull { ReflectModifiers.isStatic(it.modifiers) && it.name == name } ?: return null
         val fieldType = field.type.toType()
         associatedFields.set(name, fieldType)
         return fieldType
@@ -118,15 +175,18 @@ data class BasicJvmClassRepresentation(
         return getMethod(name).lookupGenericTypes(argTypes, lookup)
     }
 
-    private fun hasInterface(clazz: Class<*>, signatureString: SignatureString, previous: MutableSet<SignatureString>): Boolean {
+    private fun hasInterface(
+        clazz: Class<*>,
+        signatureString: SignatureString,
+        previous: MutableSet<SignatureString>
+    ): Boolean {
         return clazz.interfaces.any {
             it.name == signatureString.toDotNotation() || it.interfaces.any { i ->
                 val signature = SignatureString.fromDotNotation(i.name)
                 if (signature !in previous) {
                     previous.add(signature)
                     hasInterface(i, signatureString, previous)
-                }
-                else false
+                } else false
             }
         }
     }
@@ -137,7 +197,7 @@ data class BasicJvmClassRepresentation(
     )
 
     override suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
-        val constructor = clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes) } ?: return null
+        val constructor = clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes).second } ?: return null
         val jvmArgs = constructor.parameterTypes.map { it.toType() }
 
         val candidate = SimpleFunctionCandidate(
@@ -147,7 +207,7 @@ data class BasicJvmClassRepresentation(
             oxideReturnType = this.toType(),
             invocationType = Opcodes.INVOKESPECIAL,
             jvmOwner = SignatureString.fromDotNotation(clazz.name),
-            name ="<init>",
+            name = "<init>",
             obfuscateName = false,
             requireDispatch = false
         )
@@ -158,6 +218,58 @@ data class BasicJvmClassRepresentation(
     override fun getGenericDefinitionOrder(): List<String> {
         return clazz.typeParameters.map { it.name }
     }
+
+    override suspend fun getErrorTypesAssociatedFunction(
+        visited: MutableSet<FunctionInfo>,
+        name: String,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Set<SignatureString> {
+        val info = FunctionInfo(emptyList(), argTypes.map { it.toTemplatedType() }, TemplatedType.Nothing, emptySet(), ExceptionInfo(emptySet(), emptySet()))
+
+        if (info in visited) {
+            return emptySet()
+        }
+
+        visited.add(info)
+        return getAssociatedFunction(name).getErrorTypes(argTypes)
+    }
+
+    override suspend fun getErrorTypesMethod(
+        visited: MutableSet<FunctionInfo>,
+        name: String,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Set<SignatureString> {
+        val info = FunctionInfo(emptyList(), argTypes.map { it.toTemplatedType() }, TemplatedType.Nothing, emptySet(), ExceptionInfo(emptySet(), emptySet()))
+
+        if (info in visited) {
+            return emptySet()
+        }
+
+        visited.add(info)
+        return getMethod(name).getErrorTypes(argTypes)
+    }
+}
+
+fun Type.toTemplatedType(): TemplatedType {
+    return when(this) {
+        is Type.BoolT -> TemplatedType.BoolT
+        Type.DoubleT -> TemplatedType.DoubleT
+        Type.IntT -> TemplatedType.IntT
+        is Type.Array -> TemplatedType.Array(itemType.getOrThrow("").toTemplatedType())
+        Type.BoolArray -> TemplatedType.Array(TemplatedType.BoolT)
+        Type.DoubleArray ->  TemplatedType.Array(TemplatedType.DoubleT)
+        Type.IntArray ->  TemplatedType.Array(TemplatedType.IntT)
+        is Type.JvmType -> TemplatedType.Complex(signature, emptyList())
+        is Type.Lambda -> TODO()
+        Type.Never ->  TemplatedType.Never
+        Type.Nothing ->  TemplatedType.Nothing
+        Type.Null -> TemplatedType.Null
+        is Type.Union -> TODO()
+    }
 }
 
 data class JvmClassInfoRepresentation(
@@ -167,9 +279,9 @@ data class JvmClassInfoRepresentation(
         return getMethod(name, argTypes, lookup)!!.returnType.isGeneric()
     }
 
-    private suspend fun getMethod(name: String, argTypes: List<Type>, lookup: IRLookup): FunctionInfo? {
-        return info.methods[name]?.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) }
-    }
+    private suspend fun getMethod(name: String, argTypes: List<Type>, lookup: IRLookup): FunctionInfo? =
+        info.methods[name]?.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) }
+
 
     private suspend fun getAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup): FunctionInfo? {
         return info.associatedFunctions[name]?.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) }
@@ -189,36 +301,51 @@ data class JvmClassInfoRepresentation(
             val tp = method.returnType.populate(generics.asLazyTypeMap())
             evaluateReturnType(tp, argTypes, method)
         }
+        val errorType = getErrorTypesMethod(mutableSetOf(), name, argTypes, lookup, jvmLookup)
+
+        val actualReturnType = errorType.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
+
         val candidate = SimpleFunctionCandidate(
             listOf(instanceType) + argTypes,
             method.args.map { it.defaultVariant() },
             method.returnType.defaultVariant(),
-            oxideReturnType,
+            actualReturnType,
             Opcodes.INVOKEVIRTUAL,
             info.signature,
             name,
             obfuscateName = false,
-            requireDispatch = false
+            requireDispatch = false,
+            requiresCatch = errorType
         )
 
         return candidate
     }
 
-    override suspend fun lookUpAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>): FunctionCandidate? {
+    override suspend fun lookUpAssociatedFunction(
+        name: String,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup,
+        generics: Map<String, Type.BroadType>
+    ): FunctionCandidate? {
         val function = getAssociatedFunction(name, argTypes, lookup) ?: return null
 
         val oxideReturnType = evaluateReturnType(function.returnType.defaultVariant(), argTypes, function)
+        val errorType = getErrorTypesMethod(mutableSetOf(), name, argTypes, lookup, jvmLookup)
+
+        val actualReturnType = errorType.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
 
         val candidate = SimpleFunctionCandidate(
             argTypes,
             function.args.map { it.defaultVariant() },
             function.returnType.defaultVariant(),
-            oxideReturnType,
+            actualReturnType,
             Opcodes.INVOKESTATIC,
             info.signature,
             name,
             obfuscateName = false,
-            requireDispatch = false
+            requireDispatch = false,
+            requiresCatch = errorType
         )
 
         return candidate
@@ -250,10 +377,12 @@ data class JvmClassInfoRepresentation(
             ?.reduce { acc, map -> acc + map }
     }
 
-    private val instanceType = Type.BasicJvmType(info.signature, info.generics.associate { it.name to Type.BroadType.Unset })
+    private val instanceType =
+        Type.BasicJvmType(info.signature, info.generics.associate { it.name to Type.BroadType.Unset })
 
     override suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
-        val constructor = info.constructors.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
+        val constructor =
+            info.constructors.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
 
         val candidate = SimpleFunctionCandidate(
             argTypes,
@@ -274,12 +403,69 @@ data class JvmClassInfoRepresentation(
         return info.generics.map { it.name }
     }
 
+    override suspend fun getErrorTypesAssociatedFunction(
+        visited: MutableSet<FunctionInfo>,
+        name: String,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Set<SignatureString> {
+        val function = getAssociatedFunction(name, argTypes, lookup) ?: error("No matching function found")
+
+        if (function in visited) {
+            return emptySet() //if already in checked chain do not check twice
+        }
+
+        visited.add(function)
+
+        val exceptions = function.exceptionInfo.others.flatMap {
+            jvmLookup.lookupErrorTypes(
+                visited,
+                it.owner,
+                it.name,
+                it.argTypes.map { a -> a.defaultVariant() },
+                lookup
+            )
+        }
+
+        return function.exceptionInfo.exceptions + exceptions.toSet()
+    }
+
+    override suspend fun getErrorTypesMethod(
+        visited: MutableSet<FunctionInfo>,
+        name: String,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Set<SignatureString> {
+        val function = getMethod(name, argTypes, lookup) ?: error("No matching function found")
+
+        if (function in visited) {
+            return emptySet() //if already in checked chain do not check twice
+        }
+
+        visited.add(function)
+
+
+        val exceptions = function.exceptionInfo.others.flatMap {
+            jvmLookup.lookupErrorTypes(
+                visited,
+                it.owner,
+                it.name,
+                it.argTypes.map { a -> a.defaultVariant() },
+                lookup
+            )
+        }
+
+        return function.exceptionInfo.exceptions + exceptions.toSet()
+    }
+
     override val modifiers: Modifiers
         get() = info.modifiers
 
 }
 
-fun TemplatedType.defaultVariant(): Type = when(this) {
+fun TemplatedType.defaultVariant(): Type = when (this) {
     is TemplatedType.Array -> Type.Array(Type.BroadType.Known(itemType.defaultVariant()))
     TemplatedType.BoolT -> Type.BoolUnknown
     is TemplatedType.Complex -> Type.BasicJvmType(signatureString, emptyMap())
@@ -289,9 +475,10 @@ fun TemplatedType.defaultVariant(): Type = when(this) {
     TemplatedType.Nothing -> Type.Nothing
     TemplatedType.Null -> Type.Null
     is TemplatedType.Union -> Type.Union(entries = types.map { it.defaultVariant() }.toSet())
+    TemplatedType.Never -> Type.Null
 }
 
-fun TemplatedType.isGeneric(): Boolean = when(this) {
+fun TemplatedType.isGeneric(): Boolean = when (this) {
     is TemplatedType.Array -> itemType.isGeneric()
     is TemplatedType.Complex -> generics.any { it.isGeneric() }
     is TemplatedType.Generic -> true
@@ -299,7 +486,7 @@ fun TemplatedType.isGeneric(): Boolean = when(this) {
     else -> false
 }
 
-fun TemplatedType.getGenerics(): Set<String> = when(this) {
+fun TemplatedType.getGenerics(): Set<String> = when (this) {
     is TemplatedType.Array -> itemType.getGenerics()
     is TemplatedType.Complex -> generics.fold(emptySet()) { acc, it -> acc + it.getGenerics() }
     is TemplatedType.Generic -> setOf(name)
@@ -308,20 +495,34 @@ fun TemplatedType.getGenerics(): Set<String> = when(this) {
 }
 
 
-suspend fun TemplatedType.extractGenerics(type: Type, lookup: IRLookup): Map<String, Type> = when(this) {
-    is TemplatedType.Array -> itemType.extractGenerics(((type as Type.Array).itemType as Type.BroadType.Known).type, lookup)
+suspend fun TemplatedType.extractGenerics(type: Type, lookup: IRLookup): Map<String, Type> = when (this) {
+    is TemplatedType.Array -> itemType.extractGenerics(
+        ((type as Type.Array).itemType as Type.BroadType.Known).type,
+        lookup
+    )
+
     is TemplatedType.Complex -> (type as Type.JvmType)
         .orderedGenerics(lookup)
         .zip(generics)
-        .mapNotNull { (tp, template) -> (tp.second as? Type.BroadType.Known)?.type?.let{ template.extractGenerics(it, lookup)  } }
+        .mapNotNull { (tp, template) ->
+            (tp.second as? Type.BroadType.Known)?.type?.let {
+                template.extractGenerics(
+                    it,
+                    lookup
+                )
+            }
+        }
         .fold(emptyMap()) { acc, map -> acc + map }
+
     is TemplatedType.Generic -> mapOf(name to type)
     is TemplatedType.Union -> TODO()
     else -> emptyMap()
 }
 
-suspend fun Type.JvmType.orderedGenerics(lookup: IRLookup) = genericTypes.orderByKeys(lookup.lookupOrderGenerics(signature))
+suspend fun Type.JvmType.orderedGenerics(lookup: IRLookup) =
+    genericTypes.orderByKeys(lookup.lookupOrderGenerics(signature))
 
-fun<K, V> Map<K, V>.orderByKeys(keys: List<K>) = keys.map { it to this[it]!! }
+fun <K, V> Map<K, V>.orderByKeys(keys: List<K>) = keys.map { it to this[it]!! }
 
-fun Map<String, Type.BroadType>.asLazyTypeMap() = lazyTransform { key, it -> (it as? Type.BroadType.Known)?.type ?: Type.Object }
+fun Map<String, Type.BroadType>.asLazyTypeMap() =
+    lazyTransform { key, it -> (it as? Type.BroadType.Known)?.type ?: Type.Object }

@@ -13,6 +13,7 @@ class VariableManagerImpl(
     companion object {
         fun fromVariables(variables: Map<String, Type>, reserveThis: Boolean = false): VariableManager {
             val parent = VariableMappingImpl.empty()
+            if (reserveThis) parent.new(Type.Object)
             val instance = VariableManagerImpl(parent)
             for ((name, type) in variables) {
                 instance.change(name, type)

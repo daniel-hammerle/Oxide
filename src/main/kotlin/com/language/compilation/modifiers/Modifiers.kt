@@ -20,5 +20,9 @@ value class Modifiers(private val modifiers: Int) {
 
     fun hasAllModifiersOf(other: Modifiers) = other.isSubsetOf(this)
 
+    override fun toString(): String {
+        val modifiers = Modifier.entries.mapNotNull { if (isModifier(it)) it.name else null  }.joinToString(", ")
+        return "[$modifiers]"
+    }
 }
 

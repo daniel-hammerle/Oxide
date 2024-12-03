@@ -11,7 +11,7 @@ interface StackMap {
     /**
      * @throws IllegalStateException
      */
-    fun pop()
+    fun pop(): Type
     fun pop(n: Int): Unit = (1..n).forEach { _ -> pop() }
 
     val stackSize: Int
@@ -94,11 +94,13 @@ class StackMapImpl(
         push(value)
     }
 
-    override fun pop() {
+    override fun pop(): Type {
         if (currentStackPtr < 1) {
             error("Cannot pop of empty stack")
         }
-        stack[--currentStackPtr] = null
+        val item = stack[--currentStackPtr]
+        stack[currentStackPtr] = null
+        return item!!
     }
 
     override fun pushVarFrame(varFrame: VarFrame, cloning: Boolean) {
@@ -172,13 +174,16 @@ class StackMapImpl(
         frameHistory.add(stackFrame)
 
          */
-        mv.visitFrame(
-            Opcodes.F_FULL,
-            varFrame.variables.size,
-            varFrame.variables.map { it?.toFrameSignature() }.toTypedArray(),
-            currentStackPtr,
-            stack.map { it?.toFrameSignature() }.toTypedArray()
-        )
+        try {
+
+            mv.visitFrame(
+                Opcodes.F_FULL,
+                varFrame.variables.size,
+                varFrame.variables.map { it?.toFrameSignature() }.toTypedArray(),
+                currentStackPtr,
+                stack.map { it?.toFrameSignature() }.toTypedArray()
+            )
+        }catch (_: Exception) {}
     }
 }
 

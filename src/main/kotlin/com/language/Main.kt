@@ -9,11 +9,14 @@ import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 
 
-
-
 fun main() {
     val externalLibs = listOf("./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar")
-    compileAndWriteDir("./oxide", externalLibs)
+    try {
+        compileAndWriteDir("./oxide", externalLibs)
+    } catch (e: Exception) {
+        e.printStackTrace()
+        return
+    }
     val loader = loadExternalLibs(externalLibs)
     ExtensionClassLoader("out.jar", loader)
         .loadClass("main")

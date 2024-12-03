@@ -23,7 +23,7 @@ suspend fun compileCheckedFunction(
         arrayOf()
     )
 
-    mv.visitMaxs(20, metaData.varCount + 1) // 1 for the instance
+    mv.visitMaxs(20, (if (!static) 1 else 0) + metaData.varCount)
     val stackMap = StackMap.fromMax(20)
     stackMap.pushVarFrame(VarFrameImpl(argTypes), true)
     if (instanceType != null) {
@@ -31,7 +31,7 @@ suspend fun compileCheckedFunction(
     }
 
     //compile body
-    compileInstruction(mv, body, stackMap)
+    compileInstruction(mv, body, stackMap, CleanupStack(mutableListOf()))
 
     when(body.type) {
         Type.Nothing, Type.Never-> assert(stackMap.stackSize == 0) { "Expected 0 but was ${stackMap.stackSize} ${body.type} $name" }

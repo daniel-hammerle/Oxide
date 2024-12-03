@@ -6,6 +6,7 @@ import com.language.Module
 import com.language.ModuleChild
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
+import com.language.lexer.MetaInfo
 import com.language.lookup.jvm.RawClassLoader
 import java.io.IOException
 import java.lang.reflect.Modifier
@@ -63,7 +64,7 @@ private fun Class<*>.toModule(): Module {
     declaredMethods
         .filter { Modifier.isStatic(it.modifiers) }
         .forEach { method ->
-            val function = Function(method.parameters.map { it.name }, Expression.UnknownSymbol("external"), modifiers { setPublic() })
+            val function = Function(method.parameters.map { it.name }, Expression.UnknownSymbol("external", MetaInfo(0)), modifiers { setPublic() }, MetaInfo(0))
             children[method.name] = function
         }
 

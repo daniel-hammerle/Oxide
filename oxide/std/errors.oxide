@@ -1,15 +1,7 @@
-
-impl<error E, T> E | T {
-    func orDefault(self, value) {
+impl<T, error E> E | T {
+    inline func orDefault(self, value) {
         match self {
             E -> value
-            T -> self
-        }
-    }
-
-    func unwrap(self, message) {
-        match self {
-            E -> std.panic(message)
             T -> self
         }
     }
@@ -17,7 +9,7 @@ impl<error E, T> E | T {
     inline func map(self, closure) {
         match self {
             E -> self
-            T -> closure(T)
+            T -> closure(self)
         }
     }
 
@@ -27,13 +19,21 @@ impl<error E, T> E | T {
             T -> self
         }
     }
+
+    inline func unwrap(self, message) {
+        match self {
+            E -> std.panic(message)
+            T -> self
+        }
+    }
 }
+
 
 impl<T> T | null {
     func orDefault(self, value) {
         match self {
             null -> value
-            _ -> self
+            T -> self
         }
     }
 
@@ -44,7 +44,7 @@ impl<T> T | null {
         }
     }
 
-    func unwrap(self, message) {
+    inline func unwrap(self, message) {
         match self {
             null -> std.panic(message)
             T -> self

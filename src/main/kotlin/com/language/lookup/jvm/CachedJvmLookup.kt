@@ -6,6 +6,7 @@ import com.language.compilation.Type
 import com.language.compilation.modifiers.Modifiers
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.parsing.ClassParser
+import com.language.lookup.jvm.parsing.FunctionInfo
 import com.language.lookup.jvm.rep.BasicJvmClassRepresentation
 import com.language.lookup.jvm.rep.JvmClassInfoRepresentation
 import com.language.lookup.jvm.rep.JvmClassRepresentation
@@ -79,6 +80,16 @@ class CachedJvmLookup(
 
     override suspend fun lookUpGenericsDefinitionOrder(className: SignatureString): List<String> {
         return getClass(className).getGenericDefinitionOrder()
+    }
+
+    override suspend fun lookupErrorTypes(
+        visited: MutableSet<FunctionInfo>,
+        className: SignatureString,
+        funcName: String,
+        argTypes: List<Type>,
+        lookup: IRLookup
+    ): Set<SignatureString> {
+        return getClass(className).getErrorTypesAssociatedFunction(visited, funcName, argTypes, lookup, this)
     }
 
 

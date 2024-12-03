@@ -14,14 +14,36 @@ import java.lang.reflect.Executable
 import java.lang.reflect.Method
 import java.lang.reflect.ParameterizedType
 import java.lang.reflect.TypeVariable
+import kotlin.math.absoluteValue
 
-fun Executable.fitsArgTypes(argTypes: List<Type>): Boolean {
-    if (parameterCount != argTypes.size) return false
+fun Executable.fitsArgTypes(argTypes: List<Type>): Pair<Pair<Int, Type>?, Boolean> {
+    if (isVarArgs) {
+        val argDiff = parameterCount - argTypes.size
+        if (argDiff !in 0..1) {
+            return null to false
+        }
+    } else {
+        if (parameterCount != argTypes.size) return null to false
+    }
 
-    return parameterTypes
+    val result = parameterTypes
         .zip(parameterAnnotations)
         .zip(argTypes)
         .all { (argument, type) -> argument.fitsType(type) }
+    if (!isVarArgs) return null to result
+    if (result && isVarArgs) {
+        return (parameterCount - 1 to parameterTypes.last().componentType.toType()) to true
+    }
+
+    val result2 =  parameterTypes.slice(0..parameterCount-2)
+        .zip(parameterAnnotations)
+        .zip(argTypes)
+        .all { (argument, type) -> argument.fitsType(type) }
+
+    if (result2) {
+        return (parameterCount - 1 to parameterTypes.last().componentType.toType()) to true
+    }
+    return null to false
 }
 
 fun Pair<Class<*>, Array<out Annotation>>.fitsType(type: Type): Boolean {

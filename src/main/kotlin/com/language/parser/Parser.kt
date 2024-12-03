@@ -6,15 +6,60 @@ import com.language.compilation.GenericType
 import com.language.compilation.SignatureString
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
-import com.language.lexer.Token
-import com.language.lexer.toCompareOp
+import com.language.controlflow.MessageKind
+import com.language.lexer.*
+import java.lang.RuntimeException
 import java.util.UUID
 
+class ParseException(message: String, val info: MetaInfo, val kind: MessageKind) : RuntimeException(message)
 
-typealias Tokens = ListIterator<Token>
+class Tokens(val tokens: List<PositionedToken<*>>) : Index {
+    private var i = 0
+    private var pos: MetaInfo = MetaInfo(0)
 
-fun parse(tokens: List<Token>): Module {
-    val iter = tokens.listIterator()
+    override val index: Int
+        get() = pos.start + pos.length
+    fun hasNext() = i < tokens.size
+
+    fun next(): Token = positionedNext().token
+
+    fun positionedNext(): PositionedToken<*> {
+        val tk = tokens[i++]
+        pos = tk.position
+        return tk
+    }
+
+    fun info() = InfoBuilder(pos.start + pos.length + 1, this)
+
+    fun error(message: String, kind: MessageKind): Nothing {
+        throw ParseException(message, pos, kind)
+    }
+
+    fun error(message: String, info: MetaInfo, kind: MessageKind): Nothing {
+        throw ParseException(message, info, kind)
+    }
+
+    fun previous() = tokens[(--i) - 1].token
+
+    fun visitNext() = tokens.getOrNull(i)?.token
+
+    inline fun<reified T : Token> expect(): T {
+        val meta = info()
+        val item = next()
+        if (item !is T) throw ParseException("Invalid token", meta.finish(), MessageKind.Syntax)
+        return item
+    }
+
+    fun<T : Token> expect(token: T): T {
+        val meta = info()
+        val item = next()
+        if (item != token)throw ParseException("Invalid token", meta.finish(), MessageKind.Syntax)
+        return token
+    }
+}
+
+fun parse(tokens: List<PositionedToken<*>>): Module {
+    val iter = Tokens(tokens)
     return parseFile(iter)
 }
 
@@ -35,26 +80,30 @@ fun parseFile(tokens: Tokens): Module {
     return Module(entries, implBlocks, imports)
 }
 
-fun parseModifiers(tokens: Tokens): Modifiers = modifiers {
-    while(true) {
-        when(tokens.visitNext()) {
-            is Token.ModifierToken -> {
-                val tk = tokens.expect<Token.ModifierToken>()
-                setModifier(tk.modifier)
+fun parseModifiers(tokens: Tokens): Pair<Modifiers, MetaInfo> {
+    val info = tokens.info()
+    return modifiers {
+        while(true) {
+            when(tokens.visitNext()) {
+                is Token.ModifierToken -> {
+                    val tk = tokens.expect<Token.ModifierToken>()
+                    setModifier(tk.modifier)
+                }
+                else -> break
             }
-            else -> break
         }
-    }
+    } to info.finish()
 }
 
 
 
 fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
-    val modifiers = parseModifiers(tokens)
+    val info = tokens.info()
+    val (modifiers, mInfo) = parseModifiers(tokens)
     return when(val token = tokens.next()) {
         Token.Func -> {
             if (!modifiers.isSubsetOf(Modifiers.FunctionModifiers)) {
-                error("Invalid Modifiers cannot apply $modifiers to a function")
+                tokens.error("Invalid Modifiers cannot apply $modifiers to a function", mInfo, MessageKind.Logic)
             }
             val name = tokens.expect<Token.Identifier>().name
             val args = if (tokens.visitNext() == Token.OpenBracket) {
@@ -62,11 +111,11 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
                 parseFunctionArgs(tokens, closingSymbol = Token.ClosingBracket)
             } else mutableListOf()
             val body = parseExpression(tokens, BasicVariables.withEntries(args.toSet()))
-            name to Function(args, body, modifiers)
+            name to Function(args, body, modifiers, info.finish())
         }
         Token.Struct -> {
             if (!modifiers.isSubsetOf(Modifiers.StructModifiers)) {
-                error("Invalid Modifiers cannot apply $modifiers to a struct")
+                tokens.error("Invalid Modifiers cannot apply $modifiers to a struct", mInfo, MessageKind.Logic)
             }
             val name = tokens.expect<Token.Identifier>().name
             val generics = parseGenericDefinition(tokens)
@@ -77,11 +126,11 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
                 }
                 else -> emptyMap()
             }
-            name to Struct(args, generics, modifiers)
+            name to Struct(args, generics, modifiers, info.finish())
         }
         Token.Impl -> {
             if (!modifiers.isSubsetOf(Modifiers.ImplBlockModifiers)) {
-                error("Invalid Modifiers cannot apply $modifiers to an impl block")
+                tokens.error("Invalid Modifiers cannot apply $modifiers to an impl block", mInfo, MessageKind.Logic)
             }
             val generics = parseGenericDefinition(tokens)
             val type = parseType(tokens, generics.keys)
@@ -95,15 +144,15 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
 
             val functions = entries.mapValues { (name, entry) -> when(entry) {
                     is Function -> entry
-                    else -> error("Invalid declaration of $name $entry insisde an impl block")
+                    else -> tokens.error("Invalid declaration of $name $entry inside an impl block", entry.info, MessageKind.Logic)
                 }
             }
             val (methods, associatedFunctions) = functions.toList().partition { (_, function ) -> function.args.firstOrNull() == "self" }
 
-            UUID.randomUUID().toString() to Impl(type, methods.toMap(), associatedFunctions.toMap(), generics, modifiers)
+            UUID.randomUUID().toString() to Impl(type, methods.toMap(), associatedFunctions.toMap(), generics, modifiers, info.finish())
         }
-        Token.Use -> UUID.randomUUID().toString() to UseStatement(parseImport(tokens))
-        else -> error("Invalid token $token")
+        Token.Use -> UUID.randomUUID().toString() to UseStatement(parseImport(tokens), info.finish())
+        else -> tokens.error("Invalid token $token", MessageKind.Syntax)
     }
 }
 
@@ -113,7 +162,7 @@ fun parseImports(tokens: Tokens): Set<SignatureString> = mutableSetOf<SignatureS
         when(tokens.next()) {
             is Token.Comma -> continue
             is Token.ClosingCurly -> break
-            else -> error("Invalid token expected , or }")
+            else -> tokens.error("Invalid token expected , or }", MessageKind.Syntax)
         }
     }
 }
@@ -141,7 +190,7 @@ fun parseTypedArgs(tokens: Tokens, generics: Set<String>, closingSymbol: Token =
         when(tokens.next()) {
             closingSymbol -> return entries
             Token.Comma -> continue
-            else -> error("Invalid token expected `,` or `$closingSymbol`")
+            else -> tokens.error("Invalid token expected `,` or `$closingSymbol`", MessageKind.Syntax)
         }
     }
 }
@@ -178,7 +227,7 @@ fun parseFunctionArgs(tokens: Tokens, closingSymbol: Token): List<String> = muta
         when(val token = tokens.next()) {
             Token.Comma -> continue
             closingSymbol -> break
-            else -> error("Invalid token $token (expected `,` or `$closingSymbol`")
+            else -> tokens.error("Invalid token $token (expected `,` or `$closingSymbol`", MessageKind.Syntax)
         }
     }
 }
@@ -191,25 +240,28 @@ fun parseStatements(tokens: Tokens, variables: Variables, closingSymbol: Token =
 }
 
 fun parseStatement(tokens: Tokens, variables: Variables): Statement {
+    val info = tokens.info()
     return when(tokens.next()) {
         is Token.While -> {
             val condition = parseExpression(tokens, variables)
             val body = parseExpression(tokens, variables)
-            Statement.While(condition, body)
+            Statement.While(condition, body, info.finish())
         }
         is Token.For -> {
             tokens.previous()
-            Statement.For(parseForLoopConstruct(tokens, variables))
+            Statement.For(parseForLoopConstruct(tokens, variables), info.finish())
         }
         is Token.Return -> {
             if (tokens.visitNext() == Token.ClosingCurly) {
-                Statement.Return(null)
+                Statement.Return(null, info.finish())
             } else {
                 val expr = parseExpression(tokens, variables)
                 if (tokens.visitNext() != Token.ClosingCurly) {
-                    error("Dead code detected")
+                    val deadCodeBegin = tokens.info()
+                    while(tokens.hasNext() && tokens.next() != Token.ClosingCurly) {}
+                    tokens.error("Dead code detected", deadCodeBegin.finish(), MessageKind.Logic)
                 }
-                Statement.Return(expr)
+                Statement.Return(expr, info.finish())
             }
         }
         else -> {
@@ -219,11 +271,11 @@ fun parseStatement(tokens: Tokens, variables: Variables): Statement {
                 expr is Expression.AccessProperty && tokens.visitNext() == Token.EqualSign ->  {
                     tokens.expect<Token.EqualSign>()
                     val value = parseExpression(tokens, variables)
-                    Statement.AssignProperty(expr.parent, expr.name, value)
+                    Statement.AssignProperty(expr.parent, expr.name, value, info.finish())
                 }
                 (expr is Expression.Invokable) && tokens.visitNext() == Token.EqualSign -> {
                     tokens.next()
-                    Statement.Assign(expr.name, parseExpression(tokens, variables)).also {
+                    Statement.Assign(expr.name, parseExpression(tokens, variables), info.finish()).also {
                         variables.put(expr.name)
                     }
                 }
@@ -237,88 +289,71 @@ fun parseExpression(tokens: Tokens, variables: Variables): Expression {
     return parseExpressionComparing(tokens, variables)
 }
 fun parseExpressionComparing(tokens: Tokens, variables: Variables): Expression {
+    val info = tokens.info()
     val first = parseExpressionAdd(tokens, variables)
-    return when(tokens.visitNext()) {
-        is Token.Eq -> {
-            tokens.next()
-            val other = parseExpressionComparing(tokens, variables)
-            Expression.Comparing(first, other, CompareOp.Eq)
-        }
-        is Token.Neq -> {
-            tokens.next()
-            val other = parseExpressionComparing(tokens, variables)
-            Expression.Comparing(first, other, CompareOp.Neq)
-        }
-        is Token.Gt -> {
-            tokens.next()
-            val other = parseExpressionComparing(tokens, variables)
-            Expression.Comparing(first, other, CompareOp.Gt)
-        }
-        is Token.St -> {
-            tokens.next()
-            val other = parseExpressionComparing(tokens, variables)
-            Expression.Comparing(first, other, CompareOp.St)
-        }
-        is Token.EGt -> {
-            tokens.next()
-            val other = parseExpressionComparing(tokens, variables)
-            Expression.Comparing(first, other, CompareOp.EGt)
-        }
-        is Token.ESt -> {
-            tokens.next()
-            val other = parseExpressionComparing(tokens, variables)
-            Expression.Comparing(first, other, CompareOp.ESt)
-        }
-        else -> first
+    val op = when(tokens.visitNext()) {
+        Token.Eq -> CompareOp.Eq
+        Token.Neq -> CompareOp.Neq
+        Token.Gt -> CompareOp.Gt
+        Token.St -> CompareOp.St
+        Token.EGt -> CompareOp.EGt
+        Token.ESt -> CompareOp.ESt
+        else -> return first
     }
+    tokens.next()
+    val other = parseExpressionComparing(tokens, variables)
+    return Expression.Comparing(first, other, op, info.finish())
 }
 
 
 fun parseExpressionAdd(tokens: Tokens, variables: Variables): Expression {
+    val info = tokens.info()
     val first = parseExpressionMul(tokens, variables)
     return when(tokens.visitNext()) {
         is Token.Plus -> {
             tokens.next()
             val other = parseExpressionAdd(tokens, variables)
-            Expression.Math(first, other, MathOp.Add)
+            Expression.Math(first, other, MathOp.Add, info.finish())
         }
         is Token.Minus -> {
             tokens.next()
             val other = parseExpressionAdd(tokens, variables)
-            Expression.Math(first, other, MathOp.Sub)
+            Expression.Math(first, other, MathOp.Sub, info.finish())
         }
         else -> first
     }
 }
 
 fun parseExpressionMul(tokens: Tokens, variables: Variables): Expression {
+    val info = tokens.info()
     val first = parseExpressionRanges(tokens, variables)
     return when(tokens.visitNext()) {
         is Token.Star -> {
             tokens.next()
             val other = parseExpressionMul(tokens, variables)
-            Expression.Math(first, other, MathOp.Mul)
+            Expression.Math(first, other, MathOp.Mul, info.finish())
         }
         is Token.Slash -> {
             tokens.next()
             val other = parseExpressionMul(tokens, variables)
-            Expression.Math(first, other, MathOp.Div)
+            Expression.Math(first, other, MathOp.Div, info.finish())
         }
         is Token.Or -> {
             tokens.next()
             val other = parseExpressionMul(tokens, variables)
-            Expression.BooleanOperation(first, other, BooleanOp.Or)
+            Expression.BooleanOperation(first, other, BooleanOp.Or, info.finish())
         }
         is Token.And -> {
             tokens.next()
             val other = parseExpressionMul(tokens, variables)
-            Expression.BooleanOperation(first, other, BooleanOp.And)
+            Expression.BooleanOperation(first, other, BooleanOp.And, info.finish())
         }
         else -> first
     }
 }
 
 fun parseExpressionRanges(tokens: Tokens, variables: Variables): Expression {
+    val info = tokens.info()
     if (tokens.visitNext() == Token.Range) {
         tokens.expect<Token.Range>()
         val upperInclusive = if (tokens.visitNext() == Token.EqualSign) {
@@ -328,7 +363,7 @@ fun parseExpressionRanges(tokens: Tokens, variables: Variables): Expression {
             false
         }
         val bound = parseExpressionCall(tokens, variables)
-        return Range.UntilUpper(bound, upperInclusive)
+        return Range.UntilUpper(bound, upperInclusive, info.finish())
     }
 
     val lower = parseExpressionCall(tokens, variables)
@@ -343,7 +378,7 @@ fun parseExpressionRanges(tokens: Tokens, variables: Variables): Expression {
     }
 
     val upper = parseExpressionCall(tokens, variables)
-    return Range.Normal(lower, upper, upperInclusive)
+    return Range.Normal(lower, upper, upperInclusive, info.finish())
 }
 
 fun parseExpressionCall(tokens: Tokens, variables: Variables): Expression {
@@ -352,10 +387,11 @@ fun parseExpressionCall(tokens: Tokens, variables: Variables): Expression {
 }
 
 fun parseExpressionCallBase(first: Expression, tokens: Tokens, variables: Variables): Expression {
+    val info = tokens.info()
     return when(tokens.visitNext()) {
         is Token.QuestionMark -> {
             tokens.next()
-            parseExpressionCallBase(Expression.Try(first), tokens, variables)
+            parseExpressionCallBase(Expression.Try(first, info.finish()), tokens, variables)
         }
         is Token.OpenBracket -> {
             tokens.next()
@@ -368,7 +404,8 @@ fun parseExpressionCallBase(first: Expression, tokens: Tokens, variables: Variab
             parseExpressionCallBase(
                 Expression.Invoke(
                     first,
-                    args.mapIndexed { index, expression -> "$index" to expression }.toMap()
+                    args.mapIndexed { index, expression -> "$index" to expression }.toMap(),
+                    info.finish()
                 ),
                 tokens,
                 variables
@@ -378,7 +415,7 @@ fun parseExpressionCallBase(first: Expression, tokens: Tokens, variables: Variab
             tokens.next()
             val name = tokens.expect<Token.Identifier>().name
             parseExpressionCallBase(
-                Expression.AccessProperty(first, name),
+                Expression.AccessProperty(first, name, info.finish()),
                 tokens,
                 variables
             )
@@ -392,7 +429,8 @@ fun parseExpressionCallBase(first: Expression, tokens: Tokens, variables: Variab
             parseExpressionCallBase(
                 Expression.Invoke(
                     first,
-                    args.mapIndexed { index, expression -> "$index" to expression }.toMap()
+                    args.mapIndexed { index, expression -> "$index" to expression }.toMap(),
+                    info.finish()
                 ),
                 tokens,
                 variables
@@ -414,7 +452,7 @@ fun parseCallingArgs(tokens: Tokens, variables: Variables, closingSymbol: Token)
         when (val token = tokens.next()) {
             closingSymbol -> break
             Token.Comma -> continue
-            else -> error("Expected , or $closingSymbol but got $token")
+            else -> tokens.error("Expected , or $closingSymbol but got $token", MessageKind.Syntax)
         }
     }
 }
@@ -427,6 +465,7 @@ val arrayDeclarationTypes = mapOf(
 )
 
 fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
+    val info = tokens.info()
     return when(val tk = tokens.visitNext()) {
         is Token.Match -> {
             tokens.expect<Token.Match>()
@@ -442,24 +481,25 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
 
             if (tk.name in variables) {
                 tokens.expect<Token.Identifier>()
-                Expression.VariableSymbol(tk.name)
+                Expression.VariableSymbol(tk.name, info.finish())
             } else {
                 try {
-                    Expression.UnknownSymbol(parseSignature(tokens).first.oxideNotation)
+                    Expression.UnknownSymbol(parseSignature(tokens).first.oxideNotation, info.finish())
                 } catch (e: Exception) {
-                    Expression.UnknownSymbol(tk.name)
+                    Expression.UnknownSymbol(tk.name, info.finish())
                 }
             }
         }
+        is Token.Catch -> parseCatch(tokens, variables)
         is Token.ExclamationMark -> {
             tokens.expect<Token.ExclamationMark>()
-            Expression.Not(parseExpressionRanges(tokens, variables))
+            Expression.Not(parseExpressionRanges(tokens, variables), info.finish())
         }
         is Token.Keep -> {
             tokens.expect<Token.Keep>()
             //the value that should be kept
             val value = parseExpression(tokens, variables)
-            Expression.Keep(value)
+            Expression.Keep(value, info.finish())
         }
         is Token.OpenSquare -> {
             tokens.expect<Token.OpenSquare>()
@@ -476,10 +516,10 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
                 val statements = parseStatements(tokens, scope)
                 val capturedVariables = scope.usedParentVars()
 
-                return Expression.Lambda(argumentNames, Expression.ReturningScope(statements), capturedVariables)
+                return Expression.Lambda(argumentNames, Expression.ReturningScope(statements, info.finish()), capturedVariables, info.finish())
             }
             val statements = parseStatements(tokens, variables.child())
-            Expression.ReturningScope(statements)
+            Expression.ReturningScope(statements, info.finish())
         }
         is Token.If -> {
             tokens.expect<Token.If>()
@@ -490,7 +530,7 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
                 parseExpression(tokens, variables)
             } else null
 
-            Expression.IfElse(condition, body, elseBody)
+            Expression.IfElse(condition, body, elseBody, info.finish())
         }
 
         else -> parseConst(tokens)
@@ -498,6 +538,7 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
 }
 
 fun parseForLoopConstruct(tokens: Tokens, variables: Variables): ForLoopConstruct {
+    val info = tokens.info()
     tokens.expect<Token.For>()
     val name = tokens.expect<Token.Identifier>().name
     val indexName = if (tokens.visitNext() == Token.Comma) {
@@ -510,7 +551,25 @@ fun parseForLoopConstruct(tokens: Tokens, variables: Variables): ForLoopConstruc
     scope.put(name)
     indexName?.let { scope.put(it) }
     val body = parseConstructingArgument(tokens, scope)
-    return ForLoopConstruct(parent, name, indexName, body)
+    return ForLoopConstruct(parent, name, indexName, body, info.finish())
+}
+
+fun parseCatch(tokens: Tokens, variables: Variables): Expression.Catch {
+    val info = tokens.info()
+    tokens.expect<Token.Catch>()
+    val type = if (tokens.visitNext() == Token.St) {
+        parseType(tokens)
+    } else {
+        null
+    }
+
+    val expr = parseExpression(tokens, variables)
+    val meta = info.finish()
+    if (expr !is Expression.ReturningScope) {
+        tokens.error("Expected block after catch", meta, MessageKind.Syntax)
+    }
+
+    return Expression.Catch(expr, type, meta)
 }
 
 fun parseConstructingArgument(tokens: Tokens, variables: Variables): ConstructingArgument {
@@ -527,10 +586,11 @@ fun parseConstructingArgument(tokens: Tokens, variables: Variables): Constructin
 }
 
 fun parseArray(type: ArrayType, tokens: Tokens, variables: Variables, closingSymbol: Token = Token.ClosingSquare): Expression.Array {
+    val info = tokens.info()
     when (tokens.visitNext()) {
         closingSymbol -> {
             tokens.next()
-            return Expression.ConstArray(type, emptyList())
+            return Expression.ConstArray(type, emptyList(), info.finish())
         }
         else -> {}
     }
@@ -543,45 +603,46 @@ fun parseArray(type: ArrayType, tokens: Tokens, variables: Variables, closingSym
 
             Token.SemiColon -> {
                 val item = when {
-                    items.size != 1 -> error("")
-                    items[0] !is ConstructingArgument.Normal -> error("")
+                    items.size != 1 -> tokens.error("", MessageKind.Syntax)
+                    items[0] !is ConstructingArgument.Normal -> tokens.error("", MessageKind.Syntax)
                     else -> (items[0] as ConstructingArgument.Normal).expression
                 }
                 val size = parseExpression(tokens, variables)
                 tokens.expect(closingSymbol)
-                return Expression.DefaultArray(type, item, size)
+                return Expression.DefaultArray(type, item, size, info.finish())
             }
             Token.Comma -> continue
             closingSymbol -> break
-            else -> error("Invalid symbol `$tk`")
+            else -> tokens.error("Expected `,` or `]` but got `$tk`", MessageKind.Syntax)
         }
     }
 
-    return Expression.ConstArray(type, items)
+    return Expression.ConstArray(type, items, info.finish())
 }
 
 fun parseConst(tokens: Tokens): Expression.Const {
+    val info = tokens.info()
     return when(val token = tokens.next()) {
         is Token.Minus -> {
-            when (tokens.visitNext()) {
+            when (val num = tokens.next()) {
                 is Token.ConstNum -> {
-                    val number = tokens.expect<Token.ConstNum>()
-                    Expression.ConstNum(-parseNumber(tokens, number.value).num)
+                    Expression.ConstNum(-parseNumber(tokens, num.value).num, info.finish())
                 }
-                else -> error("Unexpected token $token at parseExpressionBase")
+                else -> tokens.error("Unexpected token $num", MessageKind.Syntax)
             }
         }
-        is Token.ConstStr -> Expression.ConstStr(token.value)
+        is Token.ConstStr -> Expression.ConstStr(token.value, info.finish())
         is Token.ConstNum -> parseNumber(tokens, token.value)
-        is Token.True -> Expression.ConstBool(true)
-        is Token.False -> Expression.ConstBool(false)
-        is Token.Null -> Expression.ConstNull
-        else -> error("Cannot $token")
+        is Token.True -> Expression.ConstBool(true, info.finish())
+        is Token.False -> Expression.ConstBool(false, info.finish())
+        is Token.Null -> Expression.ConstNull(info.finish())
+        else -> tokens.error("Unexpected token $token", MessageKind.Syntax)
     }
 }
 
 
 fun parseMatch(tokens: Tokens, variables: Variables): Expression.Match {
+    val info = tokens.info()
     val parent = parseExpression(tokens, variables)
     tokens.expect<Token.OpenCurly>()
     val patterns = mutableListOf<Pair<Pattern, Expression>>()
@@ -600,7 +661,7 @@ fun parseMatch(tokens: Tokens, variables: Variables): Expression.Match {
         patterns.add(pattern to body)
     }
 
-    return Expression.Match(parent, patterns)
+    return Expression.Match(parent, patterns, info.finish())
 }
 
 private fun parsePatterns(tokens: Tokens, variables: Variables): List<Pattern> {
@@ -614,12 +675,13 @@ private fun parsePatterns(tokens: Tokens, variables: Variables): List<Pattern> {
         when(val tk = tokens.next()) {
             Token.ClosingBracket -> return patterns
             Token.Comma -> continue
-            else -> error("Invalid token $tk")
+            else -> tokens.error("Invalid token $tk", MessageKind.Syntax)
         }
     }
 }
 
 private fun parsePattern(tokens: Tokens, variables: Variables): Pattern {
+    val info = tokens.info()
     val base = parsePatternBase(tokens, variables)
     return when(tokens.visitNext()) {
         Token.If -> {
@@ -629,7 +691,7 @@ private fun parsePattern(tokens: Tokens, variables: Variables): Pattern {
                 base.bindingNames.forEach { name -> put(name) }
             }
             val condition = parseExpression(tokens, scope)
-            Pattern.Conditional(condition, base)
+            Pattern.Conditional(condition, base, info.finish())
         }
         is Token.Comparison -> {
             when(base) {
@@ -637,8 +699,8 @@ private fun parsePattern(tokens: Tokens, variables: Variables): Pattern {
                     val op = tokens.expect<Token.Comparison>().toCompareOp()
                     val scope = variables.child().apply { put(base.name) }
                     val value = parseExpression(tokens, scope)
-                    val condition = Expression.Comparing(Expression.VariableSymbol(base.name), value, op)
-                    Pattern.Conditional(condition, base)
+                    val condition = Expression.Comparing(Expression.VariableSymbol(base.name, info.finish()), value, op, info.finish())
+                    Pattern.Conditional(condition, base, info.finish())
                 }
                 else -> base
             }
@@ -648,9 +710,11 @@ private fun parsePattern(tokens: Tokens, variables: Variables): Pattern {
 }
 
 private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
+    val info = tokens.info()
     val tk = tokens.visitNext()
-    if (tk !is Token.Identifier) {
-        return Pattern.Const(parseConst(tokens))
+    val tok = tk
+    if (tok !is Token.Identifier) {
+        return Pattern.Const(parseConst(tokens), info.finish())
     }
 
     if (tokens.visit2Next() is Token.Comparison) {
@@ -659,11 +723,13 @@ private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
         val expr = parseExpression(tokens, variables)
         return Pattern.Conditional(
             condition= Expression.Comparing(
-                first =Expression.VariableSymbol(tk.name),
+                first =Expression.VariableSymbol(tok.name, info.finish()),
                 second =expr,
-                op = op.toCompareOp()
+                op = op.toCompareOp(),
+                info.finish()
             ),
-            parent = Pattern.Binding(tk.name)
+            parent = Pattern.Binding(tok.name, info.finish()),
+            info.finish()
         )
     }
 
@@ -673,13 +739,13 @@ private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
                 is Token.OpenBracket -> {
                     tokens.expect<Token.OpenBracket>()
                     val patterns = parsePatterns(tokens, variables)
-                    Pattern.Destructuring(type, patterns)
+                    Pattern.Destructuring(type, patterns, info.finish())
                 }
-                else -> Pattern.Destructuring(type, emptyList())
+                else -> Pattern.Destructuring(type, emptyList(), info.finish())
             }
         },
         onFailure = {
-            Pattern.Binding(tk.name)
+            Pattern.Binding(tok.name, info.finish())
         }
     )
 
@@ -693,12 +759,12 @@ private fun parseGenericDefinition(tokens: Tokens): Map<String, GenericType> {
     tokens.expect<Token.St>()
     val generics = mutableMapOf<String, GenericType>()
     while(true) {
-        val modifiers = parseModifiers(tokens)
+        val (modifiers, _) = parseModifiers(tokens)
         generics+=tokens.expect<Token.Identifier>().name to GenericType(modifiers, emptyList())
         when(val tk = tokens.next()) {
             is Token.Gt -> return generics
             is Token.Comma -> continue
-            else -> error("Invalid token $tk expected closing `>` or `,`")
+            else -> tokens.error("Invalid token $tk expected closing `>` or `,`", MessageKind.Syntax)
         }
     }
 }
@@ -714,7 +780,7 @@ private fun parseGenericArgs(tokens: Tokens, generics: Set<String>): List<Templa
         when(val tk = tokens.next()) {
             is Token.Gt -> return genericTypes
             is Token.Comma -> continue
-            else -> error("Invalid token $tk expected closing `>` or `,`")
+            else -> tokens.error("Invalid token $tk expected closing `>` or `,`", MessageKind.Syntax)
         }
     }
 }
@@ -739,7 +805,8 @@ private fun parseType(tokens: Tokens, generics: Set<String> = emptySet(), allowG
     }
 }
 
-private fun parseTypeBase(tokens: Tokens, generics: Set<String> = emptySet(), allowGenerics: Boolean = true): TemplatedType = when(val tk = tokens.visitNext()) {
+private fun parseTypeBase(tokens: Tokens, generics: Set<String> = emptySet(), allowGenerics: Boolean = true): TemplatedType
+= when(val tk = tokens.visitNext()) {
     is Token.Null -> {
         tokens.expect<Token.Null>()
         TemplatedType.Null
@@ -753,7 +820,7 @@ private fun parseTypeBase(tokens: Tokens, generics: Set<String> = emptySet(), al
             "bool" -> TemplatedType.BoolT.also { tokens.next() }
             else -> {
                 TemplatedType.Complex(
-                    runCatching { parseSignature(tokens).first }.getOrNull() ?: error("Invalid type ${tk.name}"),
+                    runCatching { parseSignature(tokens).first }.getOrNull() ?: tokens.error("Invalid type ${tk.name}", MessageKind.Syntax),
                     if (allowGenerics) parseGenericArgs(tokens, generics) else emptyList()
                 )
             }
@@ -765,30 +832,29 @@ private fun parseTypeBase(tokens: Tokens, generics: Set<String> = emptySet(), al
         tokens.expect<Token.ClosingSquare>()
         TemplatedType.Array(item)
     }
-    else -> error("Unexpected token $tk")
+    else -> {
+        tokens.next()
+        tokens.error("Unexpected token $tk", MessageKind.Syntax)
+    }
 
 }
 
 
 private fun parseNumber(tokens: Tokens, initial: Int): Expression.ConstNum {
+    val info = tokens.info()
     return when {
         tokens.visitNext() is Token.Dot && tokens.visit2Next() is Token.ConstNum -> {
             tokens.next()
             val number = tokens.expect<Token.ConstNum>()
-            Expression.ConstNum("${initial}.${number.value}".toDouble())
+            Expression.ConstNum("${initial}.${number.value}".toDouble(), info.finish())
         }
-        else -> Expression.ConstNum(initial.toDouble())
+        else -> Expression.ConstNum(initial.toDouble(), info.finish())
     }
 }
 
-fun Tokens.visitNext() = if (hasNext()) next().also { previous() } else null
-
 fun Tokens.visit2Next() = next().let { next().also { previous(); previous() } }
 
-inline fun<reified A> Iterator<*>.expect(): A = when (val v = next()){
-    !is A -> error("Expected ${A::class.simpleName} but got `$v`")
-    else -> v
-}
+
 
 fun<A> Iterator<*>.expect(item: A) = when(val v = next()) {
     item -> item

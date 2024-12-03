@@ -15,6 +15,7 @@ import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.variables.*
 import com.language.eval.*
+import com.language.lexer.MetaInfo
 import com.language.lookup.IRLookup
 import com.language.lookup.oxide.lazyTransform
 import kotlinx.coroutines.async
@@ -22,26 +23,49 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.objectweb.asm.Label
+import java.lang.RuntimeException
 
+
+data class MetaData(val info: MetaInfo, val sourceFile: SignatureString)
+
+fun MetaInfo.join(sourceFile: SignatureString) = MetaData(this, sourceFile)
+
+class TypeError(
+    val info: MetaData,
+    override val message: String,
+    val trace: List<Pair<MetaData, List<Type>>>
+) : RuntimeException(message)
 
 sealed class Instruction {
+
+    abstract val info: MetaData
 
     open fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
         //gracefully ignore if not overwritten
     }
 
-    abstract suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction
+    abstract suspend fun inferTypes(
+        variables: VariableManager,
+        lookup: IRLookup,
+        handle: MetaDataHandle
+    ): TypedInstruction
 
     data class DynamicCall(
         val parent: Instruction,
         val name: String,
         val args: List<Instruction>,
+        override val info: MetaData
     ) : Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val parent = parent.inferTypes(variables, lookup, handle)
 
-            val result =  inferCall(
+            val result = inferCall(
                 args,
                 name,
                 parent,
@@ -70,7 +94,12 @@ sealed class Instruction {
         }
     }
 
-    data class Keep(val value: Instruction, val name: String, val ownerSig: SignatureString): Instruction() {
+    data class Keep(
+        val value: Instruction,
+        val name: String,
+        val ownerSig: SignatureString,
+        override val info: MetaData
+    ) : Instruction() {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
@@ -87,17 +116,30 @@ sealed class Instruction {
 
     }
 
-    data class ConstArray(val arrayType: ArrayType, val items: List<ConstructingArgument>) : Instruction() {
+    data class ConstArray(
+        val arrayType: ArrayType,
+        val items: List<ConstructingArgument>,
+        override val info: MetaData
+    ) : Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
-            return when(items.all { it is ConstructingArgument.Normal }) {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
+            return when (items.all { it is ConstructingArgument.Normal }) {
                 true -> constArray(variables, lookup, handle)
                 false -> notConstArray(variables, lookup, handle)
             }
         }
 
-        private suspend fun constArray(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction.LoadConstArray {
-            val typedItems = items.map { (it as ConstructingArgument.Normal).item.inferTypes(variables, lookup, handle) }
+        private suspend fun constArray(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction.LoadConstArray {
+            val typedItems =
+                items.map { (it as ConstructingArgument.Normal).item.inferTypes(variables, lookup, handle) }
             val itemType = typedItems.map { it.type }.reduceOrNull { acc, type -> acc.join(type) }
             val broadType = itemType
                 ?.let { Type.BroadType.Known(it) }
@@ -105,7 +147,11 @@ sealed class Instruction {
             return TypedInstruction.LoadConstArray(typedItems, arrayType, broadType)
         }
 
-        private suspend fun notConstArray(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction.LoadArray {
+        private suspend fun notConstArray(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction.LoadArray {
             //temp variable for index storage
             variables.getTempVar(Type.IntT).use { indexStorage ->
                 //temp variable for the array during construction
@@ -115,10 +161,19 @@ sealed class Instruction {
                     //get the common type of all items
                     val itemType = typedItems.itemType(lookup)
 
-                    when(arrayType) {
-                        ArrayType.Int -> if (!itemType.getOrDefault(Type.IntT).isContainedOrEqualTo(Type.IntT)) error("Type Error Primitive Int array can only hold IntT")
-                        ArrayType.Double -> if (!itemType.getOrDefault(Type.DoubleT).isContainedOrEqualTo(Type.DoubleT)) error("Type Error Primitive Int array can only hold DoubleT")
-                        ArrayType.Bool -> if (!itemType.getOrDefault(Type.BoolUnknown).isContainedOrEqualTo(Type.BoolUnknown)) error("Type Error Primitive Int array can only hold BoolT")
+                    when (arrayType) {
+                        ArrayType.Int -> if (!itemType.getOrDefault(Type.IntT)
+                                .isContainedOrEqualTo(Type.IntT)
+                        ) error("Type Error Primitive Int array can only hold IntT")
+
+                        ArrayType.Double -> if (!itemType.getOrDefault(Type.DoubleT)
+                                .isContainedOrEqualTo(Type.DoubleT)
+                        ) error("Type Error Primitive Int array can only hold DoubleT")
+
+                        ArrayType.Bool -> if (!itemType.getOrDefault(Type.BoolUnknown)
+                                .isContainedOrEqualTo(Type.BoolUnknown)
+                        ) error("Type Error Primitive Int array can only hold BoolT")
+
                         ArrayType.Object -> {}
                     }
                     return TypedInstruction.LoadArray(typedItems, arrayType, itemType, indexStorage.id, arrayStorage.id)
@@ -129,11 +184,19 @@ sealed class Instruction {
 
     sealed interface ConstructingArgument {
 
-        suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedConstructingArgument
+        suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedConstructingArgument
 
         @JvmInline
-        value class Collected(private val item: Instruction): ConstructingArgument {
-            override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedConstructingArgument {
+        value class Collected(private val item: Instruction) : ConstructingArgument {
+            override suspend fun inferTypes(
+                variables: VariableManager,
+                lookup: IRLookup,
+                handle: MetaDataHandle
+            ): TypedConstructingArgument {
                 val item = item.inferTypes(variables, lookup, handle)
                 if (!item.type.isCollectable(lookup)) {
                     error("Type Error: Cannot collect ${item.type}")
@@ -143,35 +206,51 @@ sealed class Instruction {
         }
 
         @JvmInline
-        value class Iteration(private val loop: ForLoop): ConstructingArgument {
+        value class Iteration(private val loop: ForLoop) : ConstructingArgument {
             override suspend fun inferTypes(
                 variables: VariableManager,
                 lookup: IRLookup,
                 handle: MetaDataHandle
             ): TypedConstructingArgument {
-                return TypedConstructingArgument.Iteration(loop.inferTypes(variables, lookup, handle) as TypedInstruction.ForLoop)
+                return TypedConstructingArgument.Iteration(
+                    loop.inferTypes(
+                        variables,
+                        lookup,
+                        handle
+                    ) as TypedInstruction.ForLoop
+                )
             }
 
         }
 
         @JvmInline
         value class Normal(val item: Instruction) : ConstructingArgument {
-            override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedConstructingArgument {
+            override suspend fun inferTypes(
+                variables: VariableManager,
+                lookup: IRLookup,
+                handle: MetaDataHandle
+            ): TypedConstructingArgument {
                 return TypedConstructingArgument.Normal(item.inferTypes(variables, lookup, handle))
             }
         }
     }
 
-    data class ConstArrayList(val items: List<ConstructingArgument>) : Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+    data class ConstArrayList(val items: List<ConstructingArgument>, override val info: MetaData) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             return when {
                 items.isEmpty() -> TypedInstruction.LoadList(emptyList(), Type.BroadType.Unset, null)
-                items.any { it is ConstructingArgument.Iteration } -> variables.getTempVar(Type.Object).use { variable ->
-                    val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
-                    val itemType = typedItems.itemType(lookup)
-                    TypedInstruction.LoadList(typedItems, itemType, variable.id)
-                }
-                else ->{
+                items.any { it is ConstructingArgument.Iteration } -> variables.getTempVar(Type.Object)
+                    .use { variable ->
+                        val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
+                        val itemType = typedItems.itemType(lookup)
+                        TypedInstruction.LoadList(typedItems, itemType, variable.id)
+                    }
+
+                else -> {
                     val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
                     val itemType = typedItems.itemType(lookup)
                     TypedInstruction.LoadList(typedItems, itemType, null)
@@ -181,31 +260,59 @@ sealed class Instruction {
 
     }
 
-    data class LoadConstString(val value: String) : Instruction() {
+    data class LoadConstString(val value: String, override val info: MetaData) : Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             return TypedInstruction.LoadConstString(value)
         }
     }
 
-    data class LoadConstInt(val value: Int) : Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+    data class LoadConstInt(val value: Int, override val info: MetaData) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             return TypedInstruction.LoadConstInt(value)
         }
     }
-    data class LoadConstDouble(val value: Double) : Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+    data class LoadConstDouble(val value: Double, override val info: MetaData) : Instruction() {
+
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             return TypedInstruction.LoadConstDouble(value)
         }
     }
-    data class LoadConstBool(val value: Boolean) : Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+
+    data class LoadConstBool(val value: Boolean, override val info: MetaData) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             return TypedInstruction.LoadConstBoolean(value)
         }
     }
-    data class If(val cond: Instruction, val body: Instruction, val elseBody: Instruction?) : Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction = coroutineScope {
+
+    data class If(
+        val cond: Instruction,
+        val body: Instruction,
+        val elseBody: Instruction?,
+        override val info: MetaData
+    ) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction = coroutineScope {
             val cond = cond.inferTypes(variables, lookup, handle)
             if (cond.type !is Type.BoolT) {
                 error("Condition must be of type boolean but was ${cond.type}")
@@ -241,7 +348,7 @@ sealed class Instruction {
     }
 
 
-    data class For(val forLoop: ForLoop) : Instruction() {
+    data class For(val forLoop: ForLoop, override val info: MetaData) : Instruction() {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
@@ -251,12 +358,17 @@ sealed class Instruction {
         }
     }
 
-    data class While(val cond: Instruction, val body: Instruction) : Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+    data class While(val cond: Instruction, val body: Instruction, override val info: MetaData) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val cond = cond.inferTypes(variables, lookup, handle)
             if (cond.type !is Type.BoolT) {
                 error("Condition must be of type boolean vzt us")
             }
+            val isInfinite = cond.type == Type.BoolTrue
             val bodyScope = variables.clone()
             //we execute it twice since types may change between the first and second iterations
             //that means, it has to survive 2 iterations then it's safe
@@ -264,27 +376,34 @@ sealed class Instruction {
             val body = body.inferTypes(bodyScope, lookup, handle)
             variables.merge(listOf(bodyScope))
 
-            return TypedInstruction.While(cond, body)
+            return TypedInstruction.While(cond, body, isInfinite)
         }
     }
+
     data class ConstructorCall(
         val className: SignatureString,
         val args: List<Instruction>,
+        override val info: MetaData
     ) : Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val args = args.map { it.inferTypes(variables, lookup, handle) }
             val candidate = lookup.lookUpConstructor(className, args.map { it.type })
             return TypedInstruction.ConstructorCall(
                 className,
                 args,
                 candidate,
-               candidate.oxideReturnType
+                candidate.oxideReturnType
             )
         }
     }
 
-    data class InvokeLambda(val lambdaParent: Instruction, val args: List<Instruction>): Instruction() {
+    data class InvokeLambda(val lambdaParent: Instruction, val args: List<Instruction>, override val info: MetaData) :
+        Instruction() {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
@@ -304,6 +423,7 @@ sealed class Instruction {
                             val provider = variables.variables[arg.name] ?: error("Underlying arg doesnt exist")
                             scope.putVar(name, provider) //use the same provider with 2 names
                         }
+
                         else -> loadInstructions.add(typedArg)
                     }
                 }
@@ -316,10 +436,11 @@ sealed class Instruction {
                 )
             }
             //when lambda invoked
-            val candidate = when(val tp = parent.type) {
+            val candidate = when (val tp = parent.type) {
                 is Type.Lambda -> {
                     lookup.lookupLambdaInvoke(tp.signature, args.map { it.type })
                 }
+
                 else -> error("Cannot invoke non lambda")
             }
             return TypedInstruction.DynamicCall(candidate, "invoke", parent, args, null)
@@ -331,11 +452,17 @@ sealed class Instruction {
         val moduleName: SignatureString,
         val name: String,
         val args: List<Instruction>,
+        override val info: MetaData
     ) : Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val args = args.map { it.inferTypes(variables, lookup, handle) }
-            lookup.processInlining(variables, moduleName, name, args, this.args, handle.inheritedGenerics)?.let { return it }
+            lookup.processInlining(variables, moduleName, name, args, this.args, handle.inheritedGenerics)
+                ?.let { return it }
             val candidate = lookup.lookUpCandidate(moduleName, name, args.map { it.type })
             return TypedInstruction.ModuleCall(
                 candidate,
@@ -347,7 +474,8 @@ sealed class Instruction {
     }
 
     data class Not(
-        val ins: Instruction
+        val ins: Instruction,
+        override val info: MetaData
     ) : Instruction() {
         override suspend fun inferTypes(
             variables: VariableManager,
@@ -366,7 +494,8 @@ sealed class Instruction {
     data class LogicalOperation(
         val first: Instruction,
         val second: Instruction,
-        val op: BooleanOp
+        val op: BooleanOp,
+        override val info: MetaData
     ) : Instruction() {
         override suspend fun inferTypes(
             variables: VariableManager,
@@ -380,7 +509,7 @@ sealed class Instruction {
             if (second.type !is Type.BoolT) error("Expected $second to have type BoolT")
 
             if (first is TypedInstruction.Const && second is TypedInstruction.Const) {
-               return evalBoolLogic(first, second, op)
+                return evalBoolLogic(first, second, op)
             }
 
             if (first is TypedInstruction.Const) {
@@ -400,11 +529,20 @@ sealed class Instruction {
         val classModuleName: SignatureString,
         val name: String,
         val args: List<Instruction>,
+        override val info: MetaData
     ) : Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
-            val args= args.map { it.inferTypes(variables, lookup, handle) }
-            val candidate = lookup.lookUpCandidate(classModuleName, name, args.map { it.type }, handle.inheritedGenerics.lazyTransform { _, it -> Type.BroadType.Known(it) })
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
+            val args = args.map { it.inferTypes(variables, lookup, handle) }
+            val candidate = lookup.lookUpCandidate(
+                classModuleName,
+                name,
+                args.map { it.type },
+                handle.inheritedGenerics.lazyTransform { _, it -> Type.BroadType.Known(it) })
             return TypedInstruction.StaticCall(
                 candidate,
                 name,
@@ -413,10 +551,16 @@ sealed class Instruction {
             )
         }
     }
-    data class Math(val op: MathOp, val first: Instruction, val second: Instruction) : Instruction()  {
+
+    data class Math(val op: MathOp, val first: Instruction, val second: Instruction, override val info: MetaData) :
+        Instruction() {
 
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val first = first.inferTypes(variables, lookup, handle)
             val second = second.inferTypes(variables, lookup, handle)
 
@@ -434,23 +578,42 @@ sealed class Instruction {
             )
         }
     }
-    data class StoreVar(val name: String, val value: Instruction) : Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+
+    data class StoreVar(val name: String, val value: Instruction, override val info: MetaData) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val value = value.inferTypes(variables, lookup, handle)
 
-            return when(value) {
+            if (name == "_") {
+                //don't store to a physical variable. ignore the result of the expression
+                if (value is TypedInstruction.Const) {
+                    return TypedInstruction.Noop(Type.Nothing)
+                }
+                return TypedInstruction.Ignore(value)
+            }
+
+            return when (value) {
                 is TypedInstruction.Const -> {
                     variables.putVar(name, SemiConstBinding(value))
                     TypedInstruction.Noop(Type.Nothing)
                 }
+
                 else -> variables.changeVar(name, value)
             }
         }
     }
-    data class LoadVar(val name: String) : Instruction() {
+
+    data class LoadVar(val name: String, override val info: MetaData) : Instruction() {
 
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             return variables.loadVar(name)
         }
 
@@ -458,14 +621,19 @@ sealed class Instruction {
             variables.genericChangeRequest(this.name, name, type)
         }
     }
-    data class MultiInstructions(val instructions: List<Instruction>) : Instruction() {
+
+    data class MultiInstructions(val instructions: List<Instruction>, override val info: MetaData) : Instruction() {
 
 
         override fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
             instructions.lastOrNull()?.genericChangeRequest(variables, name, type)
         }
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val typedInstructions = mutableListOf<TypedInstruction>()
             for (instruction in instructions) {
                 val typedIns = instruction.inferTypes(variables, lookup, handle)
@@ -477,16 +645,21 @@ sealed class Instruction {
         }
     }
 
-    //its unknown since its dynamic
-    data class DynamicPropertyAccess(val parent: Instruction, val name: String): Instruction() {
+    data class DynamicPropertyAccess(val parent: Instruction, val name: String, override val info: MetaData) :
+        Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val parent = parent.inferTypes(variables, lookup, handle)
-            val returnType = when(val parentType = parent.type) {
+            val returnType = when (val parentType = parent.type) {
                 is Type.Union -> {
                     parentType.entries.map { lookup.lookUpFieldType(it, name) }.reduce { acc, type -> acc.join(type) }
                 }
-                else ->lookup.lookUpFieldType(parentType, name)
+
+                else -> lookup.lookUpFieldType(parentType, name)
             }
             return TypedInstruction.DynamicPropertyAccess(
                 parent,
@@ -496,7 +669,13 @@ sealed class Instruction {
         }
     }
 
-    data class Lambda(val argNames: List<String>, val body: Instruction, val capturedVariables: List<String>, val imports: Set<SignatureString>): Instruction() {
+    data class Lambda(
+        val argNames: List<String>,
+        val body: Instruction,
+        val capturedVariables: List<String>,
+        val imports: Set<SignatureString>,
+        override val info: MetaData
+    ) : Instruction() {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
@@ -517,8 +696,17 @@ sealed class Instruction {
 
     }
 
-    data class DynamicPropertyAssignment(val parent: Instruction, val name: String, val value: Instruction) : Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+    data class DynamicPropertyAssignment(
+        val parent: Instruction,
+        val name: String,
+        val value: Instruction,
+        override val info: MetaData
+    ) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val parent = parent.inferTypes(variables, lookup, handle)
 
             val fieldType = lookup.lookUpFieldType(parent.type, name)
@@ -532,8 +720,12 @@ sealed class Instruction {
     }
 
     //The type is unchecked
-    data class Noop(val type: Type): Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+    data class Noop(val type: Type, override val info: MetaData) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             return TypedInstruction.Noop(type)
         }
     }
@@ -541,61 +733,88 @@ sealed class Instruction {
 
     data class Match(
         val parent: Instruction,
-        val patterns: List<Pair<IRPattern, Instruction>>
+        val patterns: List<Pair<IRPattern, Instruction>>,
+        override val info: MetaData
     ) : Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction = coroutineScope {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction = coroutineScope {
             val parent = parent.inferTypes(variables, lookup, handle)
-            val tempVar = variables.getTempVar(parent.type)
-            val typedPatterns = withCastStoreId(parent, variables) { castStoreId: Int ->
-                tempVar.use { _ ->
-                    //iterate over every pattern
-                    patterns.mapIndexed { i, (pattern, body) ->
 
-                        val ctx = PatternMatchingContextImpl(
-                            types = listOf(TempVarBinding(tempVar)),
-                            isLast = i == patterns.lastIndex,
-                            castStoreId = castStoreId
-                        )
-                        //check patterns
-                        val typedPattern = pattern.inferTypes(ctx, lookup, variables, handle)
+            val (typedPatterns, id) = withCastStoreId(
+                this@Match.parent,
+                parent.type,
+                variables
+            ) { castStoreId: VariableProvider ->
+                //iterate over every pattern
+                patterns.mapIndexed { i, (pattern, body) ->
 
-                        //asynchronously infer types of body
-                        val bodyScope = variables.clone()
-                        async {
-                            compileBodyBranch(body, typedPattern, bodyScope, lookup, handle)
-                        }
+                    val ctx = PatternMatchingContextImpl(
+                        types = listOf(castStoreId),
+                        isLast = i == patterns.lastIndex,
+                        castStoreId = castStoreId.physicalId!!
+                    )
+                    //check patterns
+                    val typedPattern = pattern.inferTypes(ctx, lookup, variables, handle)
+
+                    //asynchronously infer types of body
+                    val bodyScope = variables.clone()
+                    async {
+                        val parentName = if (this@Match.parent is LoadVar) this@Match.parent.name else null
+                        compileBodyBranch(body, typedPattern, bodyScope, parentName, lookup, handle)
                     }
+
 
                 }.awaitAll()
             }
-
             val adjustments = variables.merge(typedPatterns.map { it.third })
             val compiledBranches = typedPatterns
                 .zip(adjustments)
                 .map { (triple, adjustment) ->
                     CompiledMatchBranch(triple.first, triple.second, adjustment, triple.third.toVarFrame())
                 }
-            return@coroutineScope TypedInstruction.Match(parent,compiledBranches, temporaryId = tempVar.id)
-
+            val instance = TypedInstruction.Match(parent, compiledBranches, temporaryId = id)
+            return@coroutineScope instance
         }
 
-        private inline fun<T> withCastStoreId(parent: TypedInstruction, variables: VariableManager, closure: (castStoreId: Int) -> T): T {
-            return when(parent) {
-                is TypedInstruction.LoadVar -> closure(parent.id)
-                else ->  variables.getTempVar(parent.type).use { closure(it.id) }
+        private inline fun <T> withCastStoreId(
+            parent: Instruction,
+            parentType: Type,
+            variables: VariableManager,
+            closure: (VariableProvider) -> T
+        ): Pair<T, Int> {
+            if (parent is LoadVar) {
+                val prov = variables.variables[parent.name]
+                if (prov?.physicalId != null) {
+                    return closure(prov) to prov.physicalId!!
+                }
             }
+            val tempVar = variables.getTempVar(parentType)
+            return tempVar.use { closure(TempVarBinding(tempVar)) } to tempVar.id
+
         }
 
         private suspend fun compileBodyBranch(
             body: Instruction,
             typedPattern: TypedIRPattern,
             bodyScope: VariableManager,
+            parentName: String?,
             lookup: IRLookup,
             handle: MetaDataHandle
-        ) : Triple<TypedIRPattern, TypedInstruction, VariableManager> {
+        ): Triple<TypedIRPattern, TypedInstruction, VariableManager> {
             if (typedPattern is TypedIRPattern.Destructuring) {
                 //populate the scope with bindings
-                typedPattern.bindings.map { (name, tp) -> bodyScope.putVar(name, FieldBinding(TypedInstruction.LoadVar(typedPattern.castStoreId, typedPattern.type), tp, name)) }
+                if (parentName != null) {
+                    bodyScope.change(parentName, typedPattern.type)
+                }
+                typedPattern.bindings.map { (name, tp) ->
+                    bodyScope.putVar(
+                        name,
+                        FieldBinding(TypedInstruction.LoadVar(typedPattern.castStoreId, typedPattern.type), tp, name)
+                    )
+                }
             }
 
             val typedBody = body.inferTypes(bodyScope, lookup, handle)
@@ -603,28 +822,29 @@ sealed class Instruction {
             return Triple(typedPattern, typedBody, bodyScope)
         }
 
-        private fun filterPatterns(patterns: List<Pair<IRPattern, Instruction>>, type: Type): List<Pair<IRPattern, Instruction>> {
+        private fun filterPatterns(
+            patterns: List<Pair<IRPattern, Instruction>>,
+            type: Type
+        ): List<Pair<IRPattern, Instruction>> {
             return patterns.filter {
                 checkPatternForType(it.first, type)
             }
         }
 
-
-
-        private fun IRPattern.isExhaustiveForType(type: Type) = when(this) {
+        private fun IRPattern.isExhaustiveForType(type: Type) = when (this) {
             is IRPattern.Binding -> true
             is IRPattern.Condition -> false
             is IRPattern.Destructuring -> TODO() // type.isContainedOrEqualTo(this.type) && !hasCondition()
         }
 
-        private fun IRPattern.hasCondition(): Boolean = when(this) {
+        private fun IRPattern.hasCondition(): Boolean = when (this) {
             is IRPattern.Binding -> false
             is IRPattern.Condition -> true
             is IRPattern.Destructuring -> patterns.any { it.hasCondition() }
         }
 
         private fun checkPatternForType(pattern: IRPattern, type: Type): Boolean {
-            return when(pattern) {
+            return when (pattern) {
                 is IRPattern.Binding -> true
                 is IRPattern.Condition -> checkPatternForType(pattern.parent, type)
                 //if they have any overlaping types it is true
@@ -633,10 +853,14 @@ sealed class Instruction {
         }
     }
 
-    data class Try(val instruction: Instruction): Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+    data class Try(val instruction: Instruction, override val info: MetaData) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val typedIns = instruction.inferTypes(variables, lookup, handle)
-            return when(val tp = typedIns.type) {
+            return when (val tp = typedIns.type) {
                 is Type.Union -> {
                     val errorVariants = tp.entries.filter { lookup.hasModifier(it, Modifier.Error) }
                     if (errorVariants.isEmpty()) {
@@ -646,13 +870,44 @@ sealed class Instruction {
                     errorVariants.forEach { handle.issueReturnTypeAppend(it) }
                     TypedInstruction.Try(typedIns, errorVariants.map { (it as Type.JvmType).signature })
                 }
+
                 else -> typedIns
             }
         }
 
     }
 
-    data class Return(val instruction: Instruction) : Instruction() {
+    data class Catch(
+        val instruction: Instruction,
+        val errorType: TemplatedType?,
+        override val info: MetaData
+    ) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
+            val ins = instruction.inferTypes(variables, lookup, handle)
+            val errorType = with(lookup) { errorType?.populate(emptyMap()) }
+                ?: Type.BasicJvmType(SignatureString("java::lang::Throwable"))
+            val errorTypes = findErrorTypes(errorType)
+
+            return TypedInstruction.Catch(ins, errorTypes, errorType)
+        }
+
+        private fun findErrorTypes(tp: Type): Set<SignatureString> =
+            mutableSetOf<SignatureString>().apply { findErrorTypes(tp, this) }
+
+        private fun findErrorTypes(tp: Type, errorTypes: MutableSet<SignatureString>) {
+            when (tp) {
+                is Type.Union -> tp.entries.forEach { findErrorTypes(it, errorTypes) }
+                is Type.JvmType -> errorTypes.add(tp.signature)
+                else -> error("Invalid error type")
+            }
+        }
+    }
+
+    data class Return(val instruction: Instruction, override val info: MetaData) : Instruction() {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
@@ -660,13 +915,18 @@ sealed class Instruction {
         ): TypedInstruction {
             val returnValue = instruction.inferTypes(variables, lookup, handle)
             handle.issueReturnTypeAppend(returnValue.type)
-            return TypedInstruction.Return(returnValue)
+            return TypedInstruction.Return(returnValue, handle.returnLabel)
         }
 
     }
 
-    data class StaticPropertyAccess(val parentName: SignatureString, val name: String): Instruction() {
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+    data class StaticPropertyAccess(val parentName: SignatureString, val name: String, override val info: MetaData) :
+        Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             return TypedInstruction.StaticPropertyAccess(
                 parentName,
                 name,
@@ -675,16 +935,25 @@ sealed class Instruction {
         }
     }
 
-    data object Pop : Instruction() {
+    data class Pop(override val info: MetaData) : Instruction() {
 
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             return TypedInstruction.Pop
         }
     }
-    data object Null : Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+    data class Null(override val info: MetaData) : Instruction() {
+
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             return TypedInstruction.Null
         }
     }
@@ -692,10 +961,15 @@ sealed class Instruction {
     data class Comparing(
         val first: Instruction,
         val second: Instruction,
-        val op: CompareOp
+        val op: CompareOp,
+        override val info: MetaData
     ) : Instruction() {
 
-        override suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle
+        ): TypedInstruction {
             val first = first.inferTypes(variables, lookup, handle)
             val second = second.inferTypes(variables, lookup, handle)
 
@@ -703,7 +977,7 @@ sealed class Instruction {
                 return evalComparison(first, second, op)
             }
 
-            when(op) {
+            when (op) {
                 CompareOp.Eq, CompareOp.Neq -> {}
                 else -> when {
                     first.type.isNumType() && second.type.isNumType() -> {}
@@ -721,13 +995,13 @@ sealed class Instruction {
 
 }
 
-fun Type.simplifyUnbox(): Type = when(this) {
+fun Type.simplifyUnbox(): Type = when (this) {
     is Type.Union -> simplifyUnbox()
     else -> this
 }
 
 fun Type.Union.simplifyUnbox(): Type = when {
-    entries.size == 1 -> entries.first().let { if (it.isBoxedPrimitive()) it.asUnboxed() else it  }
+    entries.size == 1 -> entries.first().let { if (it.isBoxedPrimitive()) it.asUnboxed() else it }
     else -> this
 }
 
@@ -744,7 +1018,13 @@ data class PatternMatchingContextImpl(
 fun TypedInstruction.isConst() = this is TypedInstruction.Const
 fun TypedConstructingArgument.isConst() = instruction.isConst()
 
-data class ForLoop(val parent: Instruction, val name: String, val indexName: String?,  val body: Instruction.ConstructingArgument) {
+data class ForLoop(
+    val parent: Instruction,
+    val name: String,
+    val indexName: String?,
+    val body: Instruction.ConstructingArgument,
+    val info: MetaData
+) {
     suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
         val parent = parent.inferTypes(variables, lookup, handle)
         return when {
@@ -754,15 +1034,18 @@ data class ForLoop(val parent: Instruction, val name: String, val indexName: Str
 
                 compileForLoopBody(variables, next, hasNext, parent, lookup, handle)
             }
+
             IterableI.validate(lookup, parent.type) -> {
-                val iterCall = DynamicCall(this.parent, "iterator", emptyList()).inferTypes(variables, lookup, handle)
+                val iterCall =
+                    DynamicCall(this.parent, "iterator", emptyList(), info).inferTypes(variables, lookup, handle)
 
                 val hasNext = lookup.lookUpCandidate(iterCall.type, "hasNext", emptyList())
                 val next = lookup.lookUpCandidate(iterCall.type, "next", emptyList())
 
                 compileForLoopBody(variables, next, hasNext, iterCall, lookup, handle)
             }
-            else -> error("Invalid type ${parent.type}! it is neither an iterable nor an iterator")
+
+            else -> error("Invalid type ${parent.type}; it is neither an iterable nor an iterator")
         }
     }
 
@@ -784,7 +1067,17 @@ data class ForLoop(val parent: Instruction, val name: String, val indexName: Str
         val adjustments = bodyScopePre.loopMerge(bodyScope, variables)
         val body = body.inferTypes(bodyScopePre, lookup, handle)
         val postLoopAdjustments = variables.merge(listOf(bodyScopePre))[0]
-        return TypedInstruction.ForLoop(parent, itemId, indexId, hasNextCall, nextCall, body, adjustments, postLoopAdjustments, bodyScope.toVarFrame())
+        return TypedInstruction.ForLoop(
+            parent,
+            itemId,
+            indexId,
+            hasNextCall,
+            nextCall,
+            body,
+            adjustments,
+            postLoopAdjustments,
+            bodyScope.toVarFrame()
+        )
     }
 
 
@@ -805,19 +1098,39 @@ sealed interface IRPattern {
         handle: MetaDataHandle,
     ): TypedIRPattern
 
-    data class Binding(val name: String): IRPattern {
-        override suspend fun inferTypes(ctx: PatternMatchingContext, lookup: IRLookup, variables: VariableManager, handle: MetaDataHandle): TypedIRPattern {
+    data class Binding(val name: String) : IRPattern {
+        override suspend fun inferTypes(
+            ctx: PatternMatchingContext,
+            lookup: IRLookup,
+            variables: VariableManager,
+            handle: MetaDataHandle
+        ): TypedIRPattern {
             val binding = ctx.nextBinding()
             if (name in handle.inheritedGenerics) {
-                return TypedIRPattern.Destructuring(handle.inheritedGenerics[name]!!, emptyList(), variables.getExternal(binding), ctx.isLast, ctx.castStoreId)
+                return TypedIRPattern.Destructuring(
+                    handle.inheritedGenerics[name]!!,
+                    emptyList(),
+                    variables.getExternal(binding),
+                    ctx.isLast,
+                    ctx.castStoreId
+                )
+            }
+            if (name.getOrNull(0)?.isUpperCase() == true) {
+                println("Warning binding to uppercase name `$name`")
             }
             variables.putVar(name, binding)
             return TypedIRPattern.Binding(name, variables.getType(name))
         }
     }
+
     data class Destructuring(val type: TemplatedType, val patterns: List<IRPattern>) : IRPattern {
 
-        override suspend fun inferTypes(ctx: PatternMatchingContext, lookup: IRLookup, variables: VariableManager, handle: MetaDataHandle): TypedIRPattern {
+        override suspend fun inferTypes(
+            ctx: PatternMatchingContext,
+            lookup: IRLookup,
+            variables: VariableManager,
+            handle: MetaDataHandle
+        ): TypedIRPattern {
             val type = with(lookup) {
                 type.populate(handle.inheritedGenerics).asBoxed()
                 //we box it because there cant be primitives anyway,
@@ -832,24 +1145,29 @@ sealed interface IRPattern {
             val orderedFields = lookup
                 .lookUpOrderedFields(signature)
                 .map { (name, it) -> name to with(lookup) { it.populate(handle.inheritedGenerics) } }
-            variables.getTempVar(type).use { castStoreVar ->
-                val fieldBindings = orderedFields.map { (name, type) -> FieldBinding(TypedInstruction.LoadVar(castStoreVar.id, castStoreVar.type), type, name) }
+            val fieldBindings =
+                orderedFields.map { (name, type) -> FieldBinding(binding.get(variables.parent), type, name) }
 
-                val context = PatternMatchingContextImpl(fieldBindings, false, castStoreVar.id)
+            val context = PatternMatchingContextImpl(fieldBindings, false, binding.physicalId!!)
 
-                return TypedIRPattern.Destructuring(
-                    type = type,
-                    patterns = patterns.map { it.inferTypes(context, lookup, variables, handle) },
-                    isLast = ctx.isLast,
-                    castStoreId = castStoreVar.id,
-                    loadItem = variables.getExternal(binding)
-                )
-            }
+            return TypedIRPattern.Destructuring(
+                type = type,
+                patterns = patterns.map { it.inferTypes(context, lookup, variables, handle) },
+                isLast = ctx.isLast,
+                castStoreId = binding.physicalId!!,
+                loadItem = variables.getExternal(binding)
+            )
 
         }
     }
+
     data class Condition(val parent: IRPattern, val condition: Instruction) : IRPattern {
-        override suspend fun inferTypes(ctx: PatternMatchingContext, lookup: IRLookup, variables: VariableManager, handle: MetaDataHandle): TypedIRPattern {
+        override suspend fun inferTypes(
+            ctx: PatternMatchingContext,
+            lookup: IRLookup,
+            variables: VariableManager,
+            handle: MetaDataHandle
+        ): TypedIRPattern {
             val parent = parent.inferTypes(ctx, lookup, variables, handle)
             val condition = condition.inferTypes(variables, lookup, handle)
             return TypedIRPattern.Condition(parent, condition)
@@ -857,7 +1175,7 @@ sealed interface IRPattern {
     }
 }
 
-inline fun Type.BroadType.mapKnown(closure: (tp: Type) -> Type) = when(this) {
+inline fun Type.BroadType.mapKnown(closure: (tp: Type) -> Type) = when (this) {
     is Type.BroadType.Known -> Type.BroadType.Known(closure(type))
     Type.BroadType.Unset -> this
 }
@@ -881,12 +1199,18 @@ fun Type.BroadType.isContainedOrEqualTo(other: Type.BroadType) = when {
 
 fun Type.isContainedOrEqualTo(other: Type): Boolean = when {
     this == other -> true
+    this is Type.BoolT && other is Type.BoolT -> true
     this is Type.JvmType &&
             other is Type.JvmType &&
             signature == other.signature &&
-            genericTypes.keys == other.genericTypes.keys -> genericTypes.all { (name, type) -> type.isContainedOrEqualTo(other.genericTypes[name]!!) }
+            genericTypes.keys == other.genericTypes.keys -> genericTypes.all { (name, type) ->
+        type.isContainedOrEqualTo(
+            other.genericTypes[name]!!
+        )
+    }
+
     this is Type.Union -> entries.all { it.isContainedOrEqualTo(other) }
-    other is Type.Union ->  other.entries.any { this.isContainedOrEqualTo(it) }
+    other is Type.Union -> other.entries.any { this.isContainedOrEqualTo(it) }
     else -> false
 }
 
@@ -919,6 +1243,7 @@ sealed interface Type {
         val BoolFalse = BoolT(false)
         val BoolUnknown = BoolT(null)
     }
+
     sealed interface JvmType : Type {
         val signature: SignatureString
         val genericTypes: Map<String, BroadType>
@@ -926,12 +1251,19 @@ sealed interface Type {
 
     sealed interface BroadType {
         data object Unset : BroadType
-        data class Known(val type: Type): BroadType
+        data class Known(val type: Type) : BroadType
     }
 
 
-    data class BasicJvmType(override val signature: SignatureString, override val genericTypes: Map<String, BroadType> = mapOf()): JvmType {
+    data class BasicJvmType(
+        override val signature: SignatureString,
+        override val genericTypes: Map<String, BroadType> = mapOf()
+    ) : JvmType {
         override val size: Int = 1
+
+        override fun toString(): String = signature.toString() + if (genericTypes.isNotEmpty()) {
+            "<" + genericTypes.entries.joinToString(", ") { "${it.key}: ${it.value}" } + ">"
+        } else ""
     }
 
 
@@ -973,19 +1305,29 @@ sealed interface Type {
 
     data object IntT : Type {
         override val size: Int = 1
+
+        override fun toString(): String = "i32"
     }
+
     data object DoubleT : Type {
         override val size: Int = 2
+
+        override fun toString(): String = "f64"
     }
 
     data object Null : Type {
         override val size: Int = 1
-    }
-    data class Union(val entries: Set<Type>) : Type {
-        override val size: Int = entries.maxOf { it.size }
+
+        override fun toString(): String = "null"
     }
 
-    data class Lambda(val signature: SignatureString): Type {
+    data class Union(val entries: Set<Type>) : Type {
+        override val size: Int = entries.maxOf { it.size }
+
+        override fun toString(): String = entries.joinToString(" | ") { it.toString() }
+    }
+
+    data class Lambda(val signature: SignatureString) : Type {
         override val size: Int = 1
     }
 
@@ -1025,6 +1367,7 @@ fun Type.assertIsInstanceOf(other: Type) {
         this is Type.Union && other is Type.Union -> {
             this.entries.forEach { if (it !in other.entries) error("Type error $this is not instance of $other") }
         }
+
         other is Type.Union -> {
             if (other.entries.none { it == this }) {
                 error("Type error $this is not instance of $other")
@@ -1051,7 +1394,7 @@ fun Type.join(other: Type): Type {
                 when {
                     first == null && second != null -> second.asBroadType()
                     first != null && second == null -> first.asBroadType()
-                    else ->  {
+                    else -> {
                         val type = second?.let { first?.join(second) }
                         val broadType = type?.let { Type.BroadType.Known(it) } ?: Type.BroadType.Unset
 
@@ -1062,6 +1405,7 @@ fun Type.join(other: Type): Type {
 
             Type.BasicJvmType(signature, joinedGenerics)
         }
+
         this is Type.Union && other is Type.Union -> Type.Union((entries.toList() + other.entries.toList()).toSet())
         this is Type.Union -> Type.Union((entries.toList() + other).toSet())
         other is Type.Union -> Type.Union((other.entries.toList() + this).toSet())
@@ -1076,20 +1420,30 @@ fun Type.join(other: Type): Type {
 fun typeMath(op: MathOp, first: Type, second: Type): Type {
     when {
         first is Type.Union && second is Type.Union -> {
-            first.flatMapEntries { firstItem -> second.mapEntries { secondItem -> typeMath(op, firstItem, secondItem) } }
+            first.flatMapEntries { firstItem ->
+                second.mapEntries { secondItem ->
+                    typeMath(
+                        op,
+                        firstItem,
+                        secondItem
+                    )
+                }
+            }
         }
+
         first is Type.Union -> {
             first.mapEntries { item -> typeMath(op, item, second) }
         }
+
         second is Type.Union -> {
             second.mapEntries { item -> typeMath(op, first, item) }
         }
     }
     //now we don't need to worry about unions anymore they cant get past the when-statement above
-    return when(op) {
+    return when (op) {
         MathOp.Add -> {
-            when{
-                first == Type.String ->Type.String
+            when {
+                first == Type.String -> Type.String
                 first == Type.IntT && second == Type.DoubleT -> Type.DoubleT
                 first == Type.DoubleT && second == Type.IntT -> Type.DoubleT
                 first == Type.IntT && second == Type.IntT -> Type.IntT
@@ -1100,11 +1454,12 @@ fun typeMath(op: MathOp, first: Type, second: Type): Type {
                 else -> error("Cannot perform operation $first + $second")
             }
         }
+
         else -> {
             if (op == MathOp.Div && first == Type.IntT && second == Type.IntT) {
                 return Type.DoubleT
             }
-            when{
+            when {
                 first == Type.IntT && second == Type.DoubleT -> Type.DoubleT
                 first == Type.DoubleT && second == Type.IntT -> Type.DoubleT
                 first == Type.IntT && second == Type.IntT -> Type.IntT
@@ -1118,7 +1473,7 @@ fun typeMath(op: MathOp, first: Type, second: Type): Type {
     }
 }
 
-fun Type.toActualJvmType() = when(this) {
+fun Type.toActualJvmType() = when (this) {
     is Type.Union -> Type.Object
     else -> this
 }
@@ -1133,7 +1488,12 @@ sealed interface IRFunction {
     fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>>
 }
 
-data class IRInlineFunction(override val args: List<String>, override val body: Instruction, override val imports: Set<SignatureString>, override val module: LambdaAppender): IRFunction {
+data class IRInlineFunction(
+    override val args: List<String>,
+    override val body: Instruction,
+    override val imports: Set<SignatureString>,
+    override val module: LambdaAppender
+) : IRFunction {
     override val keepBlocks: MutableMap<String, Type> = mutableMapOf()
 
     override fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>> {
@@ -1176,12 +1536,14 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
                 is TypedInstruction.LoadVar -> {
                     scope.putVar(name, VariableBinding(typed.id))
                 }
+
                 is TypedInstruction.Lambda -> {
                     scope.putVar(name, ConstBinding(typed))
                     inlinableLambdas.add(typed)
                 }
+
                 is TypedInstruction.Const -> scope.putVar(name, SemiConstBinding(typed))
-                else ->  {
+                else -> {
                     actualArgInstruction += scope.changeVar(name, typed)
                 }
             }
@@ -1196,15 +1558,27 @@ data class IRInlineFunction(override val args: List<String>, override val body: 
         )
     }
 
-    suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, generics: Map<String, Type>, inlinableLambdas: List<TypedInstruction.Lambda>): TypedInstruction {
-        val metaDataHandle = FunctionMetaDataHandle(generics, module, inlinableLambdas)
+    suspend fun inferTypes(
+        variables: VariableManager,
+        lookup: IRLookup,
+        generics: Map<String, Type>,
+        inlinableLambdas: List<TypedInstruction.Lambda>
+    ): TypedInstruction {
+        val end = Label()
+        val metaDataHandle = FunctionMetaDataHandle(generics, module, inlinableLambdas, end)
         val typedBody = body.inferTypes(variables, lookup, metaDataHandle)
-        return typedBody
+        metaDataHandle.issueReturnTypeAppend(typedBody.type)
+        return TypedInstruction.InlineBody(typedBody, end, metaDataHandle.returnType)
     }
 
 }
 
-data class BasicIRFunction(override val args: List<String>, override val body: Instruction, override val imports: Set<SignatureString>, override val module: LambdaAppender): IRFunction {
+data class BasicIRFunction(
+    override val args: List<String>,
+    override val body: Instruction,
+    override val imports: Set<SignatureString>,
+    override val module: LambdaAppender
+) : IRFunction {
     private val mutex = Mutex()
     private val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, FunctionMetaData>> = mutableMapOf()
 
@@ -1224,15 +1598,18 @@ data class BasicIRFunction(override val args: List<String>, override val body: I
         if (argTypes.size != this.args.size) {
             error("Expected ${this.args.size} but got ${argTypes.size} arguments when calling $args (TypeChecking)")
         }
-        val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList())
-        val variables = VariableManagerImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
+        val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList(), null)
+        val variables =
+            VariableManagerImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
         val result = body.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle)
 
-        val returnType =  if (metaDataHandle.hasReturnType()) result.type.join(metaDataHandle.returnType) else result.type
+        val returnType =
+            if (metaDataHandle.hasReturnType()) result.type.join(metaDataHandle.returnType) else result.type
         metaDataHandle.issueReturnTypeAppend(returnType)
         mutex.withLock {
             keepBlocks.putAll(metaDataHandle.keepBlocks)
-            checkedVariants[argTypes] = (result) to metaDataHandle.apply { varCount = variables.parent.varCount() }.toMetaData()
+            checkedVariants[argTypes] =
+                (result) to metaDataHandle.apply { varCount = variables.parent.varCount() }.toMetaData()
         }
         return returnType
     }
@@ -1245,7 +1622,7 @@ fun Type.isDouble() = this == Type.Double || this == Type.DoubleT
 fun Type.isBoolean() = this == Type.Bool || this is Type.BoolT
 fun Type.isBoxedPrimitive() = this == Type.Int || this == Type.Double || this == Type.Bool
 fun Type.isUnboxedPrimitive() = this == Type.IntT || this is Type.BoolT || this == Type.DoubleT
-fun Type.asBoxed(): Type = when(this) {
+fun Type.asBoxed(): Type = when (this) {
     Type.IntT -> Type.Int
     Type.DoubleT -> Type.Double
     is Type.BoolT -> Type.Bool
@@ -1262,6 +1639,7 @@ value class SignatureString(val value: String) {
 
     companion object {
         fun fromDotNotation(string: String) = SignatureString(string.replace(".", "::"))
+        fun fromJVMNotation(string: String) = SignatureString(string.replace("/", "::"))
     }
 
     val structName
@@ -1281,13 +1659,18 @@ value class SignatureString(val value: String) {
         SignatureString(members.slice(1..<members.size).joinToString("::"))
     }.getOrNull()
 
+    override fun toString(): String = value
     operator fun plus(other: String) = SignatureString("$value::$other")
     operator fun plus(other: SignatureString) = SignatureString("$value::${other.value}")
 }
 
 data class GenericType(val modifiers: Modifiers, val upperBounds: List<SignatureString>)
 
-data class IRStruct(val fields: Map<String, TemplatedType>, val generics: Map<String, GenericType>, val modifiers: Modifiers) {
+data class IRStruct(
+    val fields: Map<String, TemplatedType>,
+    val generics: Map<String, GenericType>,
+    val modifiers: Modifiers
+) {
     private val mutex = Mutex()
 
     var defaultVariant: Map<String, Type>? = null
@@ -1312,7 +1695,7 @@ data class IRModule(
     val functions: Map<String, IRFunction>,
     val structs: Map<String, IRStruct>,
     val implBlocks: Map<TemplatedType, Set<IRImpl>>,
-): LambdaAppender {
+) : LambdaAppender {
     val lambdas: MutableMap<SignatureString, LambdaContainer> = mutableMapOf()
     private val mutex = Mutex()
 
@@ -1354,8 +1737,11 @@ data class LambdaContainer(
         if (argTypes.size != this.argNames.size) {
             error("Expected ${this.argNames.size} but got ${argTypes.size} arguments when calling $argNames (TypeChecking)")
         }
-        val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList())
-        val variables = VariableManagerImpl.fromVariables(argTypes.zip(argNames).associate { (tp, name) -> name to tp }, reserveThis = true)
+        val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList(), null)
+        val variables = VariableManagerImpl.fromVariables(
+            argTypes.zip(argNames).associate { (tp, name) -> name to tp },
+            reserveThis = true
+        )
         captures.forEach { (name, type) ->
             variables.putVar(name, FieldBinding(TypedInstruction.LoadVar(0, Type.BasicJvmType(signature)), type, name))
         }
@@ -1367,12 +1753,15 @@ data class LambdaContainer(
         mutex.withLock {
             checkedVariants[argTypes] = (
                     if (requireImplicitNull)
-                        TypedInstruction.MultiInstructions(listOf(result, TypedInstruction.Null), variables.toVarFrame())
+                        TypedInstruction.MultiInstructions(
+                            listOf(result, TypedInstruction.Null),
+                            variables.toVarFrame()
+                        )
                     else
                         result
                     ) to metaDataHandle.apply {
-                        varCount = variables.parent.varCount()
-                    }.toMetaData()
+                varCount = variables.parent.varCount()
+            }.toMetaData()
         }
         return returnType
     }
@@ -1404,19 +1793,23 @@ suspend inline fun inferCall(
 
 fun Type?.asBroadType() = this?.let { Type.BroadType.Known(it) } ?: Type.BroadType.Unset
 
-suspend fun List<TypedConstructingArgument>.itemType(lookup: IRLookup) = map { when(it) {
-        is TypedConstructingArgument.Collected -> when(val tp = it.type) {
+suspend fun List<TypedConstructingArgument>.itemType(lookup: IRLookup) = map {
+    when (it) {
+        is TypedConstructingArgument.Collected -> when (val tp = it.type) {
             is Type.Array -> (tp.itemType as? Type.BroadType.Known)?.type
-            is Type.BasicJvmType  -> {
+            is Type.BasicJvmType -> {
                 if (lookup.typeHasInterface(tp, SignatureString("java::util::Collection"))) {
                     (tp.genericTypes["E"]!! as? Type.BroadType.Known)?.type
                 } else {
                     error("")
                 }
             }
+
             else -> error("Invalid error type")
         }
+
         else -> it.type.asBoxed()
-    } }
+    }
+}
     .reduceOrNull { acc, type -> type?.let { acc?.join(type) } ?: acc }
     .let { if (it == null) Type.BroadType.Unset else Type.BroadType.Known(it) }

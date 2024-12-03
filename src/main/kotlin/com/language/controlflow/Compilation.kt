@@ -1,77 +1,48 @@
 package com.language.controlflow
 
 import com.language.Module
-import com.language.codegen.compileModule
 import com.language.compilation.*
 import com.language.createZipFile
+import com.language.lexer.MetaInfo
 import com.language.lexer.lexCode
 import com.language.lookup.IRModuleLookup
 import com.language.lookup.jvm.CachedJvmLookup
 import com.language.lookup.oxide.BasicOxideLookup
+import com.language.parser.ParseException
 import com.language.parser.parse
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.time.Instant
 import java.time.temporal.ChronoUnit
-import kotlin.concurrent.timerTask
-
-@OptIn(DelicateCoroutinesApi::class)
-fun compileCOde(code: String): Map<SignatureString, ByteArray> {
-    val (project, compilationTime) = measureTime {
-        val (tokens, lexingTime) = measureTime {
-            lexCode(code)
-
-        }
-
-        println("> Lexing took ${lexingTime}ms")
-
-        val (module, parsingTime) = measureTime {
-            parse(tokens)
-        }
-        println("> Parsing took ${parsingTime}ms")
-
-        val dispatcher = newFixedThreadPoolContext(Runtime.getRuntime().availableProcessors(), "Compilation")
-        val scope = CoroutineScope(dispatcher)
-
-        val runtimeLib = "./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar"
-        val extensionClassLoader = ExtensionClassLoader(runtimeLib, ClassLoader.getSystemClassLoader())
-        val lookup = BasicModuleLookup(module, SignatureString("main"), mapOf(SignatureString("main") to module), extensionClassLoader, SignatureString("main"))
-
-        val result = compile(lookup)
-        val irLookup =  IRModuleLookup(CachedJvmLookup(extensionClassLoader), BasicOxideLookup(mapOf(result.name to result), emptyMap()))
-
-        val (type, typeCheckingTime) = measureTime {
-            runBlocking {
-                scope.async {
-                    (result.functions["main"]!! as BasicIRFunction).inferTypes(listOf(), irLookup, emptyMap())
-                }.await()
-            }
-        }
-        println("> Type-Inference took ${typeCheckingTime}ms")
-
-        val (project, compilationTime) = measureTime {
-            runBlocking {
-                scope.async {
-                    com.language.codegen.compileProject(setOf(result))
-                }.await()
-            }
-        }
-
-        println("> Compilation took ${compilationTime}ms")
-
-        project
-    }
-
-    println("Full Compilation process took ${compilationTime}ms")
-    return project
-}
-
 
 @OptIn(DelicateCoroutinesApi::class)
 fun getCoroutineScope(): CoroutineScope {
     val dispatcher = newFixedThreadPoolContext(Runtime.getRuntime().availableProcessors(), "Compilation")
     val scope = CoroutineScope(dispatcher)
     return scope
+}
+
+interface FileTree {
+    suspend fun appendFile(path: SignatureString, absolutePath: String, contents: String)
+}
+
+data class SourceFileInfo(val absolutePath: String, val content: String)
+
+class FileTreeImpl : FileTree {
+    val mutex = Mutex()
+
+    val files: MutableMap<SignatureString, SourceFileInfo> = mutableMapOf()
+
+    override suspend fun appendFile(path: SignatureString, absolutePath: String, contents: String) {
+        mutex.withLock {
+            files[path] = SourceFileInfo(absolutePath, contents)
+        }
+    }
+
+    suspend fun get(path: SignatureString) = mutex.withLock { files[path] }
+
 }
 
 fun compileAndWriteDir(path: String, externalLibs: List<String>) {
@@ -101,9 +72,29 @@ suspend fun compileDir(path: String, externalLibs: List<String>): Map<SignatureS
         loadExternalLibs(externalLibs)
     }
 
+    val tree = FileTreeImpl()
+
     val (modules, parsingTime) = measureTime {
-        val modules = parseDir(File(path), scope)
-        modules.mapValues { it.value.await() }
+        val modules = parseDir(File(path), scope, tree)
+        modules.mapValues {
+            it.value.await().fold(
+                onSuccess = { mod -> mod },
+                onFailure = { e ->
+                    e as ParseException
+                    runBlocking {
+                        printErrorMessage(
+                            it.key,
+                            tree.get(it.key)!!,
+                            e.info,
+                            e.message!!,
+                            e.kind,
+                            MessageMagnitude.Error
+                        )
+                    }
+                    throw e
+                }
+            )
+        }
     }
 
     println("> [stage 0] Parsing finished in ${parsingTime}ms")
@@ -145,7 +136,12 @@ suspend fun compileDir(path: String, externalLibs: List<String>): Map<SignatureS
 }
 
 
-fun firstStageCompilation(module: Module, name: SignatureString, modules: Map<SignatureString, Module>, loader: ExtensionClassLoader): IRModule {
+fun firstStageCompilation(
+    module: Module,
+    name: SignatureString,
+    modules: Map<SignatureString, Module>,
+    loader: ExtensionClassLoader
+): IRModule {
     val lookup = BasicModuleLookup(
         module,
         name,
@@ -165,29 +161,101 @@ fun loadExternalLibs(externalLibs: List<String>): ExtensionClassLoader {
     return loader
 }
 
-fun parseDir(dir: File, scope: CoroutineScope): Map<SignatureString, Deferred<Module>> {
-    val map = mutableMapOf<SignatureString, Deferred<Module>>()
+
+fun parseDir(dir: File, scope: CoroutineScope, fileTree: FileTree): Map<SignatureString, Deferred<Result<Module>>> =
+    mutableMapOf<SignatureString, Deferred<Result<Module>>>().apply {
+        parseDir(dir, scope, fileTree, null, this)
+    }
+
+fun parseDir(
+    dir: File,
+    scope: CoroutineScope,
+    fileTree: FileTree,
+    currentPath: SignatureString?,
+    map: MutableMap<SignatureString, Deferred<Result<Module>>>
+) {
     if (!dir.isDirectory) error("`${dir.path}` is not a directory.")
     dir.listFiles()!!.forEach { file ->
         val fileName = SignatureString(file.name.split(".")[0])
+        val combinedPath = currentPath?.let { it + fileName } ?: fileName
         when {
-            file.isDirectory ->map.putAll(parseDir(file, scope).mapKeys { fileName + it.key })
-            file.isFile -> map[fileName] = scope.async { parseFile(file) }
+            file.isDirectory -> parseDir(file, scope, fileTree, combinedPath, map)
+            file.isFile -> map[combinedPath] = scope.async { parseFile(file, combinedPath, fileTree) }
             else -> error("Invalid filetype $file")
         }
     }
-    return map
 }
 
-fun parseFile(file: File): Module {
+suspend fun parseFile(file: File, path: SignatureString, fileTree: FileTree): Result<Module> = coroutineScope {
     if (!file.isFile) error("`${file.path}` is not a file.")
-    val result = lexCode(file.readText())
-    val module = parse(result)
-    return module
+    val sourceCode = withContext(Dispatchers.IO) { file.readText() }
+    val job = launch {
+        fileTree.appendFile(path, file.absolutePath, sourceCode)
+    }
+    val result = lexCode(sourceCode)
+    try {
+        val module = parse(result)
+        Result.success(module)
+    } catch (e: ParseException) {
+        Result.failure(e)
+    } finally {
+        job.join()
+    }
 }
 
-inline fun<T> measureTime(task: () -> T): Pair<T, Long> {
+enum class MessageKind {
+    Syntax,
+    Type,
+    Logic
+}
+
+object Ansi {
+    val Reset = "\u001B[0m"
+    val Bold = "\u001B[1m"
+    val Red = "\u001B[31m"
+    val Gray = "\u001B[38;5;240m"
+    val Green = "\u001B[32m"
+    val Yellow = "\u001B[33m"
+    val Blue = "\u001B[34m"
+}
+
+enum class MessageMagnitude(val color: String) {
+    Error(Ansi.Red),
+    Warning(Ansi.Yellow),
+    Info(Ansi.Gray)
+}
+
+fun printErrorMessage(
+    path: SignatureString,
+    file: SourceFileInfo,
+    info: MetaInfo,
+    message: String,
+    kind: MessageKind,
+    magnitude: MessageMagnitude
+) {
+    val start = file.content.lastIndexOf('\n', info.start - 1) + 1
+    val end = file.content.indexOf('\n', info.start + info.length)
+
+    val lineCount = file.content.slice(0..info.start).count { it == '\n' } + 1
+
+    println("${path.toJvmNotation()}.oxide:$lineCount:${info.start - start} ${magnitude.color}${kind.name.lowercase()}-${magnitude.name.lowercase()}${Ansi.Reset}: ${Ansi.Bold}$message${Ansi.Reset}")
+    print(file.content.substring(start, info.start))
+    print(magnitude.color)
+    print(file.content.substring(info.start, info.start + info.length + 1))
+    print(Ansi.Reset)
+    if (info.start + info.length != end)
+        print(file.content.substring(info.start + info.length + 1, end))
+    println()
+
+    repeat((info.start - start)) { print(" ") }
+    repeat(info.length + 1) { print("^") }
+    println()
+
+}
+
+inline fun <T> measureTime(task: () -> T): Pair<T, Long> {
     val before = Instant.now()
     val value = task()
     return value to before.until(Instant.now(), ChronoUnit.MILLIS)
 }
+

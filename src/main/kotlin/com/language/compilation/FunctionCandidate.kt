@@ -2,7 +2,7 @@ package com.language.compilation
 
 import com.language.codegen.*
 import com.language.compilation.variables.allEqual
-import com.language.lexer.Token
+import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 
@@ -16,8 +16,10 @@ interface FunctionCandidate {
     val name: String
     val obfuscateName: Boolean
     val requireDispatch: Boolean
+    val varargInfo: Pair<Int, Type>?
     val castReturnType: Boolean
         get() = false
+    val requiresCatch: Set<SignatureString>
 
     fun generateCall(mv: MethodVisitor, stackMap: StackMap)
 }
@@ -64,6 +66,10 @@ data class UnionFunctionCandidate(
         get() = error("No single owner exists")
     override val requireDispatch: Boolean
         get() = false
+    override val varargInfo: Pair<Int, Type>?
+        get() = null
+    override val requiresCatch: Set<SignatureString> = candidates.values.flatMap { it.requiresCatch }.toSet()
+
 
     private val unifiedReturnType = candidates.values.map { it.oxideReturnType }.allEqual()
 
@@ -88,28 +94,62 @@ data class SimpleFunctionCandidate(
     override val name: String,
     override val obfuscateName: Boolean,
     override val requireDispatch: Boolean,
-    override val castReturnType: Boolean = false
+    override val castReturnType: Boolean = false,
+    val isInterface: Boolean = false,
+    override val varargInfo: Pair<Int, Type>? = null,
+    override val requiresCatch: Set<SignatureString> = emptySet()
+
 ) : FunctionCandidate {
 
     override fun generateCall(mv: MethodVisitor, stackMap: StackMap) {
+        val wrapInCatch = requiresCatch.isNotEmpty()
+        val tryBegin = Label()
+        val tryEnd = Label()
+        val catch = Label()
+        val end = Label()
+        if (wrapInCatch) {
+            mv.visitLabel(tryBegin)
+        }
         mv.visitMethodInsn(
             invocationType,
             jvmOwner.toJvmNotation(),
             if (obfuscateName) jvmName(name, oxideArgs) else name,
             this.toJvmDescriptor(),
-            invocationType == Opcodes.INVOKEINTERFACE
+            isInterface
         )
+        if (jvmReturnType.isUnboxedPrimitive() && !oxideReturnType.isUnboxedPrimitive()) {
+            boxOrIgnore(mv, jvmReturnType)
+        }
         if (castReturnType) {
             //were boxing the return type because the only reason we cast the return type is when we have generics,
             // and then It's automatically always boxed
             mv.visitTypeInsn(Opcodes.CHECKCAST, oxideReturnType.asBoxed().toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+        }
+
+        if (wrapInCatch) {
+            mv.visitLabel(tryEnd)
+            mv.visitJumpInsn(Opcodes.GOTO, end)
+            mv.visitLabel(catch)
+            stackMap.push(Type.BasicJvmType(SignatureString("java::lang::Throwable")))
+            stackMap.generateFrame(mv)
+            mv.visitJumpInsn(Opcodes.GOTO, end)
+
+            stackMap.pop()
+            mv.visitLabel(end)
+            stackMap.push(oxideReturnType)
+            stackMap.generateFrame(mv)
+            stackMap.pop()
+
+            requiresCatch.forEach {
+                mv.visitTryCatchBlock(tryBegin, tryEnd, catch, it.toJvmNotation())
+            }
         }
     }
 
 }
 
 
-fun FunctionCandidate.toJvmDescriptor() = generateJVMFunctionSignature(jvmArgs, jvmReturnType)
+fun FunctionCandidate.toJvmDescriptor() = generateJVMFunctionSignature(jvmArgs, jvmReturnType, varargInfo)
 
 val FunctionCandidate.hasGenericReturnType: Boolean
     get() = jvmReturnType != oxideReturnType

@@ -4,6 +4,8 @@ import com.language.compilation.*
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 
+data class Box<T>(val item: T)
+
 fun boxOrIgnore(mv: MethodVisitor, type: Type): Boolean {
     when(type) {
         Type.IntT -> mv.visitMethodInsn(
@@ -88,8 +90,14 @@ fun unbox(mv: MethodVisitor, type: Type)  {
     }
 }
 
-fun generateJVMFunctionSignature(argTypes: Iterable<Type>, returnType: Type): String {
-    return "(${argTypes.joinToString(separator = "") { it.toActualJvmType().toJVMDescriptor() }})${returnType.toJVMDescriptor()}"
+fun generateJVMFunctionSignature(argTypes: Iterable<Type>, returnType: Type, varargInfo: Pair<Int, Type>? = null): String {
+    val info = varargInfo?.let { "[" + it.second.toJVMDescriptor() } ?: ""
+    val args = argTypes
+        .take((varargInfo?.first ?: argTypes.count()))
+        .joinToString(separator = "") {
+            it.toActualJvmType().toJVMDescriptor()
+        }
+    return "(${args}${info})${returnType.toJVMDescriptor()}"
 }
 
 fun Type.toJVMDescriptor(): String = when(this) {

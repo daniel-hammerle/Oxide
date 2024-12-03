@@ -1,33 +1,7 @@
-use std::io
-use java::util::Random
-use std::lists
-
+use std::{io, errors, numbers}
+use java::lang::Integer
 func main {
-    instance = rand()
-
-    match instance {
-        A(name, age) if age >= 18 -> io.println(name)
-        B(name, _, _) -> io.println(name)
-    }
-
-}
-
-struct A {
-    name str,
-    age i32
-}
-
-struct B {
-    name str,
-    email str,
-    password str
-}
-
-func rand {
-    random = keep { Random() }
-    if random.nextBoolean() {
-        A("Tim", 17)
-    } else {
-        B("Tom", "tim@mail.co", "1234556")
-    }
+    io.println("Hello World")
+    result = Integer.parseInt("21d").orDefault(0)
+    io.println(result)
 }

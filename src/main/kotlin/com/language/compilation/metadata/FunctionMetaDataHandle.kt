@@ -1,11 +1,13 @@
 package com.language.compilation.metadata
 
 import com.language.compilation.*
+import org.objectweb.asm.Label
 
 class FunctionMetaDataHandle(
     override val inheritedGenerics: Map<String, Type>,
     private val appender: LambdaAppender,
-    override val inlinableLambdas: List<TypedInstruction.Lambda>
+    override val inlinableLambdas: List<TypedInstruction.Lambda>,
+    override val returnLabel: Label?
 ) : MetaDataHandle {
     lateinit var returnType: Type
         private set

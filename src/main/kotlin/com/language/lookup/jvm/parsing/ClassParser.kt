@@ -10,6 +10,8 @@ import com.language.lookup.jvm.rep.defaultVariant
 import org.objectweb.asm.*
 import org.objectweb.asm.signature.SignatureReader
 import org.objectweb.asm.signature.SignatureVisitor
+import java.lang.reflect.Method
+import java.util.LinkedList
 
 typealias AsmType = org.objectweb.asm.Type
 
@@ -100,7 +102,7 @@ class ClassParser(
             name: String,
             descriptor: String,
             signature: String?,
-            exceptions: Array<out String>?
+            exceptions: Array<out String>
         ): MethodVisitor {
             val visitor = MethodSignatureVisitor()
             val signatureReader = SignatureReader(signature ?: descriptor)
@@ -111,7 +113,8 @@ class ClassParser(
                 access.hasBits(Opcodes.ACC_STATIC) -> MethodKind.Static
                 else -> MethodKind.Virtual
             }
-            return InnerMethodVisitor(kind, name, info)
+            val throwsExceptions = exceptions.map { SignatureString.fromJVMNotation(it) }.toMutableSet()
+            return InnerMethodVisitor(kind, name, info, throwsExceptions)
         }
     }
 
@@ -121,16 +124,65 @@ class ClassParser(
         Special
     }
 
-    private inner class InnerMethodVisitor(val kind: MethodKind, val name: String, val info: FunctionInfo) : MethodVisitor(Opcodes.ASM9) {
+    private inner class InnerMethodVisitor(val kind: MethodKind, val name: String, val info: FunctionInfo, val topLevelExceptions: MutableSet<SignatureString>) : MethodVisitor(Opcodes.ASM9) {
         val annotationVisitors = mutableSetOf<InnerAnnotationVisitor>()
+
+        val exceptions = LinkedList<Pair<Label, MutableSet<SignatureString>>>()
+        val mentions = mutableSetOf<FunctionMention>()
+
         override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor {
             val annotationType = AsmType.getType(descriptor).toOxideType()
             return InnerAnnotationVisitor(annotationType).also { annotationVisitors.add(it) }
         }
 
+        override fun visitTypeInsn(opcode: Int, type: String) {
+            if (opcode != Opcodes.ATHROW) return
+            appendException(SignatureString.fromJVMNotation(type))
+        }
+
+        override fun visitMethodInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+            isInterface: Boolean
+        ) {
+            val visitor = MethodSignatureVisitor()
+            SignatureReader(descriptor).accept(visitor)
+
+            mentions.add(FunctionMention(
+                SignatureString.fromJVMNotation(owner),
+                name,
+                visitor.toFunctionInfo().args
+            ))
+        }
+
+        override fun visitLabel(label: Label) {
+            exceptions.add(label to mutableSetOf())
+        }
+
+        override fun visitTryCatchBlock(start: Label, end: Label, handler: Label?, type: String) {
+            val tp = SignatureString.fromJVMNotation(type)
+
+            var i = exceptions.indexOfFirst { it.first == start }
+            while(exceptions[i].first != end) {
+                exceptions[i].second.remove(tp) //remove the type form any mentions within the try block
+                i++
+            }
+        }
+
+        private fun appendException(type: SignatureString) {
+            val set = exceptions.lastOrNull()?.second ?: topLevelExceptions
+            set.add(type)
+        }
+
         override fun visitEnd() {
             val newAnnotations = annotationVisitors.map { it.toAnnotationInfo() }.toSet()
-            val newInfo = info.copy(annotations = newAnnotations)
+
+            val exceptions = topLevelExceptions + exceptions.flatMap { it.second } //collect all exceptions
+            val exceptionInfo = ExceptionInfo(exceptions, mentions)
+
+            val newInfo = info.copy(annotations = newAnnotations, exceptionInfo = exceptionInfo)
             when(kind) {
                 MethodKind.Virtual -> appendMethod(name, newInfo)
                 MethodKind.Static -> appendAssociatedFunction(name, newInfo)
@@ -204,7 +256,7 @@ private class MethodSignatureVisitor : SignatureVisitor(Opcodes.ASM9) {
         return ReturnTypeVisitor { returnType = it }
     }
 
-    fun toFunctionInfo() = FunctionInfo(newGenerics, argumentTypes, returnType!!, emptySet())
+    fun toFunctionInfo() = FunctionInfo(newGenerics, argumentTypes, returnType!!, emptySet(), ExceptionInfo(emptySet(), emptySet()))
 
     private class ArgumentTypeVisitor(val argumentTypes: MutableList<TemplatedType>) : SignatureVisitor(Opcodes.ASM9) {
         override fun visitBaseType(descriptor: Char) {

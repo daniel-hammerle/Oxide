@@ -17,7 +17,6 @@ class TempVarBinding(private val variable: TempVariable): VariableProvider {
         return ins
     }
 
-
     override fun clone() = TempVarBinding(variable)
 
     override fun genericChangeRequest(parent: VariableMapping, genericName: String, type: Type) {

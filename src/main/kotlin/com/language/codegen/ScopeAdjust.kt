@@ -9,17 +9,19 @@ import org.objectweb.asm.MethodVisitor
 fun compileScopeAdjustment(
     mv: MethodVisitor,
     adjustment: ScopeAdjustment,
-    stackMap: StackMap
+    stackMap: StackMap,
+    clean: CleanupStack
 ) {
     for (ins in adjustment.instructions) {
-        compileScopeAdjustInstruction(mv, ins, stackMap)
+        compileScopeAdjustInstruction(mv, ins, stackMap, clean)
     }
 }
 
 fun compileScopeAdjustInstruction(
     mv: MethodVisitor,
     ins: ScopeAdjustInstruction,
-    stackMap: StackMap
+    stackMap: StackMap,
+    clean: CleanupStack
 ) {
     when(ins) {
         is ScopeAdjustInstruction.Box -> {
@@ -32,7 +34,7 @@ fun compileScopeAdjustInstruction(
             mv.visitVarInsn(storeInstruction(ins.type), ins.dest)
         }
         is ScopeAdjustInstruction.Store -> {
-            compileInstruction(mv, TypedInstruction.StoreVar(ins.dest, ins.value), stackMap)
+            compileInstruction(mv, TypedInstruction.StoreVar(ins.dest, ins.value), stackMap, clean)
         }
         is ScopeAdjustInstruction.Unbox -> {
             mv.visitVarInsn(loadInstruction(ins.type), ins.src)

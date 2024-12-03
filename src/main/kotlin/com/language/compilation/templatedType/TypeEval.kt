@@ -43,7 +43,7 @@ suspend fun TemplatedType.matches(
             true
         }
         is TemplatedType.Complex -> {
-            if (type !is Type.JvmType || type.signature != signatureString) {
+            if (type !is Type.JvmType || !(type.signature == signatureString || lookup.typeHasInterface(type, signatureString))) {
                 return false
             }
             type.genericTypes.entries.zip(this.generics).forEach { (entry, template) ->
@@ -78,6 +78,7 @@ suspend fun TemplatedType.matches(
         TemplatedType.IntT -> type == Type.IntT
         TemplatedType.Null -> type == Type.Null
         TemplatedType.Nothing -> type == Type.Nothing
+        TemplatedType.Never -> type == Type.Never
     }
 }
 

@@ -3,6 +3,18 @@ package com.language.lexer
 import com.language.CompareOp
 import com.language.compilation.modifiers.Modifier
 
+@JvmInline
+value class MetaInfo(private val infos: Long) {
+
+    constructor(start: Int, length: Int) : this((start.toLong() shl 32) or (length.toLong() and 0xFFFFFFFFL))
+
+    val start get() = (infos shr 32).toInt()
+    val length get() = (infos and 0xFFFFFFFFL).toInt()
+}
+
+
+data class PositionedToken<T : Token>(val token: T, val position: MetaInfo)
+
 sealed interface Token {
     sealed interface KeyWord : Token
     data object If : KeyWord
@@ -12,6 +24,7 @@ sealed interface Token {
     data object Use : KeyWord
     data object Keep : KeyWord
     data object Struct : KeyWord
+    data object Catch : KeyWord
     data object In : KeyWord, Identifier {
         override val name: String = "in"
     }
@@ -117,6 +130,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "impl" -> Token.Impl
         "for" -> Token.For
         "in" -> Token.In
+        "catch" -> Token.Catch
         "pub" -> Token.Public
         "null" -> Token.Null
         "inline" -> Token.Inline
@@ -131,21 +145,76 @@ private fun tryParseNumber(string: String): Token.ConstNum? {
     return string.toIntOrNull()?.let { Token.ConstNum(it) }
 }
 
-fun lexCode(code: String) = mutableListOf<Token>().apply {
-    var buffer: StringBuilder = StringBuilder()
+interface Index {
+    val index: Int
+}
 
-    fun flush() {
-        if (buffer.isEmpty()) {
-            return
+private class CharIter(val array: CharArray) : Index {
+    var idx = 0
+    override val index: Int
+        get() = idx
+    fun nextChar() = array[idx++]
+    fun currentChar() = array[idx - 1]
+    fun previousChar() = array[(--idx) -1]
+
+    fun hasNext() = idx < array.size
+
+
+    fun info() = InfoBuilder(idx, this)
+}
+
+
+class InfoBuilder(private val start: Int, private val iter: Index) {
+    fun finish() = MetaInfo(start, iter.index - 1 - start)
+}
+
+private fun singleCharMatches(iter: CharIter): Token? {
+    return when (iter.nextChar()) {
+        '*' -> Token.Star
+        '-' -> Token.Minus
+        ':' -> Token.Colon
+        '+' -> Token.Plus
+        ';' -> Token.SemiColon
+        '?' -> Token.QuestionMark
+        '|' -> Token.Pipe
+        '/' -> {
+            if (iter.nextChar() == '/') {
+                while(iter.nextChar() != '\n') {}
+                return null
+            } else {
+                iter.previousChar()
+                Token.Slash
+            }
         }
-        val string = buffer.toString()
-        val keyword = tryFindKeyWord(string)
-        val token = keyword ?: tryParseNumber(string) ?: Token.BasicIdentifier(string)
-        this.add(token)
-        buffer = StringBuilder()
+        '[' -> Token.OpenSquare
+        ']' -> Token.ClosingSquare
+        '(' -> Token.OpenBracket
+        ')' -> Token.ClosingBracket
+        '{' -> Token.OpenCurly
+        '}' -> Token.ClosingCurly
+        '!' -> Token.ExclamationMark
+        '=' -> Token.EqualSign
+        ',' -> Token.Comma
+        '.' -> Token.Dot
+        '<' -> Token.St
+        '>' -> Token.Gt
+        '"' -> {
+            val stringContents = StringBuilder()
+            while (true) {
+                val char = iter.nextChar()
+                if (char == '"') {
+                    break
+                }
+                stringContents.append(char)
+            }
+            Token.ConstStr(stringContents.toString())
+        }
+        else -> null
     }
+}
 
-    val iter = code
+fun lexCode(code: String) = mutableListOf<PositionedToken<*>>().apply {
+    val iter = CharIter(code
         .replace("==", " _eq ")
         .replace("<=", " _seq ")
         .replace(">=", " _geq ")
@@ -155,110 +224,36 @@ fun lexCode(code: String) = mutableListOf<Token>().apply {
         .replace("..", " _range ")
         .replace("||", " _or ")
         .replace("&&", " _and ")
-        .toCharArray().iterator()
-    while (iter.hasNext()) {
-        val token = when (val c = iter.nextChar()) {
-            '*' -> {
-                flush()
-                Token.Star
-            }
-            '-' -> {
-                flush()
-                Token.Minus
-            }
-            ':' -> {
-                flush()
-                Token.Colon
-            }
-            '+' -> {
-                flush()
-                Token.Plus
-            }
-            ';' -> {
-                flush()
-                Token.SemiColon
-            }
-            '?' -> {
-                flush()
-                Token.QuestionMark
-            }
-            '|' -> {
-                flush()
-                Token.Pipe
-            }
-            '/' -> {
-                flush()
-                Token.Slash
-            }
-            '[' -> {
-                flush()
-                Token.OpenSquare
-            }
-            ']' -> {
-                flush()
-                Token.ClosingSquare
-            }
-            '(' -> {
-                flush()
-                Token.OpenBracket
-            }
-            ')' -> {
-                flush()
-                Token.ClosingBracket
-            }
-            '{' -> {
-                flush()
-                Token.OpenCurly
-            }
-            '}' -> {
-                flush()
-                Token.ClosingCurly
-            }
-            '!' -> {
-                flush()
-                Token.ExclamationMark
-            }
-            '=' -> {
-                flush()
-                Token.EqualSign
-            }
-            ',' -> {
-                flush()
-                Token.Comma
-            }
-            '.' -> {
-                flush()
-                Token.Dot
-            }
-            '<' -> {
-                flush()
-                Token.St
-            }
-            '>' -> {
-                flush()
-                Token.Gt
-            }
-            '"' -> {
-                val stringContents = StringBuilder()
-                while(true) {
-                    val char = iter.nextChar()
-                    if (char == '"') {
-                        break
-                    }
-                    stringContents.append(char)
-                }
-                Token.ConstStr(stringContents.toString())
-            }
-            else -> {
-                if (c.isWhitespace()) {
-                    flush()
-                    continue
-                }
-                buffer.append(c)
-                continue
-            }
+        .toCharArray())
+
+    val buffer = StringBuilder()
+    var keywordStart = iter.info()
+
+    fun flush() {
+        if (buffer.isEmpty()) {
+            keywordStart = iter.info()
+            return
         }
-        this.add(token)
+        val str = buffer.toString()
+        val tk = tryFindKeyWord(str) ?: tryParseNumber(str) ?: Token.BasicIdentifier(str)
+        add(PositionedToken(tk, keywordStart.finish()))
+        buffer.clear()
+        keywordStart = iter.info()
+    }
+
+    while (iter.hasNext()) {
+        val info = iter.info()
+        val tk = singleCharMatches(iter)
+        if (tk != null) {
+            flush()
+            add(PositionedToken(tk, info.finish()))
+            continue
+        }
+        if (iter.currentChar().isWhitespace()) {
+            flush()
+            continue
+        }
+        buffer.append(iter.currentChar())
     }
 
 }

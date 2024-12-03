@@ -109,7 +109,7 @@ class BasicOxideLookup(
                         jvmArgs = args.map { it.toActualJvmType() },
                         jvmReturnType = returnType.toActualJvmType(),
                         oxideReturnType = returnType,
-                        Opcodes.INVOKESPECIAL,
+                        Opcodes.INVOKESTATIC,
                         impl.fullSignature,
                         name = funcName,
                         obfuscateName = true,
@@ -209,12 +209,12 @@ class BasicOxideLookup(
         return getStruct(structSig)?.generics?.lazyTransform { _, it -> it.modifiers } ?: error("Cannot find struct $structSig")
     }
 
-    override suspend fun findExtensionFunction(instance: Type, funcName: String, lookup: IRLookup): IRFunction {
+    override suspend fun findExtensionFunction(instance: Type, funcName: String, lookup: IRLookup): Pair<IRFunction, Map<String, Type>> {
         for ((template, blocks) in allowedImplBlocks) {
             val generics = mutableMapOf<String, Type>()
             blocks.forEach { impl ->
                 if (funcName in impl.methods && template.matches(instance, generics, impl.genericModifiers, lookup)) {
-                    val func = impl.methods[funcName]!!
+                    val func = impl.methods[funcName]!! to generics
                     return func
                 }
             }

@@ -23,6 +23,15 @@ suspend fun compileImpl(impl: IRImpl): ByteArray? {
             isUsed = true
             compileCheckedFunction(cw, name, body.first,body.second, argTypes)
         }
+        func.keepBlocks.forEach { (name, type) ->
+            cw.visitField(
+                Opcodes.ACC_STATIC or Opcodes.ACC_PRIVATE,
+                name,
+                type.toJVMDescriptor(),
+                null,
+                null
+            )
+        }
     }
 
     impl.methods.forEach { (name, func) ->
@@ -30,6 +39,16 @@ suspend fun compileImpl(impl: IRImpl): ByteArray? {
             isUsed = true
             compileCheckedFunction(cw, name, body.first,body.second, argTypes)
         }
+        func.keepBlocks.forEach { (name, type) ->
+            cw.visitField(
+                Opcodes.ACC_STATIC or Opcodes.ACC_PRIVATE,
+                name,
+                type.toJVMDescriptor(),
+                null,
+                null
+            )
+        }
+
     }
 
     if (!isUsed) return null

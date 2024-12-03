@@ -77,7 +77,7 @@ suspend fun evalFunction(
         variables.putVar(name, ConstBinding(instruction))
     }
 
-    val handle = FunctionMetaDataHandle(generics, function.module, emptyList())
+    val handle = FunctionMetaDataHandle(generics, function.module, emptyList(), null)
 
     val result = function.body.inferTypes(variables, lookup, handle)
     if (result !is TypedInstruction.Const) error("Failed")

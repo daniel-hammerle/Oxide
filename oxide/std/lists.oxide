@@ -1,5 +1,6 @@
-use java::util::{List, ArrayList}
-impl<T> ArrayList<T> {
+use java::util::List
+
+impl<T> List<T> {
     inline func map(self, closure) {
         list[for item in self closure(item)]
     }
@@ -30,6 +31,15 @@ impl<T> ArrayList<T> {
             acc = closure(acc, item)
         }
         acc
+    }
+
+    inline func first(self, closure) {
+        for item in self {
+            if closure(item) {
+                return item
+            }
+        }
+        null
     }
 
 
