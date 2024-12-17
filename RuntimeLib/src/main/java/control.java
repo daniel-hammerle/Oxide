@@ -4,11 +4,6 @@ import com.oxide.TypeParameter;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.IOException;
-import java.lang.foreign.Arena;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Scanner;
 
 public class control {
     private control() {}

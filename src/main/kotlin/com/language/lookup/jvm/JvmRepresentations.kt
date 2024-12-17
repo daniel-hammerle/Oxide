@@ -70,7 +70,7 @@ data class JvmStaticMethodRepresentation(
         val (_, method) = methods.firstNotNullOfOrNull {
             val result = it.fitsArgTypes(argTypes)
             Box(result.first).takeIf { result.second }?.let { a -> a to it }
-        } ?: error("No method found")
+        } ?:  error("No method found $argTypes")
 
         return getErrorTypes(method)
     }

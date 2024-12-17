@@ -244,11 +244,6 @@ class BasicIRModuleLookup(
         }
     }
 
-    private fun Type.ungenerify(): Type = when(this) {
-        is Type.JvmType -> Type.BasicJvmType(signature, linkedMapOf())
-        is Type.Union -> Type.Union(entries.map { it.ungenerify() }.toSet())
-        else -> this
-    }
 
     override suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate {
         when(val result = getExtensionFunction(instance, funcName)) {

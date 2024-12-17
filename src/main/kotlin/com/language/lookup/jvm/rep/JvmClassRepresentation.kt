@@ -47,6 +47,13 @@ interface JvmClassRepresentation {
 
     fun getGenericDefinitionOrder(): List<String>
 
+    suspend fun getErrorTypesConstructor(
+        visited: MutableSet<FunctionInfo>,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Set<SignatureString>
+
     suspend fun getErrorTypesAssociatedFunction(
         visited: MutableSet<FunctionInfo>,
         name: String,
@@ -76,6 +83,7 @@ data class BasicJvmClassRepresentation(
 ) : JvmClassRepresentation {
 
     override val modifiers: Modifiers = parseModifiers()
+    private val clazzName= SignatureString.fromDotNotation(this.clazz.name)
 
     private fun parseModifiers() = modifiers {
         if (hasSuperType(SignatureString("java::lang::Throwable"))) setError()
@@ -226,7 +234,8 @@ data class BasicJvmClassRepresentation(
         lookup: IRLookup,
         jvmLookup: JvmLookup
     ): Set<SignatureString> {
-        val info = FunctionInfo(emptyList(), argTypes.map { it.toTemplatedType() }, TemplatedType.Nothing, emptySet(), ExceptionInfo(emptySet(), emptySet()))
+
+        val info = FunctionInfo(name, clazzName,emptyList(), argTypes.map { it.toTemplatedType() }, TemplatedType.Nothing, emptySet(), ExceptionInfo(emptySet(), emptySet()))
 
         if (info in visited) {
             return emptySet()
@@ -243,7 +252,7 @@ data class BasicJvmClassRepresentation(
         lookup: IRLookup,
         jvmLookup: JvmLookup
     ): Set<SignatureString> {
-        val info = FunctionInfo(emptyList(), argTypes.map { it.toTemplatedType() }, TemplatedType.Nothing, emptySet(), ExceptionInfo(emptySet(), emptySet()))
+        val info = FunctionInfo(name, clazzName,emptyList(), argTypes.map { it.toTemplatedType() }, TemplatedType.Nothing, emptySet(), ExceptionInfo(emptySet(), emptySet()))
 
         if (info in visited) {
             return emptySet()
@@ -251,6 +260,24 @@ data class BasicJvmClassRepresentation(
 
         visited.add(info)
         return getMethod(name).getErrorTypes(argTypes)
+    }
+
+    override suspend fun getErrorTypesConstructor(
+        visited: MutableSet<FunctionInfo>,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Set<SignatureString> {
+        val info = FunctionInfo("<init>", clazzName, emptyList(), argTypes.map { it.toTemplatedType() }, TemplatedType.Nothing, emptySet(), ExceptionInfo(emptySet(), emptySet()))
+
+        if (info in visited) {
+            return emptySet()
+        }
+
+        visited.add(info)
+
+        val constructor = clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes).second } ?: error("No consturctor found")
+        return constructor.exceptionTypes.map { SignatureString.fromDotNotation(it.name) }.toSet()
     }
 }
 
@@ -331,7 +358,7 @@ data class JvmClassInfoRepresentation(
         val function = getAssociatedFunction(name, argTypes, lookup) ?: return null
 
         val oxideReturnType = evaluateReturnType(function.returnType.defaultVariant(), argTypes, function)
-        val errorType = getErrorTypesMethod(mutableSetOf(), name, argTypes, lookup, jvmLookup)
+        val errorType = getErrorTypesAssociatedFunction(mutableSetOf(), name, argTypes, lookup, jvmLookup)
 
         val actualReturnType = errorType.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
 
@@ -403,6 +430,32 @@ data class JvmClassInfoRepresentation(
         return info.generics.map { it.name }
     }
 
+    override suspend fun getErrorTypesConstructor(
+        visited: MutableSet<FunctionInfo>,
+        argTypes: List<Type>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Set<SignatureString> {
+        val constructor =
+            info.constructors.find { it.args.matches(argTypes, modifiers = emptyMap(), lookup = lookup) } ?: error("No constructor found")
+
+        return traceInfo(constructor.exceptionInfo, jvmLookup, visited, lookup)
+    }
+
+    private suspend fun traceInfo(exceptionInfo: ExceptionInfo, jvmLookup: JvmLookup, visited: MutableSet<FunctionInfo>, lookup: IRLookup): Set<SignatureString> {
+        val exceptions = exceptionInfo.others.flatMap {
+            jvmLookup.lookupErrorTypes(
+                visited,
+                it.owner,
+                it.name,
+                it.argTypes.map { a -> a.defaultVariant() },
+                lookup
+            )
+        }
+
+        return exceptionInfo.exceptions + exceptions.toSet()
+    }
+
     override suspend fun getErrorTypesAssociatedFunction(
         visited: MutableSet<FunctionInfo>,
         name: String,
@@ -417,18 +470,7 @@ data class JvmClassInfoRepresentation(
         }
 
         visited.add(function)
-
-        val exceptions = function.exceptionInfo.others.flatMap {
-            jvmLookup.lookupErrorTypes(
-                visited,
-                it.owner,
-                it.name,
-                it.argTypes.map { a -> a.defaultVariant() },
-                lookup
-            )
-        }
-
-        return function.exceptionInfo.exceptions + exceptions.toSet()
+        return traceInfo(function.exceptionInfo, jvmLookup, visited, lookup)
     }
 
     override suspend fun getErrorTypesMethod(
@@ -438,26 +480,15 @@ data class JvmClassInfoRepresentation(
         lookup: IRLookup,
         jvmLookup: JvmLookup
     ): Set<SignatureString> {
-        val function = getMethod(name, argTypes, lookup) ?: error("No matching function found")
+        val function = getMethod(name, argTypes, lookup) ?: getAssociatedFunction(name, argTypes, lookup)
+            ?: error("No matching function found $name:$argTypes")
 
         if (function in visited) {
             return emptySet() //if already in checked chain do not check twice
         }
 
         visited.add(function)
-
-
-        val exceptions = function.exceptionInfo.others.flatMap {
-            jvmLookup.lookupErrorTypes(
-                visited,
-                it.owner,
-                it.name,
-                it.argTypes.map { a -> a.defaultVariant() },
-                lookup
-            )
-        }
-
-        return function.exceptionInfo.exceptions + exceptions.toSet()
+        return traceInfo(function.exceptionInfo, jvmLookup, visited, lookup)
     }
 
     override val modifiers: Modifiers

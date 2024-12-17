@@ -4,6 +4,8 @@ import com.language.TemplatedType
 import com.language.compilation.SignatureString
 
 data class FunctionInfo(
+    val name: String,
+    val owner: SignatureString,
     val genericDefinitions: List<GenericTypeParameter>,
     val args: List<TemplatedType>,
     val returnType: TemplatedType,

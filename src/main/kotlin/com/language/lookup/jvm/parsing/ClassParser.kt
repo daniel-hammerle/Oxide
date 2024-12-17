@@ -63,13 +63,14 @@ class ClassParser(
         override fun visit(
             version: Int,
             access: Int,
-            name: String?,
+            name: String,
             signature: String?,
             superName: String?,
             interfaces: Array<String>
         ) {
-            val visitor = MethodSignatureVisitor()
-            SignatureReader(signature).accept(visitor)
+            val visitor = MethodSignatureVisitor(this@ClassParser.signature, name)
+            if (signature != null)
+                SignatureReader(signature).accept(visitor)
             modifiers = parseModifiersFormAsmAccessInt(access)
             this@ClassParser.interfaces.addAll(interfaces.map { SignatureString.fromDotNotation(it) })
             generics.addAll(visitor.newGenerics)
@@ -102,9 +103,9 @@ class ClassParser(
             name: String,
             descriptor: String,
             signature: String?,
-            exceptions: Array<out String>
+            exceptions: Array<out String>?
         ): MethodVisitor {
-            val visitor = MethodSignatureVisitor()
+            val visitor = MethodSignatureVisitor(this@ClassParser.signature, name)
             val signatureReader = SignatureReader(signature ?: descriptor)
             signatureReader.accept(visitor)
             val info = visitor.toFunctionInfo()
@@ -113,7 +114,7 @@ class ClassParser(
                 access.hasBits(Opcodes.ACC_STATIC) -> MethodKind.Static
                 else -> MethodKind.Virtual
             }
-            val throwsExceptions = exceptions.map { SignatureString.fromJVMNotation(it) }.toMutableSet()
+            val throwsExceptions = (exceptions ?: emptyArray()).map { SignatureString.fromJVMNotation(it) }.toMutableSet()
             return InnerMethodVisitor(kind, name, info, throwsExceptions)
         }
     }
@@ -124,7 +125,7 @@ class ClassParser(
         Special
     }
 
-    private inner class InnerMethodVisitor(val kind: MethodKind, val name: String, val info: FunctionInfo, val topLevelExceptions: MutableSet<SignatureString>) : MethodVisitor(Opcodes.ASM9) {
+    private inner class InnerMethodVisitor( val kind: MethodKind, val name: String, val info: FunctionInfo, val topLevelExceptions: MutableSet<SignatureString>) : MethodVisitor(Opcodes.ASM9) {
         val annotationVisitors = mutableSetOf<InnerAnnotationVisitor>()
 
         val exceptions = LinkedList<Pair<Label, MutableSet<SignatureString>>>()
@@ -135,9 +136,10 @@ class ClassParser(
             return InnerAnnotationVisitor(annotationType).also { annotationVisitors.add(it) }
         }
 
-        override fun visitTypeInsn(opcode: Int, type: String) {
+        override fun visitInsn(opcode: Int) {
             if (opcode != Opcodes.ATHROW) return
-            appendException(SignatureString.fromJVMNotation(type))
+            println(opcode)
+            //appendException(SignatureString.fromJVMNotation(type))
         }
 
         override fun visitMethodInsn(
@@ -147,7 +149,7 @@ class ClassParser(
             descriptor: String,
             isInterface: Boolean
         ) {
-            val visitor = MethodSignatureVisitor()
+            val visitor = MethodSignatureVisitor(clazzName= SignatureString.fromJVMNotation(owner), funcName = name)
             SignatureReader(descriptor).accept(visitor)
 
             mentions.add(FunctionMention(
@@ -193,7 +195,10 @@ class ClassParser(
     }
 
     fun toClassInfo(): ClassInfo {
-        reader.accept(InnerClassVisitor(), 0)
+        reader.accept(
+            InnerClassVisitor(),
+            0
+        )
         return ClassInfo(modifiers, signature, constructors, generics, fields, interfaces, staticFields, methods, associatedFunctions)
     }
 
@@ -210,7 +215,7 @@ class ClassParser(
     }
 }
 
-private class MethodSignatureVisitor : SignatureVisitor(Opcodes.ASM9) {
+private class MethodSignatureVisitor(val clazzName: SignatureString, val funcName: String) : SignatureVisitor(Opcodes.ASM9) {
     val argumentTypes = mutableListOf<TemplatedType>()
     var returnType: TemplatedType? = null
     val newGenerics = mutableListOf<GenericTypeParameter>()
@@ -256,7 +261,7 @@ private class MethodSignatureVisitor : SignatureVisitor(Opcodes.ASM9) {
         return ReturnTypeVisitor { returnType = it }
     }
 
-    fun toFunctionInfo() = FunctionInfo(newGenerics, argumentTypes, returnType!!, emptySet(), ExceptionInfo(emptySet(), emptySet()))
+    fun toFunctionInfo() = FunctionInfo(funcName, clazzName, newGenerics, argumentTypes, returnType!!, emptySet(), ExceptionInfo(emptySet(), emptySet()))
 
     private class ArgumentTypeVisitor(val argumentTypes: MutableList<TemplatedType>) : SignatureVisitor(Opcodes.ASM9) {
         override fun visitBaseType(descriptor: Char) {
@@ -272,7 +277,7 @@ private class MethodSignatureVisitor : SignatureVisitor(Opcodes.ASM9) {
         }
 
         override fun visitClassType(name: String) {
-            argumentTypes.add(TemplatedType.Complex(SignatureString(name.replace('/', '.')), emptyList()))
+            argumentTypes.add(TemplatedType.Complex(SignatureString(name.replace("/", "::")), emptyList()))
         }
     }
 

@@ -1,7 +1,8 @@
 use std::{io, errors, numbers}
 use java::lang::Integer
+use com::Example
 func main {
     io.println("Hello World")
-    result = Integer.parseInt("21d").orDefault(0)
-    io.println(result)
+    result = Example.test()
+    io.println(result + 1)
 }

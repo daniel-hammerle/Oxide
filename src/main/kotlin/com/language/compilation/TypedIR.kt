@@ -32,8 +32,7 @@ sealed interface TypedInstruction {
             get() = Type.Nothing
     }
 
-    data class InlineBody(val body: TypedInstruction, val endLabel: Label, override val type: Type): TypedInstruction {
-    }
+    data class InlineBody(val body: TypedInstruction, val endLabel: Label, override val type: Type): TypedInstruction
 
     data class Try(val parent: TypedInstruction, val errorTypes: List<SignatureString>): TypedInstruction {
         override val type = parent.type
@@ -230,7 +229,7 @@ sealed interface TypedInstruction {
 
     data class DynamicPropertyAccess(val parent: TypedInstruction, val name: String, override val type: Type) : TypedInstruction
 
-    data class DynamicPropertyAssignment(val parent: TypedInstruction, val name: String, val value: TypedInstruction,) : TypedInstruction {
+    data class DynamicPropertyAssignment(val parent: TypedInstruction, val name: String, val value: TypedInstruction) : TypedInstruction {
         override val type: Type = Type.Nothing
     }
 

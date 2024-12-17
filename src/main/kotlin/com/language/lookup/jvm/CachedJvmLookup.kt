@@ -18,14 +18,13 @@ class CachedJvmLookup(
     private val classCache: Cache<SignatureString, JvmClassRepresentation> = Cache()
 
     private fun createRep(signatureString: SignatureString): JvmClassRepresentation {
-        val classReader = loader.getReader(signatureString.toDotNotation())
-
-        return when (classReader) {
+        return when (val classReader = loader.getReader(signatureString.toDotNotation())) {
             is ClassReader -> {
                 val info = ClassParser(classReader, signatureString).toClassInfo()
                 JvmClassInfoRepresentation(info)
             }
-            else ->  BasicJvmClassRepresentation(loader.loadClass(signatureString.toDotNotation()))
+
+            else -> BasicJvmClassRepresentation(loader.loadClass(signatureString.toDotNotation()))
         }
 
     }
@@ -35,8 +34,20 @@ class CachedJvmLookup(
             classCache.set(signatureString, it)
         }
 
-    override suspend fun lookUpMethod(instance: Type.JvmType, functionName: String, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
-        return getClass(instance.signature).lookupMethod(functionName, instance, instance.genericTypes, argTypes, lookup, this)
+    override suspend fun lookUpMethod(
+        instance: Type.JvmType,
+        functionName: String,
+        argTypes: List<Type>,
+        lookup: IRLookup
+    ): FunctionCandidate? {
+        return getClass(instance.signature).lookupMethod(
+            functionName,
+            instance,
+            instance.genericTypes,
+            argTypes,
+            lookup,
+            this
+        )
     }
 
     override suspend fun lookUpAssociatedFunction(
@@ -70,11 +81,20 @@ class CachedJvmLookup(
         return getClass(className).modifiers
     }
 
-    override suspend fun lookupConstructor(className: SignatureString, argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
+    override suspend fun lookupConstructor(
+        className: SignatureString,
+        argTypes: List<Type>,
+        lookup: IRLookup
+    ): FunctionCandidate? {
         return getClass(className).lookupConstructor(argTypes, lookup)
     }
 
-    override suspend fun lookUpGenericTypes(instance: Type.JvmType, funcName: String, argTypes: List<Type>, lookup: IRLookup): Map<String, Type>? {
+    override suspend fun lookUpGenericTypes(
+        instance: Type.JvmType,
+        funcName: String,
+        argTypes: List<Type>,
+        lookup: IRLookup
+    ): Map<String, Type>? {
         return getClass(instance.signature).lookupGenericTypes(funcName, argTypes, lookup)
     }
 
@@ -89,7 +109,12 @@ class CachedJvmLookup(
         argTypes: List<Type>,
         lookup: IRLookup
     ): Set<SignatureString> {
-        return getClass(className).getErrorTypesAssociatedFunction(visited, funcName, argTypes, lookup, this)
+        val clazz = getClass(className)
+        if (funcName == "<init>") {
+            //handle constructor
+        }
+        return runCatching { clazz.getErrorTypesAssociatedFunction(visited, funcName, argTypes, lookup, this) }.getOrNull()
+            ?: clazz.getErrorTypesMethod(visited, funcName, argTypes, lookup, this)
     }
 
 
