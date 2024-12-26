@@ -240,7 +240,9 @@ sealed interface ModuleChild {
 }
 
 data class Function(
-    val args: List<String>,
+    val args: List<Pair<String, TemplatedType?>>,
+    val returnType: TemplatedType?,
+    val generics: Map<String, GenericType>,
     val body: Expression,
     override val modifiers: Modifiers,
     override val info: MetaInfo

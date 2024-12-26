@@ -8,6 +8,8 @@ import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
 import com.language.lexer.MetaInfo
 import com.language.lookup.jvm.RawClassLoader
+import com.language.lookup.jvm.rep.toTemplatedType
+import com.language.lookup.jvm.toType
 import java.io.IOException
 import java.lang.reflect.Modifier
 import java.util.jar.JarEntry
@@ -42,9 +44,6 @@ class ExtensionClassLoader(
         }
     }
 
-    fun createModuleTree(): Map<SignatureString, Module> = loadedClasses
-        .map { (name, clazz) -> SignatureString.fromDotNotation(name) to clazz.first.toModule() }
-        .toMap()
 
     override fun getBytes(name: String): ByteArray? = loadedClasses[name]?.second
 
@@ -57,16 +56,4 @@ class ExtensionClassLoader(
         val name = SignatureString.fromDotNotation(name)
         return loadedClasses[name.toDotNotation()]?.first  ?: parent.loadClass(name.toDotNotation())
     }
-}
-
-private fun Class<*>.toModule(): Module {
-    val children: MutableMap<String, ModuleChild> = mutableMapOf()
-    declaredMethods
-        .filter { Modifier.isStatic(it.modifiers) }
-        .forEach { method ->
-            val function = Function(method.parameters.map { it.name }, Expression.UnknownSymbol("external", MetaInfo(0)), modifiers { setPublic() }, MetaInfo(0))
-            children[method.name] = function
-        }
-
-    return Module(children, emptyMap(), emptyMap())
 }

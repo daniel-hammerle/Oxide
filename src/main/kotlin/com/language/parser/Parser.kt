@@ -105,13 +105,18 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             if (!modifiers.isSubsetOf(Modifiers.FunctionModifiers)) {
                 tokens.error("Invalid Modifiers cannot apply $modifiers to a function", mInfo, MessageKind.Logic)
             }
+            val generics = parseGenericDefinition(tokens)
             val name = tokens.expect<Token.Identifier>().name
             val args = if (tokens.visitNext() == Token.OpenBracket) {
                 tokens.expect<Token.OpenBracket>()
                 parseFunctionArgs(tokens, closingSymbol = Token.ClosingBracket)
             } else mutableListOf()
-            val body = parseExpression(tokens, BasicVariables.withEntries(args.toSet()))
-            name to Function(args, body, modifiers, info.finish())
+            val returnType = if (tokens.visitNext() == Token.Arrow) {
+                tokens.expect<Token.Arrow>()
+                parseType(tokens)
+            } else {null }
+            val body = parseExpression(tokens, BasicVariables.withEntries(args.map { it.first }.toSet()))
+            name to Function(args, returnType, generics, body, modifiers, info.finish())
         }
         Token.Struct -> {
             if (!modifiers.isSubsetOf(Modifiers.StructModifiers)) {
@@ -147,7 +152,7 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
                     else -> tokens.error("Invalid declaration of $name $entry inside an impl block", entry.info, MessageKind.Logic)
                 }
             }
-            val (methods, associatedFunctions) = functions.toList().partition { (_, function ) -> function.args.firstOrNull() == "self" }
+            val (methods, associatedFunctions) = functions.toList().partition { (_, function ) -> function.args.firstOrNull()?.first == "self" }
 
             UUID.randomUUID().toString() to Impl(type, methods.toMap(), associatedFunctions.toMap(), generics, modifiers, info.finish())
         }
@@ -217,13 +222,19 @@ fun parseSignature(tokens: Tokens): Pair<SignatureString, Boolean> {
 
 }
 
-fun parseFunctionArgs(tokens: Tokens, closingSymbol: Token): List<String> = mutableListOf<String>().apply {
+fun parseFunctionArgs(tokens: Tokens, closingSymbol: Token): List<Pair<String, TemplatedType?>> = mutableListOf<Pair<String, TemplatedType?>>().apply {
     if (tokens.visitNext() == closingSymbol) {
         tokens.next()
         return@apply
     }
     while (true) {
-        add(tokens.expect<Token.Identifier>().name)
+        val name = tokens.expect<Token.Identifier>().name
+        val type = if (tokens.visitNext() !in listOf(closingSymbol, Token.Comma)) {
+            parseType(tokens)
+        } else {
+            null
+        }
+        add(name to type)
         when(val token = tokens.next()) {
             Token.Comma -> continue
             closingSymbol -> break
@@ -509,7 +520,7 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
             tokens.expect<Token.OpenCurly>()
             if (tokens.visitNext() == Token.Pipe) {
                 tokens.expect<Token.Pipe>()
-                val argumentNames = parseFunctionArgs(tokens, closingSymbol = Token.Pipe)
+                val argumentNames = parseFunctionArgs(tokens, closingSymbol = Token.Pipe).map { it.first }
                 val scope = variables.monitoredChild()
                 argumentNames.forEach { scope.put(it) }
 

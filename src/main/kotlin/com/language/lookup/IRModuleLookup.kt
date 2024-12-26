@@ -165,8 +165,8 @@ class IRModuleLookup(
             )
         }.getOrNull() ?: return null
         val isConstEvalAble = args.all { it is TypedInstruction.Const } && instance is TypedInstruction.Const
-        return when (function) {
-            is BasicIRFunction -> {
+        return when (function.shouldInline) {
+            false -> {
                 if (!isConstEvalAble) return null
                 runCatching {
                     evalFunction(
@@ -178,8 +178,7 @@ class IRModuleLookup(
                     )
                 }.getOrNull()
             }
-
-            is IRInlineFunction -> function.generateInlining(
+            true -> function.generateInlining(
                 args,
                 untypedArgs,
                 variables,
@@ -202,8 +201,8 @@ class IRModuleLookup(
     ): TypedInstruction? {
         val function = runCatching { oxideLookup.findFunction(modName, funcName, this) }.getOrNull() ?: return null
         val isConstEvalAble = args.all { it is TypedInstruction.Const }
-        return when (function) {
-            is BasicIRFunction -> {
+        return when (function.shouldInline) {
+            false -> {
                 if (!isConstEvalAble) return null
                 runCatching {
                     evalFunction(
@@ -216,7 +215,7 @@ class IRModuleLookup(
                 }.getOrNull()
             }
 
-            is IRInlineFunction -> function.generateInlining(
+            true -> function.generateInlining(
                 args,
                 untypedArgs,
                 variables,

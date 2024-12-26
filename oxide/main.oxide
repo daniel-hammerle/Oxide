@@ -1,15 +1,24 @@
-
 use std::{random, io}
+
 
 func main {
     a(1, 0)
+    a("Hello", 9)
+    add("Hello", " World!")
+}
+
+func add(a, b) {
+    a + b
 }
 
 func a(i, j) {
+    io.println(i)
     if random.bool() {
         32
+    } else if random.bool() {
+        a(b(i + 1) + j,  i+ j)
     } else {
-        a(b(i + 1) + j, j)
+        b(32)
     }
 }
 

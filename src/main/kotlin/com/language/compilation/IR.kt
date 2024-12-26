@@ -12,6 +12,7 @@ import com.language.compilation.Instruction.DynamicCall
 import com.language.compilation.metadata.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.templatedType.matches
 import com.language.compilation.variables.*
 import com.language.eval.*
 import com.language.lexer.MetaInfo
@@ -1353,7 +1354,7 @@ sealed class Instruction {
             handle: MetaDataTypeHandle,
             hist: History
         ): Type.Broad {
-            TODO("Not yet implemented")
+            return Type.Broad.Known(lookup.lookUpFieldType(parentName, name))
         }
     }
 
@@ -1943,28 +1944,20 @@ fun Type.toActualJvmType() = when (this) {
     else -> this
 }
 
-sealed interface IRFunction {
-    val args: List<String>
+interface IRFunction {
+    val args: List<Pair<String, TemplatedType?>>
+    val returnType: TemplatedType?
+    val generics: Map<String, GenericType>
     val body: Instruction
     val imports: Set<SignatureString>
     val keepBlocks: MutableMap<String, Type>
     val module: LambdaAppender
+    val shouldInline: Boolean
 
     fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>>
-}
 
-data class IRInlineFunction(
-    override val args: List<String>,
-    override val body: Instruction,
-    override val imports: Set<SignatureString>,
-    override val module: LambdaAppender
-) : IRFunction {
-    override val keepBlocks: MutableMap<String, Type> = mutableMapOf()
-
-    override fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>> {
-        return emptyMap()
-    }
-
+    suspend fun inferUnknown(argTypes: List<Type.Broad>, lookup: IRLookup, generics: Map<String, Type>, hist: History, check: Boolean = true): Type.Broad
+    suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Type
     suspend fun generateInlining(
         args: List<TypedInstruction>,
         uncompiledArgs: List<Instruction>,
@@ -1973,78 +1966,18 @@ data class IRInlineFunction(
         lookup: IRLookup,
         generics: Map<String, Type>,
         hist: History
-    ): TypedInstruction {
-
-        if (args.size != this.args.size - if (instance == null) 0 else 1) {
-            error("Function expected ${this.args.size} arguments but got ${args.size}")
-        }
-
-        val scope = variables.clone()
-        val actualArgInstruction = mutableListOf<TypedInstruction>()
-        if (instance != null) {
-            if (instance is TypedInstruction.LoadVar) {
-                scope.putVar("self", VariableBinding(instance.id))
-            } else {
-                actualArgInstruction += scope.changeVar("self", instance)
-            }
-        }
-
-        val slicedArgs = if (instance == null) this.args else this.args.slice(1..<this.args.size)
-        val inlinableLambdas = mutableListOf<TypedInstruction.Lambda>()
-
-        args.zip(uncompiledArgs).zip(slicedArgs).forEach { (it, name) ->
-            val (typed, untyped) = it
-            if (untyped is Instruction.LoadVar) {
-                scope.reference(newName = name, oldName = untyped.name)
-                return@forEach
-            }
-            when (typed) {
-                is TypedInstruction.LoadVar -> {
-                    scope.putVar(name, VariableBinding(typed.id))
-                }
-
-                is TypedInstruction.Lambda -> {
-                    scope.putVar(name, ConstBinding(typed))
-                    inlinableLambdas.add(typed)
-                }
-
-                is TypedInstruction.Const -> scope.putVar(name, SemiConstBinding(typed))
-                else -> {
-                    actualArgInstruction += scope.changeVar(name, typed)
-                }
-            }
-        }
-        val bodyInstruction = inferTypes(scope, lookup, generics, inlinableLambdas, hist)
-
-        variables.mapping().minVarCount(scope.mapping().varCount())
-
-        return TypedInstruction.MultiInstructions(
-            actualArgInstruction + listOf(bodyInstruction),
-            variables.toVarFrame()
-        )
-    }
-
-    suspend fun inferTypes(
-        variables: VariableManager,
-        lookup: IRLookup,
-        generics: Map<String, Type>,
-        inlinableLambdas: List<TypedInstruction.Lambda>,
-        hist: History
-    ): TypedInstruction {
-        val end = Label()
-        val metaDataHandle = FunctionMetaDataHandle(generics, module, inlinableLambdas, end)
-        val typedBody = body.inferTypes(variables, lookup, metaDataHandle, hist)
-        metaDataHandle.issueReturnTypeAppend(typedBody.type)
-        return TypedInstruction.InlineBody(typedBody, end, metaDataHandle.returnType)
-    }
-
+    ): TypedInstruction
 }
 
+
 data class BasicIRFunction(
-    override val args: List<String>,
+    override val args: List<Pair<String, TemplatedType?>>,
+    override val returnType: TemplatedType?,
+    override val generics: Map<String, GenericType>,
     override val body: Instruction,
     override val imports: Set<SignatureString>,
-    override val module: LambdaAppender
+    override val module: LambdaAppender,
+    override val shouldInline: Boolean
 ) : IRFunction {
     private val mutex = Mutex()
     private val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, FunctionMetaData>> = mutableMapOf()
@@ -2057,7 +1990,9 @@ data class BasicIRFunction(
         return checkedVariants
     }
 
-    suspend fun inferUnknown(argTypes: List<Type.Broad>, lookup: IRLookup, generics: Map<String, Type>, hist: History, check: Boolean = true): Type.Broad {
+    //this algorithm purposely neglects annotated types simply because it is always only called in combination with the normal algorithm,
+    //thus not performing redundant checks
+    override suspend fun inferUnknown(argTypes: List<Type.Broad>, lookup: IRLookup, generics: Map<String, Type>, hist: History, check: Boolean): Type.Broad {
         mutex.withLock {
             if (argTypes in checkedUnknownVariants) {
                 return checkedUnknownVariants[argTypes]!!
@@ -2076,7 +2011,7 @@ data class BasicIRFunction(
         hist.appendRecCallStack(this, argTypes)
 
         val vars = TypeVariableManagerImpl()
-        args.zip(argTypes).forEach { (name, tp) -> vars.set(name, tp) }
+        args.zip(argTypes).forEach { (name, tp) -> vars.set(name.first, tp) }
         val metaHandle = MetaDataTypeHandleImpl(inheritedGenerics = generics)
 
         val result = body.inferUnknown(vars, lookup, metaHandle, hist)
@@ -2110,7 +2045,10 @@ data class BasicIRFunction(
         }
     }
 
-    suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Type {
+    override suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Type {
+        //generics = inherited generics form impl block or other context
+        //inferredGenerics = generics specifically from the function itself inferred based on arg and return types.
+        //this.generics = prototyped generics with constraints
         mutex.withLock {
             if (argTypes in checkedVariants) {
                 return checkedVariants[argTypes]!!.second.returnType
@@ -2134,8 +2072,16 @@ data class BasicIRFunction(
             error("Expected ${this.args.size} but got ${argTypes.size} arguments when calling $args (TypeChecking)")
         }
         val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList(), null)
+        val inferredGenerics = mutableMapOf<String, Type>()
+
         val variables =
-            VariableManagerImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
+            VariableManagerImpl.fromVariables(argTypes
+                .zip(this.args)
+                .associate { (tp, name) ->
+                    if (name.second?.matches(tp, inferredGenerics, this.generics, lookup) == false) error("Invalid type mismatch $tp : ${name.second}")
+                    name.first to tp
+                }
+            )
 
         val result = body.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle, hist)
 
@@ -2143,6 +2089,8 @@ data class BasicIRFunction(
         val returnType =
             if (metaDataHandle.hasReturnType()) result.type.join(metaDataHandle.returnType) else result.type
         metaDataHandle.issueReturnTypeAppend(returnType)
+
+        if (this.returnType?.matches(returnType, inferredGenerics, this.generics, lookup) == false) error("Invalid type mismatch return type $returnType : ${this.returnType}")
         mutex.withLock {
             keepBlocks.putAll(metaDataHandle.keepBlocks)
             checkedVariants[argTypes] =
@@ -2151,9 +2099,87 @@ data class BasicIRFunction(
         return returnType
     }
 
-}
+    override suspend fun generateInlining(
+        args: List<TypedInstruction>,
+        uncompiledArgs: List<Instruction>,
+        variables: VariableManager,
+        instance: TypedInstruction?,
+        lookup: IRLookup,
+        generics: Map<String, Type>,
+        hist: History
+    ): TypedInstruction {
 
-class RecursiveTracingError(val variant: CallVariant) : RuntimeException()
+        if (args.size != this.args.size - if (instance == null) 0 else 1) {
+            error("Function expected ${this.args.size} arguments but got ${args.size}")
+        }
+
+        val scope = variables.clone()
+        val actualArgInstruction = mutableListOf<TypedInstruction>()
+        if (instance != null) {
+            if (instance is TypedInstruction.LoadVar) {
+                scope.putVar("self", VariableBinding(instance.id))
+            } else {
+                actualArgInstruction += scope.changeVar("self", instance)
+            }
+        }
+
+        val slicedArgs = if (instance == null) this.args else this.args.slice(1..<this.args.size)
+        val inlinableLambdas = mutableListOf<TypedInstruction.Lambda>()
+
+        val inferredGenerics = mutableMapOf<String, Type>()
+
+        args.zip(uncompiledArgs).zip(slicedArgs).forEach { (it, name) ->
+            if (name.second?.matches(it.first.type, inferredGenerics, this.generics, lookup) == false) error("Type error mismatch ${it.first.type} : ${name.second}")
+            val (typed, untyped) = it
+            if (untyped is Instruction.LoadVar) {
+                scope.reference(newName = name.first, oldName = untyped.name)
+                return@forEach
+            }
+            when (typed) {
+                is TypedInstruction.LoadVar -> {
+                    scope.putVar(name.first, VariableBinding(typed.id))
+                }
+
+                is TypedInstruction.Lambda -> {
+                    scope.putVar(name.first, ConstBinding(typed))
+                    inlinableLambdas.add(typed)
+                }
+
+                is TypedInstruction.Const -> scope.putVar(name.first, SemiConstBinding(typed))
+                else -> {
+                    actualArgInstruction += scope.changeVar(name.first, typed)
+                }
+            }
+        }
+        val bodyInstruction = inferTypesInPlace(scope, lookup, generics, inlinableLambdas, hist)
+
+        if (this.returnType?.matches(bodyInstruction.type, inferredGenerics, this.generics, lookup) == false) error("Type mismatch return type ${bodyInstruction.type} : ${this.returnType}")
+
+        variables.mapping().minVarCount(scope.mapping().varCount())
+
+        return TypedInstruction.MultiInstructions(
+            actualArgInstruction + listOf(bodyInstruction),
+            variables.toVarFrame()
+        )
+    }
+
+
+    //compiles the function body in place with the given manager of the outside scope.
+    private suspend fun inferTypesInPlace(
+        variables: VariableManager,
+        lookup: IRLookup,
+        generics: Map<String, Type>,
+        inlinableLambdas: List<TypedInstruction.Lambda>,
+        hist: History
+    ): TypedInstruction {
+        val end = Label()
+        val metaDataHandle = FunctionMetaDataHandle(generics, module, inlinableLambdas, end)
+        val typedBody = body.inferTypes(variables, lookup, metaDataHandle, hist)
+        metaDataHandle.issueReturnTypeAppend(typedBody.type)
+        return TypedInstruction.InlineBody(typedBody, end, metaDataHandle.returnType)
+    }
+
+}
 
 fun Type.isNumType() = isInt() || isDouble()
 fun Type.isInt() = this == Type.Int || this == Type.IntT

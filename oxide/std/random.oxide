@@ -1,5 +1,6 @@
 
 use java::util::Random
+
 func bool {
     random = keep { Random() }
     random.nextBoolean()

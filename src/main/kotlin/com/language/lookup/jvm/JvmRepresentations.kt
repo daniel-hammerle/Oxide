@@ -103,7 +103,9 @@ data class JvmMethodRepresentation(
     suspend fun lookupVariantUnknown(type: Type, generics: Map<String, Type.Broad>, argTypes: List<Type.Broad>, jvmLookup: JvmLookup, lookup: IRLookup): Type.Broad? {
         val result = methods.filter { it.fitsArgTypes(argTypes).second }
 
-        if (result.isEmpty() || result.size > 1) return null
+        if (result.isEmpty()) return null
+
+        if (argTypes.any { it !is Type.Broad.Known } && result.size > 1) return null
 
         val method = result.first()
         val oxideReturnType = evaluateReturnType(argTypes.populate(method), generics, method, jvmLookup, lookup)

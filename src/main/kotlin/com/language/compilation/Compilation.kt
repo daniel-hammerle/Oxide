@@ -118,21 +118,16 @@ fun compileFunction(function: Function, module: ModuleLookup, lambdaAppender: La
 
     val body = compileExpression(function.body, module, true)
 
-    return when (function.modifiers.isModifier(Modifier.Inline)) {
-        true -> IRInlineFunction(
+    return BasicIRFunction(
             function.args,
+            function.returnType,
+            function.generics,
             body,
             module.localImports.values.toSet() + module.localName,
-            lambdaAppender
+            lambdaAppender,
+            function.modifiers.isModifier(Modifier.Inline)
         )
 
-        false -> BasicIRFunction(
-            function.args,
-            body,
-            module.localImports.values.toSet() + module.localName,
-            lambdaAppender
-        )
-    }
 }
 
 fun compileStatements(statements: List<Statement>, module: ModuleLookup, uctl: Boolean): List<Instruction> {
