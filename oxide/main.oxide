@@ -1,8 +1,22 @@
-use std::{io, errors, numbers}
-use java::lang::Integer
-use com::Example
+
+use std::{random, io}
+
 func main {
-    io.println("Hello World")
-    result = Example.test()
-    io.println(result + 1)
+    a(1, 0)
+}
+
+func a(i, j) {
+    if random.bool() {
+        32
+    } else {
+        a(b(i + 1) + j, j)
+    }
+}
+
+func b(i) {
+    if random.bool() {
+        b(i+45)
+    } else {
+        i + i
+    }
 }

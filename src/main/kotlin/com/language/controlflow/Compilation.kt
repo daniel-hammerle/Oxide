@@ -117,7 +117,7 @@ suspend fun compileDir(path: String, externalLibs: List<String>): Map<SignatureS
 
     val (_, secondStageCompileTime) = measureTime {
         scope.async {
-            entryPoint.inferTypes(emptyList(), irLookup, emptyMap())
+            entryPoint.inferTypes(emptyList(), irLookup, emptyMap(), BasicHistory())
         }.await()
     }
 

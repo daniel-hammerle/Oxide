@@ -9,6 +9,15 @@ import com.language.compilation.modifiers.Modifiers
 import com.language.lookup.oxide.lazyTransform
 
 suspend fun Iterable<TemplatedType>.matches(
+    other: List<Type.Broad>,
+    generics: MutableMap<String, Type> = mutableMapOf(),
+    modifiers: Map<String, GenericType>,
+    lookup: IRLookup
+) : Boolean {
+    return this.zip(other).all { (first, second) -> first.matches(second, generics, modifiers, lookup) }
+}
+
+suspend fun Iterable<TemplatedType>.matches(
     other: Iterable<Type>,
     generics: MutableMap<String, Type> = mutableMapOf(),
     modifiers: Map<String, GenericType>,
@@ -48,14 +57,16 @@ suspend fun TemplatedType.matches(
             }
             type.genericTypes.entries.zip(this.generics).forEach { (entry, template) ->
                 when(val v = entry.value) {
-                    is Type.BroadType.Unset -> {
+                    is Type.Broad.Unset -> {
                         println("Unset type ($type cannot match $this)")
                         println("Defaulting to true")
                     }
-                    is Type.BroadType.Known -> when (template.matches(v.type, generics, modifiers, lookup)) {
+                    is Type.Broad.Known -> when (template.matches(v.type, generics, modifiers, lookup)) {
                         false-> return false
                         else -> {}
                     }
+
+                    is Type.Broad.UnknownUnionized -> {} //assume unknown is true
                 }
             }
             true
@@ -83,14 +94,15 @@ suspend fun TemplatedType.matches(
 }
 
 suspend fun TemplatedType.matches(
-    type: Type.BroadType,
+    type: Type.Broad,
     generics: MutableMap<String, Type> = mutableMapOf(),
     modifiers: Map<String, GenericType>,
     lookup: IRLookup
 ): Boolean {
     return when(type) {
-        is Type.BroadType.Known -> matches(type.type, generics, modifiers, lookup)
-        Type.BroadType.Unset -> true
+        is Type.Broad.Known -> matches(type.type, generics, modifiers, lookup)
+        Type.Broad.Unset -> true
+        is Type.Broad.UnknownUnionized -> true //assuming unknown always matches
     }
 }
 

@@ -18,6 +18,6 @@ data class PhantomBinding(var type: Type): VariableProvider {
 
     override fun genericChangeRequest(parent: VariableMapping, genericName: String, type: Type) {
         val (signature, generics) = (this.type as Type.JvmType).let { it.signature to it.genericTypes }
-        this.type = Type.BasicJvmType(signature, generics+ mapOf(genericName to Type.BroadType.Known(type)))
+        this.type = Type.BasicJvmType(signature, generics+ mapOf(genericName to Type.Broad.Known(type)))
     }
 }

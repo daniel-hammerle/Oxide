@@ -2,7 +2,6 @@ package com.language.compilation.variables
 
 import UnsetListType
 import com.language.compilation.ArrayType
-import com.language.compilation.ScopeAdjustInstruction
 import com.language.compilation.Type
 import com.language.compilation.TypedInstruction
 import listType
@@ -38,7 +37,7 @@ class VariableMappingTest {
     @Test
     fun testLoopMerging() {
         val vars = variables()
-        vars.changeVar("items", TypedInstruction.LoadConstArray(listOf(TypedInstruction.LoadConstInt(234)), ArrayType.Object, Type.BroadType.Known(Type.Int)))
+        vars.changeVar("items", TypedInstruction.LoadConstArray(listOf(TypedInstruction.LoadConstInt(234)), ArrayType.Object, Type.Broad.Known(Type.Int)))
         val scope = vars.clone()
         scope.change("item", Type.Int)
         val scopePostFirst = scope.clone()

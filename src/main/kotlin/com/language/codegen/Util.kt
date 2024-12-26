@@ -129,3 +129,47 @@ fun<T> Iterable<T>.enumerate(): Iterable<Pair<Int, T>> {
     }
 }
 
+fun<A, B> List<A>.lazyMap(transform: (A) -> B): List<B> = LazyList(this, transform)
+
+class LazyList<A, B>(
+    val original: List<A>,
+    val transform: (A) -> B
+) : List<B> {
+    override val size: Int
+        get() = original.size
+
+    override fun contains(element: B): Boolean = original.any { transform(it) == element }
+
+    override fun containsAll(elements: Collection<B>): Boolean = elements.all { contains(it) }
+
+    override fun get(index: Int): B = original[index].let(transform)
+
+    override fun indexOf(element: B): Int = original.indexOfFirst { transform(it) == element }
+
+    override fun isEmpty(): Boolean = original.isEmpty()
+
+    override fun iterator(): Iterator<B> = listIterator()
+
+    override fun lastIndexOf(element: B): Int = original.indexOfLast { transform(it) == element }
+
+    override fun listIterator(): ListIterator<B> = listIterator(0)
+
+    override fun listIterator(index: Int) = object : ListIterator<B> {
+        var currentIndex = index
+
+        override fun hasNext(): Boolean = currentIndex < original.size
+        override fun hasPrevious(): Boolean = currentIndex > 0
+        override fun next(): B = original[currentIndex++].let(transform)
+        override fun nextIndex(): Int = currentIndex
+        override fun previous(): B = original[--currentIndex].let(transform)
+        override fun previousIndex(): Int = currentIndex - 1
+    }
+
+
+
+    override fun subList(fromIndex: Int, toIndex: Int): List<B> = LazyList(
+        original.subList(fromIndex, toIndex),
+        transform
+    )
+}
+

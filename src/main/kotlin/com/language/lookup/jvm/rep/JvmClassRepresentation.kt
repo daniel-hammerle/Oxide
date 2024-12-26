@@ -21,21 +21,38 @@ interface JvmClassRepresentation {
     suspend fun lookupMethod(
         name: String,
         type: Type,
-        generics: Map<String, Type.BroadType>,
+        generics: Map<String, Type.Broad>,
         argTypes: List<Type>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
     ): FunctionCandidate?
+
+    suspend fun lookupMethodUnknown(
+        name: String,
+        type: Type,
+        generics: Map<String, Type.Broad>,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Type.Broad?
 
     suspend fun lookUpAssociatedFunction(
         name: String,
         argTypes: List<Type>,
         lookup: IRLookup,
         jvmLookup: JvmLookup,
-        generics: Map<String, Type.BroadType>
+        generics: Map<String, Type.Broad>
     ): FunctionCandidate?
 
-    suspend fun lookUpField(name: String, generics: Map<String, Type.BroadType>, lookup: IRLookup): Type?
+    suspend fun lookUpAssociatedFunctionUnknown(
+        name: String,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup,
+        generics: Map<String, Type.Broad>
+    ): Type.Broad?
+
+    suspend fun lookUpField(name: String, generics: Map<String, Type.Broad>, lookup: IRLookup): Type?
 
     suspend fun lookUpStaticField(name: String): Type?
 
@@ -44,6 +61,7 @@ interface JvmClassRepresentation {
     suspend fun lookupGenericTypes(name: String, argTypes: List<Type>, lookup: IRLookup): Map<String, Type>?
 
     suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
+    suspend fun lookupConstructorUnknown(argTypes: List<Type.Broad>, lookup: IRLookup): Type.Broad?
 
     fun getGenericDefinitionOrder(): List<String>
 
@@ -141,22 +159,43 @@ data class BasicJvmClassRepresentation(
 
     override suspend fun lookupMethod(
         name: String, type: Type,
-        generics: Map<String, Type.BroadType>,
+        generics: Map<String, Type.Broad>,
         argTypes: List<Type>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
     ): FunctionCandidate? =
         getMethod(name).lookupVariant(type, generics, argTypes, jvmLookup, lookup)
 
+    override suspend fun lookupMethodUnknown(
+        name: String,
+        type: Type,
+        generics: Map<String, Type.Broad>,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Type.Broad? {
+        return getMethod(name).lookupVariantUnknown(type, generics, argTypes, jvmLookup, lookup)
+    }
+
     override suspend fun lookUpAssociatedFunction(
         name: String, argTypes: List<Type>,
         lookup: IRLookup,
         jvmLookup: JvmLookup,
-        generics: Map<String, Type.BroadType>
+        generics: Map<String, Type.Broad>
     ): FunctionCandidate? =
         getAssociatedFunction(name).lookupVariant(argTypes, jvmLookup, generics, lookup)
 
-    override suspend fun lookUpField(name: String, generics: Map<String, Type.BroadType>, lookup: IRLookup): Type? {
+    override suspend fun lookUpAssociatedFunctionUnknown(
+        name: String,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup,
+        generics: Map<String, Type.Broad>
+    ): Type.Broad? {
+        TODO("Not yet implemented")
+    }
+
+    override suspend fun lookUpField(name: String, generics: Map<String, Type.Broad>, lookup: IRLookup): Type? {
         if (fields.contains(name)) {
             return fields.get(name)!!.toType(generics)
         }
@@ -201,7 +240,7 @@ data class BasicJvmClassRepresentation(
 
     private fun toType() = Type.BasicJvmType(
         SignatureString.fromDotNotation(clazz.name),
-        clazz.typeParameters.associate { it.name to Type.BroadType.Unset }
+        clazz.typeParameters.associate { it.name to Type.Broad.Unset }
     )
 
     override suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
@@ -221,6 +260,11 @@ data class BasicJvmClassRepresentation(
         )
 
         return candidate
+    }
+
+    override suspend fun lookupConstructorUnknown(argTypes: List<Type.Broad>, lookup: IRLookup): Type.Broad? {
+        clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes).second } ?: return null
+        return Type.Broad.Known(this.toType())
     }
 
     override fun getGenericDefinitionOrder(): List<String> {
@@ -318,7 +362,7 @@ data class JvmClassInfoRepresentation(
     override suspend fun lookupMethod(
         name: String,
         type: Type,
-        generics: Map<String, Type.BroadType>,
+        generics: Map<String, Type.Broad>,
         argTypes: List<Type>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
@@ -348,12 +392,23 @@ data class JvmClassInfoRepresentation(
         return candidate
     }
 
+    override suspend fun lookupMethodUnknown(
+        name: String,
+        type: Type,
+        generics: Map<String, Type.Broad>,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup
+    ): Type.Broad? {
+        TODO("Not yet implemented")
+    }
+
     override suspend fun lookUpAssociatedFunction(
         name: String,
         argTypes: List<Type>,
         lookup: IRLookup,
         jvmLookup: JvmLookup,
-        generics: Map<String, Type.BroadType>
+        generics: Map<String, Type.Broad>
     ): FunctionCandidate? {
         val function = getAssociatedFunction(name, argTypes, lookup) ?: return null
 
@@ -378,7 +433,17 @@ data class JvmClassInfoRepresentation(
         return candidate
     }
 
-    override suspend fun lookUpField(name: String, generics: Map<String, Type.BroadType>, lookup: IRLookup): Type? {
+    override suspend fun lookUpAssociatedFunctionUnknown(
+        name: String,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup,
+        jvmLookup: JvmLookup,
+        generics: Map<String, Type.Broad>
+    ): Type.Broad? {
+        TODO("Not yet implemented")
+    }
+
+    override suspend fun lookUpField(name: String, generics: Map<String, Type.Broad>, lookup: IRLookup): Type? {
         val field = info.fields[name]
         val type = with(lookup) {
             field?.populate(generics.asLazyTypeMap())
@@ -405,7 +470,7 @@ data class JvmClassInfoRepresentation(
     }
 
     private val instanceType =
-        Type.BasicJvmType(info.signature, info.generics.associate { it.name to Type.BroadType.Unset })
+        Type.BasicJvmType(info.signature, info.generics.associate { it.name to Type.Broad.Unset })
 
     override suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
         val constructor =
@@ -424,6 +489,11 @@ data class JvmClassInfoRepresentation(
         )
 
         return candidate
+    }
+
+    override suspend fun lookupConstructorUnknown(argTypes: List<Type.Broad>, lookup: IRLookup): Type.Broad? {
+        info.constructors.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
+        return Type.Broad.Known(instanceType)
     }
 
     override fun getGenericDefinitionOrder(): List<String> {
@@ -497,7 +567,7 @@ data class JvmClassInfoRepresentation(
 }
 
 fun TemplatedType.defaultVariant(): Type = when (this) {
-    is TemplatedType.Array -> Type.Array(Type.BroadType.Known(itemType.defaultVariant()))
+    is TemplatedType.Array -> Type.Array(Type.Broad.Known(itemType.defaultVariant()))
     TemplatedType.BoolT -> Type.BoolUnknown
     is TemplatedType.Complex -> Type.BasicJvmType(signatureString, emptyMap())
     TemplatedType.DoubleT -> Type.DoubleT
@@ -528,7 +598,7 @@ fun TemplatedType.getGenerics(): Set<String> = when (this) {
 
 suspend fun TemplatedType.extractGenerics(type: Type, lookup: IRLookup): Map<String, Type> = when (this) {
     is TemplatedType.Array -> itemType.extractGenerics(
-        ((type as Type.Array).itemType as Type.BroadType.Known).type,
+        ((type as Type.Array).itemType as Type.Broad.Known).type,
         lookup
     )
 
@@ -536,7 +606,7 @@ suspend fun TemplatedType.extractGenerics(type: Type, lookup: IRLookup): Map<Str
         .orderedGenerics(lookup)
         .zip(generics)
         .mapNotNull { (tp, template) ->
-            (tp.second as? Type.BroadType.Known)?.type?.let {
+            (tp.second as? Type.Broad.Known)?.type?.let {
                 template.extractGenerics(
                     it,
                     lookup
@@ -555,5 +625,5 @@ suspend fun Type.JvmType.orderedGenerics(lookup: IRLookup) =
 
 fun <K, V> Map<K, V>.orderByKeys(keys: List<K>) = keys.map { it to this[it]!! }
 
-fun Map<String, Type.BroadType>.asLazyTypeMap() =
-    lazyTransform { key, it -> (it as? Type.BroadType.Known)?.type ?: Type.Object }
+fun Map<String, Type.Broad>.asLazyTypeMap() =
+    lazyTransform { key, it -> (it as? Type.Broad.Known)?.type ?: Type.Object }

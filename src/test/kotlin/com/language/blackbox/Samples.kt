@@ -76,11 +76,11 @@ class Samples {
                 println(x.getClass().getName())
                 println(3.toString())
                 println(3.2.getClass().getName())
-                Double.parseDouble(read()) + 2
+                Double.parseDouble(read())
             }
         """.trimIndent()
 
-        runCode(code, input = "3.2").out("3\njava.lang.Integer\n3\njava.lang.Double\n").returnValue(5.2)
+        runCode(code, input = "3.2").out("3\njava.lang.Integer\n3\njava.lang.Double\n").returnValue(3.2)
     }
 
     @Test
@@ -103,6 +103,28 @@ class Samples {
         """.trimIndent()
 
         runCode(code, input = "3.2").out("-2").returnValue(null)
+    }
+
+
+    @Test
+    fun testInferenceRecursiveFunctions() {
+        //tests how ints are autmatically boxed to allow their boxed interface to be used
+        val code = MinimalTestingLib + """
+            func main {
+                print(a(0, 2))
+                a("Hello", 2)
+            }
+            
+            func a(i, j) {
+                if randBool() {
+                     i
+                } else {
+                    a(i + 1, i + j) + j
+                }
+            }
+        """.trimIndent()
+
+        runCode(code).out { it.toIntOrNull() != null }
     }
 
     @Test

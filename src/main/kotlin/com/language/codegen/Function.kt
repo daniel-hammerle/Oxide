@@ -52,25 +52,25 @@ fun jvmName(name: String, argTypes: List<Type>): String {
     return "${name}_${argTypes.hashCode().toLong() and 0xFFFFFFFFL}"
 }
 
-fun Type.BroadType.toFunctionNameNotation() = when(this) {
-    is Type.BroadType.Known -> type.toFunctionNameNotation()
-    Type.BroadType.Unset -> "unknown"
+fun Type.Broad.toFunctionNameNotation() = when(this) {
+    is Type.Broad.Typeful -> type.toFunctionNameNotation()
+    Type.Broad.Unset -> "unknown"
 }
 
-fun Type.BroadType.getOrDefault(type: Type): Type = when(this) {
-    is Type.BroadType.Known -> this.type
-    Type.BroadType.Unset -> type
+fun Type.Broad.getOrDefault(type: Type): Type = when(this) {
+    is Type.Broad.Typeful -> this.type
+    Type.Broad.Unset -> type
 }
 
-fun Type.BroadType.getOrNull(): Type? = when(this) {
-    is Type.BroadType.Known -> this.type
-    Type.BroadType.Unset -> null
+fun Type.Broad.getOrNull(): Type? = when(this) {
+    is Type.Broad.Typeful -> this.type
+    Type.Broad.Unset -> null
 }
 
 
-fun Type.BroadType.getOrThrow(message: String) =when(this) {
-    is Type.BroadType.Known -> this.type
-    Type.BroadType.Unset -> error(message)
+fun Type.Broad.getOrThrow(message: String) =when(this) {
+    is Type.Broad.Typeful -> this.type
+    Type.Broad.Unset -> error(message)
 }
 
 fun Type.toFunctionNameNotation(): String = when(this) {

@@ -1,6 +1,7 @@
 package com.language.eval
 
 import com.language.codegen.VarFrame
+import com.language.compilation.History
 import com.language.compilation.IRFunction
 import com.language.compilation.Type
 import com.language.compilation.TypedInstruction
@@ -67,7 +68,8 @@ suspend fun evalFunction(
     function: IRFunction,
     args: List<TypedInstruction.Const>,
     lookup: IRLookup,
-    generics: Map<String, Type>
+    generics: Map<String, Type>,
+    history: History
 ): TypedInstruction.Const {
     if (function.args.size != args.size)
         error("Expected ${function.args.size} but got ${args.size}")
@@ -79,7 +81,7 @@ suspend fun evalFunction(
 
     val handle = FunctionMetaDataHandle(generics, function.module, emptyList(), null)
 
-    val result = function.body.inferTypes(variables, lookup, handle)
+    val result = function.body.inferTypes(variables, lookup, handle, history)
     if (result !is TypedInstruction.Const) error("Failed")
     return result
 }

@@ -1,11 +1,8 @@
 package com.language.lookup.jvm
 
 import com.language.codegen.Box
-import com.language.codegen.getOrDefault
 import com.language.codegen.getOrThrow
 import com.language.compilation.*
-import com.language.compilation.modifiers.Modifiers
-import com.language.compilation.modifiers.modifiers
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.rep.asLazyTypeMap
 import com.language.lookup.jvm.rep.orderByKeys
@@ -19,12 +16,13 @@ import java.lang.reflect.TypeVariable
 typealias ReflectModifiers = java.lang.reflect.Modifier
 typealias ReflectType = java.lang.reflect.Type
 
-fun Field.toType(generics: Map<String, Type.BroadType>) = genericType.toType(generics) ?: type.toType()
+fun Field.toType(generics: Map<String, Type.Broad>) = genericType.toType(generics) ?: type.toType()
 
-fun ReflectType.toType(generics: Map<String, Type.BroadType>) = when(val tp = generics[typeName]) {
-    is Type.BroadType.Known -> tp.type
-    Type.BroadType.Unset -> Type.Object
+fun ReflectType.toType(generics: Map<String, Type.Broad>) = when(val tp = generics[typeName]) {
+    is Type.Broad.Known -> tp.type
+    Type.Broad.Unset -> Type.Object
     null -> null
+    is Type.Broad.UnknownUnionized -> TODO()
 }
 
 data class JvmStaticMethodRepresentation(
@@ -34,7 +32,7 @@ data class JvmStaticMethodRepresentation(
     private val methods: Set<Method>,
     private val variants: Cache<List<Type>, FunctionCandidate>
 ) {
-    suspend fun lookupVariant(argTypes: List<Type>, jvmLookup: JvmLookup, generics: Map<String, Type.BroadType>, lookup: IRLookup): FunctionCandidate? {
+    suspend fun lookupVariant(argTypes: List<Type>, jvmLookup: JvmLookup, generics: Map<String, Type.Broad>, lookup: IRLookup): FunctionCandidate? {
         if (variants.contains(argTypes)) return variants.get(argTypes)
 
         val (vararg, method) = methods.firstNotNullOfOrNull {
@@ -87,7 +85,7 @@ data class JvmMethodRepresentation(
     private val ownerIsInterface: Boolean,
     private val name: String,
     private val methods: Set<Method>,
-    private val variants: Cache<Pair<Map<String, Type.BroadType>, List<Type>>, FunctionCandidate>,
+    private val variants: Cache<Pair<Map<String, Type.Broad>, List<Type>>, FunctionCandidate>,
     private val isOwnerInterface: Boolean,
 ) {
 
@@ -102,7 +100,22 @@ data class JvmMethodRepresentation(
         return result
     }
 
-    suspend fun lookupVariant(type: Type, generics: Map<String, Type.BroadType>, argTypes: List<Type>, jvmLookup: JvmLookup, lookup: IRLookup): FunctionCandidate? {
+    suspend fun lookupVariantUnknown(type: Type, generics: Map<String, Type.Broad>, argTypes: List<Type.Broad>, jvmLookup: JvmLookup, lookup: IRLookup): Type.Broad? {
+        val result = methods.filter { it.fitsArgTypes(argTypes).second }
+
+        if (result.isEmpty() || result.size > 1) return null
+
+        val method = result.first()
+        val oxideReturnType = evaluateReturnType(argTypes.populate(method), generics, method, jvmLookup, lookup)
+        val errorTypes = getErrorTypes(method)
+
+        val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
+
+       return Type.Broad.Known(actualReturnType)
+    }
+
+
+    suspend fun lookupVariant(type: Type, generics: Map<String, Type.Broad>, argTypes: List<Type>, jvmLookup: JvmLookup, lookup: IRLookup): FunctionCandidate? {
         if (variants.contains(generics to argTypes)) return variants.get(generics to argTypes)
 
         val (vararg, method) = methods.firstNotNullOfOrNull {
@@ -153,9 +166,9 @@ data class JvmMethodRepresentation(
     }
 }
 
-suspend fun ReflectType.extract(type: Type, lookup: IRLookup): Map<String, Type.BroadType> {
+suspend fun ReflectType.extract(type: Type, lookup: IRLookup): Map<String, Type.Broad> {
     return when(this) {
-        is TypeVariable<*> -> mapOf(name to Type.BroadType.Known(type))
+        is TypeVariable<*> -> mapOf(name to Type.Broad.Known(type))
         is ParameterizedType -> {
             type as Type.JvmType
             val orderedGenerics = type.genericTypes.orderByKeys(

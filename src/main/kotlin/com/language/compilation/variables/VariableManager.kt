@@ -1,10 +1,53 @@
 package com.language.compilation.variables
 
 import com.language.codegen.VarFrame
-import com.language.compilation.Instruction
 import com.language.compilation.ScopeAdjustment
 import com.language.compilation.Type
 import com.language.compilation.TypedInstruction
+import com.language.compilation.join
+
+interface TypeVariableManager {
+    fun get(name: String): Type.Broad
+    fun set(name: String, tp: Type.Broad)
+
+    fun branch(): TypeVariableManager
+    fun merge(branches: Iterable<TypeVariableManager>)
+
+    val vars: Map<String, Type.Broad>
+}
+
+class TypeVariableManagerImpl(override var vars: MutableMap<String, Type.Broad> = mutableMapOf()) : TypeVariableManager {
+    override fun get(name: String): Type.Broad = vars[name] ?: error("No variable $name")
+
+    override fun set(name: String, tp: Type.Broad) {
+        vars[name] = tp
+    }
+
+    override fun branch(): TypeVariableManager = TypeVariableManagerImpl(vars.toMutableMap())
+
+    override fun merge(branches: Iterable<TypeVariableManager>) {
+        vars = branches.asSequence()
+            .map { it.vars }
+            .reduce { acc, map -> acc.mergeConflicts(map) { a, b -> a.join(b) } }
+            .toMutableMap()
+    }
+
+}
+
+inline fun <K, A> Map<K, A>.mergeConflicts(
+    other: Map<K, A>,
+    closure: (A, A) -> A
+): Map<K, A> {
+    val result = this.toMutableMap()
+
+    for ((key, value) in other) {
+        result[key] = result[key]?.let { existingValue ->
+            closure(existingValue, value)
+        } ?: value
+    }
+
+    return result
+}
 
 interface VariableManager : ReadOnlyVariableManager {
     fun putVar(name: String, provider: VariableProvider)

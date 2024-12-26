@@ -50,13 +50,32 @@ class CachedJvmLookup(
         )
     }
 
+    override suspend fun lookUpMethodUnknown(
+        instance: Type.JvmType,
+        functionName: String,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup
+    ): Type.Broad? {
+        return getClass(instance.signature).lookupMethodUnknown(functionName, instance, instance.genericTypes, argTypes, lookup, this)
+    }
+
     override suspend fun lookUpAssociatedFunction(
         className: SignatureString,
         functionName: String,
         argTypes: List<Type>,
         lookup: IRLookup,
-        generics: Map<String, Type.BroadType>
+        generics: Map<String, Type.Broad>
     ): FunctionCandidate? = getClass(className).lookUpAssociatedFunction(functionName, argTypes, lookup, this, generics)
+
+    override suspend fun lookUpAssociatedFunctionUnknown(
+        className: SignatureString,
+        functionName: String,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup,
+        generics: Map<String, Type.Broad>
+    ): Type.Broad? {
+        return getClass(className).lookUpAssociatedFunctionUnknown(functionName, argTypes, lookup, this, generics)
+    }
 
     override suspend fun lookUpField(instance: Type.JvmType, fieldName: String, lookup: IRLookup): Type? {
         return getClass(instance.signature).lookUpField(fieldName, instance.genericTypes, lookup)
@@ -87,6 +106,14 @@ class CachedJvmLookup(
         lookup: IRLookup
     ): FunctionCandidate? {
         return getClass(className).lookupConstructor(argTypes, lookup)
+    }
+
+    override suspend fun lookupConstructorUnknown(
+        className: SignatureString,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup
+    ): Type.Broad? {
+        return getClass(className).lookupConstructorUnknown(argTypes, lookup)
     }
 
     override suspend fun lookUpGenericTypes(

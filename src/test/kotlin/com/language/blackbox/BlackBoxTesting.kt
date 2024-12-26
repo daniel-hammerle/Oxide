@@ -67,6 +67,12 @@ fun DebugOutput.out(vararg expected: String): DebugOutput {
 }
 
 @Contract("_ -> this")
+inline fun DebugOutput.out(closure: (s: String) -> Boolean): DebugOutput {
+    assert(closure(stdOut))
+    return this
+}
+
+@Contract("_ -> this")
 fun DebugOutput.returnValue(expected: Any?): DebugOutput {
     assertEquals(expected, returnValue)
     return this
@@ -117,7 +123,7 @@ fun compileCOde(code: String): Map<SignatureString, ByteArray> {
         val (type, typeCheckingTime) = measureTime {
             runBlocking {
                 scope.async {
-                    (result.functions["main"]!! as BasicIRFunction).inferTypes(listOf(), irLookup, emptyMap())
+                    (result.functions["main"]!! as BasicIRFunction).inferTypes(listOf(), irLookup, emptyMap(), BasicHistory())
                 }.await()
             }
         }

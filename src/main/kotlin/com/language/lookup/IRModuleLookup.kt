@@ -6,12 +6,9 @@ import com.language.compilation.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.variables.VariableManager
-import com.language.compilation.variables.VariableMappingImpl
 import com.language.eval.evalFunction
 import com.language.lookup.jvm.JvmLookup
 import com.language.lookup.oxide.OxideLookup
-import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.skip
 
 class IRModuleLookup(
     private val jvmLookup: JvmLookup,
@@ -22,7 +19,13 @@ class IRModuleLookup(
         return lookUpGenericTypesInternal(instance, funcName, argTypes)
     }
 
-    private suspend fun lookUpGenericTypesInternal(instance: Type, funcName: String, argTypes: List<Type>, checkUnboxed: Boolean = true, checkBoxed: Boolean = true): Map<String, Type> {
+    private suspend fun lookUpGenericTypesInternal(
+        instance: Type,
+        funcName: String,
+        argTypes: List<Type>,
+        checkUnboxed: Boolean = true,
+        checkBoxed: Boolean = true
+    ): Map<String, Type> {
         oxideLookup.lookUpGenericTypes(instance, funcName, argTypes, this)?.let { return it }
         if (instance is Type.Union) {
             return instance.entries.map { lookUpGenericTypes(it, funcName, argTypes) }.reduce { acc, map -> acc + map }
@@ -35,14 +38,20 @@ class IRModuleLookup(
         }
         jvmLookup.lookUpGenericTypes(instance, funcName, argTypes, this)?.let { return it }
         if (checkBoxed && instance.isBoxedPrimitive()) {
-            return lookUpGenericTypesInternal(instance.asUnboxed(), funcName, argTypes, checkUnboxed, checkBoxed = false)
+            return lookUpGenericTypesInternal(
+                instance.asUnboxed(),
+                funcName,
+                argTypes,
+                checkUnboxed,
+                checkBoxed = false
+            )
         }
         error("No function: $instance.$funcName($argTypes)")
     }
 
     override suspend fun hasGenericReturnType(instance: Type, funcName: String, argTypes: List<Type>): Boolean {
         //NOTE since oxide generics are implemented differently, this can only be true for jvm functions
-        return when(instance) {
+        return when (instance) {
             is Type.JvmType -> jvmLookup.hasGenericReturnType(instance, funcName, argTypes, this)
             else -> false
         }
@@ -52,36 +61,88 @@ class IRModuleLookup(
         modName: SignatureString,
         funcName: String,
         argTypes: List<Type>,
-        generics: Map<String, Type.BroadType>
+        history: History,
+        generics: Map<String, Type.Broad>,
     ): FunctionCandidate {
         println("Static candidate $modName.$funcName($argTypes)")
-        runCatching {
-            oxideLookup.lookupFunction(modName, funcName, argTypes, this)
-        }.map { return it }
-        runCatching {
-            oxideLookup.lookupAssociatedExtensionFunction(modName, funcName, argTypes, this)
-        }.map { return it }
+        try {
+            return oxideLookup.lookupFunction(modName, funcName, argTypes, this, history)
+        } catch (e: Exception) {e.printStackTrace()}
+        try {
+            return oxideLookup.lookupAssociatedExtensionFunction(modName, funcName, argTypes, this, history)
+        } catch (_: Exception) { }
 
-        return jvmLookup.lookUpAssociatedFunction(modName, funcName, argTypes, this, generics) ?: error("NO method found $modName.$funcName($argTypes)")
+        return jvmLookup.lookUpAssociatedFunction(modName, funcName, argTypes, this, generics)
+            ?: error("NO method found $modName.$funcName($argTypes)")
     }
 
-    override suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate {
-        val candidate = runCatching { oxideLookup.lookupExtensionMethod(instance, funcName, argTypes, this) }.getOrNull()
+    override suspend fun lookUpCandidate(
+        instance: Type,
+        funcName: String,
+        argTypes: List<Type>,
+        history: History
+    ): FunctionCandidate {
+        val candidate =
+            runCatching { oxideLookup.lookupExtensionMethod(instance, funcName, argTypes, this, history) }.getOrNull()
         if (candidate != null) return candidate
         return when {
             instance is Type.Union -> {
-                val candidates = instance.entries.associateWith { lookUpCandidate(it, funcName, argTypes) }
+                val candidates = instance.entries.associateWith { lookUpCandidate(it, funcName, argTypes, history) }
                 UnionFunctionCandidate(candidates)
             }
-            instance.isUnboxedPrimitive() -> lookUpCandidate(instance.asBoxed(), funcName, argTypes)
-            instance is Type.JvmType -> jvmLookup.lookUpMethod(instance, funcName, argTypes, this) ?: error("No Method found on $instance.$funcName($argTypes)")
+
+            instance.isUnboxedPrimitive() -> lookUpCandidate(instance.asBoxed(), funcName, argTypes, history)
+            instance is Type.JvmType -> jvmLookup.lookUpMethod(instance, funcName, argTypes, this)
+                ?: error("No Method found on $instance.$funcName($argTypes)")
+
             else -> error("No Method found on $instance.$funcName($argTypes)")
         }
     }
 
+    override suspend fun lookUpCandidateUnknown(
+        instance: Type,
+        funcName: String,
+        argTypes: List<Type.Broad>,
+        history: History
+    ): Type.Broad {
+        val candidate = runCatching {
+            oxideLookup.lookupExtensionMethodUnknown(instance, funcName, argTypes, this, history)
+        }.getOrNull()
+        if (candidate != null) return candidate //propagate early
+        return when {
+            instance is Type.Union -> {
+                instance.entries.map { lookUpCandidateUnknown(it, funcName, argTypes, history) }
+                    .reduce { acc, broad -> acc.join(broad) }
+            }
+            instance.isUnboxedPrimitive() -> lookUpCandidateUnknown(instance.asBoxed(), funcName, argTypes, history)
+            instance is Type.JvmType -> jvmLookup.lookUpMethodUnknown(instance, funcName, argTypes, this)
+                ?: error("No Method found on $instance.$funcName($argTypes)")
+
+            else -> error("No Method found on $instance.$funcName($argTypes)")
+        }
+    }
+
+    override suspend fun lookUpCandidateUnknown(
+        modName: SignatureString,
+        funcName: String,
+        argTypes: List<Type.Broad>,
+        history: History,
+        generics: Map<String, Type.Broad>,
+    ): Type.Broad {
+        runCatching {
+            oxideLookup.lookupFunctionUnknown(modName, funcName, argTypes, this, history)
+        }.map { return it }
+        runCatching {
+            oxideLookup.lookupAssociatedExtensionFunctionUnknown(modName, funcName, argTypes, this, history)
+        }.map { return it }
+
+        return jvmLookup.lookUpAssociatedFunctionUnknown(modName, funcName, argTypes, this, generics)
+            ?: error("NO method found $modName.$funcName($argTypes)")
+    }
+
     override suspend fun typeHasInterface(type: Type, interfaceType: SignatureString): Boolean {
         //only jvm types can hold concrete interfaces
-        return when(type) {
+        return when (type) {
             is Type.JvmType -> jvmLookup.typeHasInterface(type, interfaceType)
             else -> false
         }
@@ -93,16 +154,40 @@ class IRModuleLookup(
         funcName: String,
         args: List<TypedInstruction>,
         untypedArgs: List<Instruction>,
-        generics: Map<String, Type>
+        generics: Map<String, Type>,
+        history: History
     ): TypedInstruction? {
-        val (function, implGenerics) = runCatching { oxideLookup.findExtensionFunction(instance.type, funcName, this) }.getOrNull() ?: return null
+        val (function, implGenerics) = runCatching {
+            oxideLookup.findExtensionFunction(
+                instance.type,
+                funcName,
+                this
+            )
+        }.getOrNull() ?: return null
         val isConstEvalAble = args.all { it is TypedInstruction.Const } && instance is TypedInstruction.Const
-        return when(function) {
+        return when (function) {
             is BasicIRFunction -> {
                 if (!isConstEvalAble) return null
-                runCatching { evalFunction(function, (listOf(instance) + args) as List<TypedInstruction.Const>, this, implGenerics + generics) }.getOrNull()
+                runCatching {
+                    evalFunction(
+                        function,
+                        (listOf(instance) + args) as List<TypedInstruction.Const>,
+                        this,
+                        implGenerics + generics,
+                        history
+                    )
+                }.getOrNull()
             }
-            is IRInlineFunction -> function.generateInlining(args,untypedArgs, variables, instance, this, implGenerics + generics)
+
+            is IRInlineFunction -> function.generateInlining(
+                args,
+                untypedArgs,
+                variables,
+                instance,
+                this,
+                implGenerics + generics,
+                history
+            )
         }
     }
 
@@ -112,16 +197,34 @@ class IRModuleLookup(
         funcName: String,
         args: List<TypedInstruction>,
         untypedArgs: List<Instruction>,
-        generics: Map<String, Type>
+        generics: Map<String, Type>,
+        history: History
     ): TypedInstruction? {
         val function = runCatching { oxideLookup.findFunction(modName, funcName, this) }.getOrNull() ?: return null
         val isConstEvalAble = args.all { it is TypedInstruction.Const }
-        return when(function) {
+        return when (function) {
             is BasicIRFunction -> {
                 if (!isConstEvalAble) return null
-                runCatching { evalFunction(function, args as List<TypedInstruction.Const>, this, generics) }.getOrNull()
+                runCatching {
+                    evalFunction(
+                        function,
+                        args as List<TypedInstruction.Const>,
+                        this,
+                        generics,
+                        history
+                    )
+                }.getOrNull()
             }
-            is IRInlineFunction -> function.generateInlining(args, untypedArgs, variables, null, this, generics)
+
+            is IRInlineFunction -> function.generateInlining(
+                args,
+                untypedArgs,
+                variables,
+                null,
+                this,
+                generics,
+                history
+            )
         }
     }
 
@@ -136,9 +239,18 @@ class IRModuleLookup(
             ?: error("NO constructor found for $className($argTypes)")
     }
 
+    override suspend fun lookUpConstructorUnknown(
+        className: SignatureString,
+        argTypes: List<Type.Broad>
+    ): Type.Broad {
+        return runCatching { oxideLookup.lookupConstructorUnknown(className, argTypes, this) }.getOrNull()
+            ?: jvmLookup.lookupConstructorUnknown(className, argTypes, this)
+            ?: error("NO constructor found for $className($argTypes)")
+    }
+
     override suspend fun lookUpFieldType(instance: Type, fieldName: String): Type {
         runCatching { oxideLookup.lookupMemberField(instance, fieldName, this) }.map { return it }
-        return when(instance) {
+        return when (instance) {
             is Type.JvmType -> jvmLookup.lookUpField(instance, fieldName, this)
             else -> null
         } ?: error("No field $instance.$fieldName")
@@ -159,7 +271,7 @@ class IRModuleLookup(
 
     override suspend fun hasModifier(instance: Type, modifier: Modifier): Boolean {
         runCatching { oxideLookup.lookupModifiers(instance) }.map { return it.isModifier(modifier) }
-        return when(instance) {
+        return when (instance) {
             is Type.JvmType -> jvmLookup.getModifiers(instance.signature).isModifier(modifier)
             else -> false
         }
@@ -167,7 +279,7 @@ class IRModuleLookup(
 
     override suspend fun satisfiesModifiers(instance: Type, modifiers: Modifiers): Boolean {
         runCatching { oxideLookup.lookupModifiers(instance) }.map { return it.hasAllModifiersOf(modifiers) }
-        return when(instance) {
+        return when (instance) {
             is Type.JvmType -> jvmLookup.getModifiers(instance.signature).hasAllModifiersOf(modifiers)
             else -> false
         }
@@ -179,26 +291,31 @@ class IRModuleLookup(
         return oxideLookup.lookupLambdaInit(signatureString)
     }
 
-    override suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<Type>): FunctionCandidate {
-        return oxideLookup.lookupLambdaInvoke(signatureString, argTypes, this)
+    override suspend fun lookupLambdaInvoke(
+        signatureString: SignatureString,
+        argTypes: List<Type>,
+        history: History
+    ): FunctionCandidate {
+        return oxideLookup.lookupLambdaInvoke(signatureString, argTypes, this, history)
     }
-
 
 
     private suspend fun getStructGenericNames(structSig: SignatureString): List<String> {
-        return runCatching { oxideLookup.lookupStructGenericModifiers(structSig).keys.toList() }.getOrNull() ?: jvmLookup.lookUpGenericsDefinitionOrder(structSig)
+        return runCatching { oxideLookup.lookupStructGenericModifiers(structSig).keys.toList() }.getOrNull()
+            ?: jvmLookup.lookUpGenericsDefinitionOrder(structSig)
     }
 
-    override suspend fun TemplatedType.populate(generics: Map<String, Type>): Type = when(this) {
-        is TemplatedType.Array -> Type.Array(Type.BroadType.Known(itemType.populate(generics)))
+    override suspend fun TemplatedType.populate(generics: Map<String, Type>): Type = when (this) {
+        is TemplatedType.Array -> Type.Array(Type.Broad.Known(itemType.populate(generics)))
         is TemplatedType.Complex -> {
             val availableGenerics = getStructGenericNames(signatureString)
             val entries = availableGenerics.toList().mapIndexed { index, s ->
-                s to Type.BroadType.Known(this.generics[index].populate(generics))
+                s to Type.Broad.Known(this.generics[index].populate(generics))
             }.toMap()
 
-            Type.BasicJvmType(signatureString,entries)
+            Type.BasicJvmType(signatureString, entries)
         }
+
         TemplatedType.Nothing -> Type.Nothing
         is TemplatedType.Generic -> generics[name]!!
         TemplatedType.IntT -> Type.IntT

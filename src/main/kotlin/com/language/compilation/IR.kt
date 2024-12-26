@@ -7,10 +7,9 @@ import com.language.TemplatedType
 import com.language.codegen.asUnboxed
 import com.language.codegen.getOrDefault
 import com.language.codegen.getOrNull
+import com.language.codegen.lazyMap
 import com.language.compilation.Instruction.DynamicCall
-import com.language.compilation.metadata.FunctionMetaDataHandle
-import com.language.compilation.metadata.LambdaAppender
-import com.language.compilation.metadata.MetaDataHandle
+import com.language.compilation.metadata.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.variables.*
@@ -24,7 +23,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.objectweb.asm.Label
-import java.lang.RuntimeException
+import kotlin.RuntimeException
 
 
 data class MetaData(val info: MetaInfo, val sourceFile: SignatureString)
@@ -37,6 +36,54 @@ class TypeError(
     val trace: List<Pair<MetaData, List<Type>>>
 ) : RuntimeException(message)
 
+data class CallVariant(val func: IRFunction, val args: List<Type>)
+
+class BasicHistory(
+    private val histSet: MutableSet<CallVariant>,
+    private val substitutions: MutableMap<IRFunction, MutableMap<List<Type.Broad>, Type.Broad>>,
+    private val recHistSet: MutableSet<Pair<IRFunction, List<Type.Broad>>>
+) : History {
+    constructor() : this(mutableSetOf(), mutableMapOf(), mutableSetOf())
+
+    override fun appendCallStack(variant: CallVariant) {
+        histSet.add(variant)
+    }
+
+    override fun isPresent(variant: CallVariant): Boolean {
+        return histSet.contains(variant)
+    }
+
+    override fun isPresent(function: IRFunction, variant: List<Type.Broad>): Boolean {
+        return (function to variant) in recHistSet
+    }
+
+    override fun isSubstituted(function: IRFunction, variant: List<Type.Broad>): Type.Broad? = substitutions[function]?.get(variant)
+
+    override fun appendRecCallStack(function: IRFunction, variant: List<Type.Broad>) {
+        recHistSet.add(function to variant.toList())
+    }
+
+    override fun substitute(function: IRFunction, variant: List<Type.Broad>, type: Type.Broad) {
+        substitutions[function] = (substitutions[function] ?: mutableMapOf()).apply { this[variant.toList()] = type }
+    }
+
+    override fun split(): History = BasicHistory(histSet.toMutableSet(), substitutions.toMutableMap(), recHistSet.toMutableSet())
+
+}
+
+interface History {
+    fun appendCallStack(variant: CallVariant)
+
+    fun isPresent(variant: CallVariant): Boolean
+    fun isSubstituted(function: IRFunction, variant: List<Type.Broad>): Type.Broad?
+
+    fun appendRecCallStack(function: IRFunction, variant: List<Type.Broad>)
+    fun isPresent(function: IRFunction, variant: List<Type.Broad>): Boolean
+
+    fun substitute(function: IRFunction, variant: List<Type.Broad>, type: Type.Broad)
+    fun split(): History
+}
+
 sealed class Instruction {
 
     abstract val info: MetaData
@@ -48,8 +95,16 @@ sealed class Instruction {
     abstract suspend fun inferTypes(
         variables: VariableManager,
         lookup: IRLookup,
-        handle: MetaDataHandle
+        handle: MetaDataHandle,
+        hist: History
     ): TypedInstruction
+
+    abstract suspend fun inferUnknown(
+        variables: TypeVariableManager,
+        lookup: IRLookup,
+        handle: MetaDataTypeHandle,
+        hist: History
+    ): Type.Broad
 
     data class DynamicCall(
         val parent: Instruction,
@@ -61,9 +116,10 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val parent = parent.inferTypes(variables, lookup, handle)
+            val parent = parent.inferTypes(variables, lookup, handle, hist)
 
             val result = inferCall(
                 args,
@@ -84,9 +140,25 @@ sealed class Instruction {
                         typedArgs,
                         null
                     )
-                }
+                },
+                hist
             )
             return result
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            val argTypes = args.map { it.inferUnknown(variables, lookup, handle, hist) }
+            return when (val parent = parent.inferUnknown(variables, lookup, handle, hist)) {
+                is Type.Broad.Unset -> parent
+                is Type.Broad.Known -> lookup.lookUpCandidateUnknown(parent.type, name, argTypes, hist)
+                is Type.Broad.UnknownUnionized -> Type.Broad.Unset //if the entire type is not known,
+                // there is no point in finding methods
+            }
         }
 
         override fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
@@ -103,15 +175,25 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val valueIns = value.inferTypes(variables, lookup, handle)
+            val valueIns = value.inferTypes(variables, lookup, handle, hist)
             when (valueIns.type) {
                 Type.Nothing -> error("Cannot keep instance of nothing")
                 else -> {}
             }
             handle.appendKeepBlock(name, valueIns.type)
             return TypedInstruction.Keep(valueIns, name, ownerSig)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            return value.inferUnknown(variables, lookup, handle, hist)
         }
 
     }
@@ -125,38 +207,50 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return when (items.all { it is ConstructingArgument.Normal }) {
-                true -> constArray(variables, lookup, handle)
-                false -> notConstArray(variables, lookup, handle)
+                true -> constArray(variables, lookup, handle, hist)
+                false -> notConstArray(variables, lookup, handle, hist)
             }
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
 
         private suspend fun constArray(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction.LoadConstArray {
             val typedItems =
-                items.map { (it as ConstructingArgument.Normal).item.inferTypes(variables, lookup, handle) }
+                items.map { (it as ConstructingArgument.Normal).item.inferTypes(variables, lookup, handle, hist) }
             val itemType = typedItems.map { it.type }.reduceOrNull { acc, type -> acc.join(type) }
             val broadType = itemType
-                ?.let { Type.BroadType.Known(it) }
-                ?: Type.BroadType.Unset
+                ?.let { Type.Broad.Known(it) }
+                ?: Type.Broad.Unset
             return TypedInstruction.LoadConstArray(typedItems, arrayType, broadType)
         }
 
         private suspend fun notConstArray(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction.LoadArray {
             //temp variable for index storage
             variables.getTempVar(Type.IntT).use { indexStorage ->
                 //temp variable for the array during construction
-                variables.getTempVar(Type.Array(Type.BroadType.Unset)).use { arrayStorage ->
-                    val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
+                variables.getTempVar(Type.Array(Type.Broad.Unset)).use { arrayStorage ->
+                    val typedItems = items.map { it.inferTypes(variables, lookup, handle, hist) }
 
                     //get the common type of all items
                     val itemType = typedItems.itemType(lookup)
@@ -187,7 +281,8 @@ sealed class Instruction {
         suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedConstructingArgument
 
         @JvmInline
@@ -195,9 +290,10 @@ sealed class Instruction {
             override suspend fun inferTypes(
                 variables: VariableManager,
                 lookup: IRLookup,
-                handle: MetaDataHandle
+                handle: MetaDataHandle,
+                hist: History
             ): TypedConstructingArgument {
-                val item = item.inferTypes(variables, lookup, handle)
+                val item = item.inferTypes(variables, lookup, handle, hist)
                 if (!item.type.isCollectable(lookup)) {
                     error("Type Error: Cannot collect ${item.type}")
                 }
@@ -210,13 +306,15 @@ sealed class Instruction {
             override suspend fun inferTypes(
                 variables: VariableManager,
                 lookup: IRLookup,
-                handle: MetaDataHandle
+                handle: MetaDataHandle,
+                hist: History
             ): TypedConstructingArgument {
                 return TypedConstructingArgument.Iteration(
                     loop.inferTypes(
                         variables,
                         lookup,
-                        handle
+                        handle,
+                        hist
                     ) as TypedInstruction.ForLoop
                 )
             }
@@ -228,9 +326,10 @@ sealed class Instruction {
             override suspend fun inferTypes(
                 variables: VariableManager,
                 lookup: IRLookup,
-                handle: MetaDataHandle
+                handle: MetaDataHandle,
+                hist: History
             ): TypedConstructingArgument {
-                return TypedConstructingArgument.Normal(item.inferTypes(variables, lookup, handle))
+                return TypedConstructingArgument.Normal(item.inferTypes(variables, lookup, handle, hist))
             }
         }
     }
@@ -239,23 +338,33 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return when {
-                items.isEmpty() -> TypedInstruction.LoadList(emptyList(), Type.BroadType.Unset, null)
+                items.isEmpty() -> TypedInstruction.LoadList(emptyList(), Type.Broad.Unset, null)
                 items.any { it is ConstructingArgument.Iteration } -> variables.getTempVar(Type.Object)
                     .use { variable ->
-                        val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
+                        val typedItems = items.map { it.inferTypes(variables, lookup, handle, hist) }
                         val itemType = typedItems.itemType(lookup)
                         TypedInstruction.LoadList(typedItems, itemType, variable.id)
                     }
 
                 else -> {
-                    val typedItems = items.map { it.inferTypes(variables, lookup, handle) }
+                    val typedItems = items.map { it.inferTypes(variables, lookup, handle, hist) }
                     val itemType = typedItems.itemType(lookup)
                     TypedInstruction.LoadList(typedItems, itemType, null)
                 }
             }
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
 
     }
@@ -265,9 +374,19 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return TypedInstruction.LoadConstString(value)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            return Type.Broad.Known(Type.String)
         }
     }
 
@@ -275,9 +394,19 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return TypedInstruction.LoadConstInt(value)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            return Type.Broad.Known(Type.IntT)
         }
     }
 
@@ -286,9 +415,19 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return TypedInstruction.LoadConstDouble(value)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            return Type.Broad.Known(Type.DoubleT)
         }
     }
 
@@ -296,9 +435,19 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return TypedInstruction.LoadConstBoolean(value)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            return Type.Broad.Known(if (value) Type.BoolTrue else Type.BoolFalse)
         }
     }
 
@@ -311,18 +460,19 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction = coroutineScope {
-            val cond = cond.inferTypes(variables, lookup, handle)
+            val cond = cond.inferTypes(variables, lookup, handle, hist)
             if (cond.type !is Type.BoolT) {
                 error("Condition must be of type boolean but was ${cond.type}")
             }
 
 
             val bodyVars = variables.clone()
-            val bodyFuture = async { body.inferTypes(bodyVars, lookup, handle) }
+            val bodyFuture = async { body.inferTypes(bodyVars, lookup, handle, hist.split()) }
             val elseBodyVars = variables.clone()
-            val elseBodyFuture = async { elseBody?.inferTypes(elseBodyVars, lookup, handle) }
+            val elseBodyFuture = async { elseBody?.inferTypes(elseBodyVars, lookup, handle, hist.split()) }
 
             val body = bodyFuture.await()
             val elseBody = elseBodyFuture.await()
@@ -345,6 +495,35 @@ sealed class Instruction {
                 elseBodyAdjust
             )
         }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            val cond = cond.inferUnknown(variables, lookup, handle, hist)
+            val bodyVars = variables.branch()
+            val body = body.inferUnknown(bodyVars, lookup, handle, hist.split())
+            val elseBodyVars = variables.branch()
+
+            val elseBody =
+                elseBody?.inferUnknown(elseBodyVars, lookup, handle, hist.split()) ?: Type.Broad.Known(Type.Nothing)
+
+            variables.merge(listOf(bodyVars, elseBodyVars))
+
+            if (cond is Type.Broad.Known) {
+                if (cond.type !is Type.BoolT) error("Condition must be of type boolean")
+
+                when (cond.type.boolValue) {
+                    true -> return body
+                    false -> return elseBody
+                    else -> {}
+                }
+            }
+
+            return body.join(elseBody)
+        }
     }
 
 
@@ -352,9 +531,19 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            return forLoop.inferTypes(variables, lookup, handle)
+            return forLoop.inferTypes(variables, lookup, handle, hist)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
     }
 
@@ -362,9 +551,10 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val cond = cond.inferTypes(variables, lookup, handle)
+            val cond = cond.inferTypes(variables, lookup, handle, hist)
             if (cond.type !is Type.BoolT) {
                 error("Condition must be of type boolean vzt us")
             }
@@ -372,11 +562,23 @@ sealed class Instruction {
             val bodyScope = variables.clone()
             //we execute it twice since types may change between the first and second iterations
             //that means, it has to survive 2 iterations then it's safe
-            body.inferTypes(bodyScope, lookup, handle)
-            val body = body.inferTypes(bodyScope, lookup, handle)
+            body.inferTypes(bodyScope, lookup, handle, hist)
+            val body = body.inferTypes(bodyScope, lookup, handle, hist)
             variables.merge(listOf(bodyScope))
 
             return TypedInstruction.While(cond, body, isInfinite)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            cond.inferUnknown(variables, lookup, handle, hist)
+            body.inferUnknown(variables, lookup, handle, hist)
+            body.inferUnknown(variables, lookup, handle, hist)
+            return Type.Broad.Known(Type.Nothing)
         }
     }
 
@@ -389,9 +591,10 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val args = args.map { it.inferTypes(variables, lookup, handle) }
+            val args = args.map { it.inferTypes(variables, lookup, handle, hist) }
             val candidate = lookup.lookUpConstructor(className, args.map { it.type })
             return TypedInstruction.ConstructorCall(
                 className,
@@ -400,6 +603,15 @@ sealed class Instruction {
                 candidate.oxideReturnType
             )
         }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            return lookup.lookUpConstructorUnknown(className, args.map { it.inferUnknown(variables, lookup, handle, hist) })
+        }
     }
 
     data class InvokeLambda(val lambdaParent: Instruction, val args: List<Instruction>, override val info: MetaData) :
@@ -407,10 +619,11 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val parent = lambdaParent.inferTypes(variables, lookup, handle)
-            val args = args.map { it.inferTypes(variables, lookup, handle) }
+            val parent = lambdaParent.inferTypes(variables, lookup, handle, hist)
+            val args = args.map { it.inferTypes(variables, lookup, handle, hist) }
 
             //when lambda inlined
             if (parent is TypedInstruction.Lambda && parent in handle.inlinableLambdas) {
@@ -427,7 +640,7 @@ sealed class Instruction {
                         else -> loadInstructions.add(typedArg)
                     }
                 }
-                val typedBody = parent.body.inferTypes(scope, lookup, handle)
+                val typedBody = parent.body.inferTypes(scope, lookup, handle, hist)
                 variables.merge(listOf(scope))
 
                 return TypedInstruction.MultiInstructions(
@@ -438,12 +651,21 @@ sealed class Instruction {
             //when lambda invoked
             val candidate = when (val tp = parent.type) {
                 is Type.Lambda -> {
-                    lookup.lookupLambdaInvoke(tp.signature, args.map { it.type })
+                    lookup.lookupLambdaInvoke(tp.signature, args.map { it.type }, hist)
                 }
 
                 else -> error("Cannot invoke non lambda")
             }
             return TypedInstruction.DynamicCall(candidate, "invoke", parent, args, null)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
 
     }
@@ -458,18 +680,29 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val args = args.map { it.inferTypes(variables, lookup, handle) }
-            lookup.processInlining(variables, moduleName, name, args, this.args, handle.inheritedGenerics)
+            val args = args.map { it.inferTypes(variables, lookup, handle, hist) }
+            lookup.processInlining(variables, moduleName, name, args, this.args, handle.inheritedGenerics, hist)
                 ?.let { return it }
-            val candidate = lookup.lookUpCandidate(moduleName, name, args.map { it.type })
+            val candidate = lookup.lookUpCandidate(moduleName, name, args.map { it.type }, hist)
             return TypedInstruction.ModuleCall(
                 candidate,
                 name,
                 moduleName,
                 args
             )
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            val argTypes = args.map { it.inferUnknown(variables, lookup, handle, hist) }
+            return lookup.lookUpCandidateUnknown(moduleName, name, argTypes, hist)
         }
     }
 
@@ -480,13 +713,35 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val typedIns = ins.inferTypes(variables, lookup, handle)
+            val typedIns = ins.inferTypes(variables, lookup, handle, hist)
+            if (typedIns.type != Type.BoolUnknown) {
+                error("")
+            }
             if (typedIns is TypedInstruction.Const) {
                 return evalLogicNot(typedIns)
             }
             return TypedInstruction.Not(typedIns)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            val first = ins.inferUnknown(variables, lookup, handle, hist)
+            if (first is Type.Broad.Known) {
+                first.type as Type.BoolT
+
+                if (first.type.boolValue != null) {
+                    return Type.Broad.Known(Type.BoolT(!first.type.boolValue))
+                }
+            }
+
+            return Type.Broad.Known(Type.BoolUnknown)
         }
 
     }
@@ -500,12 +755,13 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val first = first.inferTypes(variables, lookup, handle)
+            val first = first.inferTypes(variables, lookup, handle, hist)
             if (first.type !is Type.BoolT) error("Expected $first to have type BoolT")
 
-            val second = second.inferTypes(variables, lookup, handle)
+            val second = second.inferTypes(variables, lookup, handle, hist)
             if (second.type !is Type.BoolT) error("Expected $second to have type BoolT")
 
             if (first is TypedInstruction.Const && second is TypedInstruction.Const) {
@@ -523,6 +779,21 @@ sealed class Instruction {
             return TypedInstruction.LogicOperation(first, second, op)
         }
 
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            val first = first.inferUnknown(variables, lookup, handle, hist)
+            if (first is Type.Broad.Typeful && first.type !is Type.BoolT) error("Expected $first to have type BoolT")
+
+            val second = second.inferUnknown(variables, lookup, handle, hist)
+            if (second is Type.Broad.Typeful && second.type !is Type.BoolT) error("Expected $first to have type BoolT")
+
+            return Type.Broad.Known(Type.BoolUnknown)
+        }
+
     }
 
     data class StaticCall(
@@ -535,20 +806,31 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val args = args.map { it.inferTypes(variables, lookup, handle) }
+            val args = args.map { it.inferTypes(variables, lookup, handle, hist) }
             val candidate = lookup.lookUpCandidate(
                 classModuleName,
                 name,
                 args.map { it.type },
-                handle.inheritedGenerics.lazyTransform { _, it -> Type.BroadType.Known(it) })
+                hist,
+                handle.inheritedGenerics.lazyTransform { _, it -> Type.Broad.Known(it) })
             return TypedInstruction.StaticCall(
                 candidate,
                 name,
                 classModuleName,
                 args
             )
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
     }
 
@@ -559,10 +841,11 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val first = first.inferTypes(variables, lookup, handle)
-            val second = second.inferTypes(variables, lookup, handle)
+            val first = first.inferTypes(variables, lookup, handle, hist)
+            val second = second.inferTypes(variables, lookup, handle, hist)
 
             if (first is TypedInstruction.Const && second is TypedInstruction.Const) {
                 return evalMath(first, second, op)
@@ -577,15 +860,34 @@ sealed class Instruction {
                 resultType
             )
         }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            val first = first.inferUnknown(variables, lookup, handle, hist)
+            val second = second.inferUnknown(variables, lookup, handle, hist)
+
+            if (first !is Type.Broad.Known || second !is Type.Broad.Known) {
+                return Type.Broad.Unset
+            }
+
+            val result = typeMath(op, first.type, second.type)
+
+            return Type.Broad.Known(result)
+        }
     }
 
     data class StoreVar(val name: String, val value: Instruction, override val info: MetaData) : Instruction() {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val value = value.inferTypes(variables, lookup, handle)
+            val value = value.inferTypes(variables, lookup, handle, hist)
 
             if (name == "_") {
                 //don't store to a physical variable. ignore the result of the expression
@@ -604,6 +906,16 @@ sealed class Instruction {
                 else -> variables.changeVar(name, value)
             }
         }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            variables.set(name, value.inferUnknown(variables, lookup, handle, hist))
+            return Type.Broad.Known(Type.Nothing)
+        }
     }
 
     data class LoadVar(val name: String, override val info: MetaData) : Instruction() {
@@ -612,9 +924,19 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return variables.loadVar(name)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            return variables.get(name)
         }
 
         override fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
@@ -632,17 +954,26 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             val typedInstructions = mutableListOf<TypedInstruction>()
             for (instruction in instructions) {
-                val typedIns = instruction.inferTypes(variables, lookup, handle)
+                val typedIns = instruction.inferTypes(variables, lookup, handle, hist)
                 typedInstructions.add(typedIns)
                 if (typedIns.type == Type.Never) break //everything after that is dead code
             }
             if (typedInstructions.size == 1) return typedInstructions.first()
             return TypedInstruction.MultiInstructions(typedInstructions, variables.toVarFrame())
         }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad = instructions.map { it.inferUnknown(variables, lookup, handle, hist) }.last()
+
     }
 
     data class DynamicPropertyAccess(val parent: Instruction, val name: String, override val info: MetaData) :
@@ -651,9 +982,10 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val parent = parent.inferTypes(variables, lookup, handle)
+            val parent = parent.inferTypes(variables, lookup, handle, hist)
             val returnType = when (val parentType = parent.type) {
                 is Type.Union -> {
                     parentType.entries.map { lookup.lookUpFieldType(it, name) }.reduce { acc, type -> acc.join(type) }
@@ -667,6 +999,15 @@ sealed class Instruction {
                 type = returnType
             )
         }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
+        }
     }
 
     data class Lambda(
@@ -679,7 +1020,8 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             val captures = capturedVariables.associateWith { variables.getType(it) }
             val sig = handle.addLambda(argNames, captures, body, handle.inheritedGenerics, imports)
@@ -694,6 +1036,15 @@ sealed class Instruction {
             )
         }
 
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
+        }
+
     }
 
     data class DynamicPropertyAssignment(
@@ -705,16 +1056,26 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val parent = parent.inferTypes(variables, lookup, handle)
+            val parent = parent.inferTypes(variables, lookup, handle, hist)
 
             val fieldType = lookup.lookUpFieldType(parent.type, name)
-            val value = value.inferTypes(variables, lookup, handle)
+            val value = value.inferTypes(variables, lookup, handle, hist)
             if (!value.type.isContainedOrEqualTo(fieldType))
                 error("Invalid type ${value.type} cannot be assigned to field $name of type $fieldType")
 
             return TypedInstruction.DynamicPropertyAssignment(parent, name, value)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
 
     }
@@ -724,9 +1085,19 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return TypedInstruction.Noop(type)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
     }
 
@@ -739,9 +1110,10 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction = coroutineScope {
-            val parent = parent.inferTypes(variables, lookup, handle)
+            val parent = parent.inferTypes(variables, lookup, handle, hist)
 
             val (typedPatterns, id) = withCastStoreId(
                 this@Match.parent,
@@ -757,13 +1129,13 @@ sealed class Instruction {
                         castStoreId = castStoreId.physicalId!!
                     )
                     //check patterns
-                    val typedPattern = pattern.inferTypes(ctx, lookup, variables, handle)
+                    val typedPattern = pattern.inferTypes(ctx, lookup, variables, handle, hist)
 
                     //asynchronously infer types of body
                     val bodyScope = variables.clone()
                     async {
                         val parentName = if (this@Match.parent is LoadVar) this@Match.parent.name else null
-                        compileBodyBranch(body, typedPattern, bodyScope, parentName, lookup, handle)
+                        compileBodyBranch(body, typedPattern, bodyScope, parentName, lookup, handle, hist)
                     }
 
 
@@ -777,6 +1149,15 @@ sealed class Instruction {
                 }
             val instance = TypedInstruction.Match(parent, compiledBranches, temporaryId = id)
             return@coroutineScope instance
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
 
         private inline fun <T> withCastStoreId(
@@ -802,7 +1183,8 @@ sealed class Instruction {
             bodyScope: VariableManager,
             parentName: String?,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): Triple<TypedIRPattern, TypedInstruction, VariableManager> {
             if (typedPattern is TypedIRPattern.Destructuring) {
                 //populate the scope with bindings
@@ -817,7 +1199,7 @@ sealed class Instruction {
                 }
             }
 
-            val typedBody = body.inferTypes(bodyScope, lookup, handle)
+            val typedBody = body.inferTypes(bodyScope, lookup, handle, hist)
 
             return Triple(typedPattern, typedBody, bodyScope)
         }
@@ -857,9 +1239,10 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val typedIns = instruction.inferTypes(variables, lookup, handle)
+            val typedIns = instruction.inferTypes(variables, lookup, handle, hist)
             return when (val tp = typedIns.type) {
                 is Type.Union -> {
                     val errorVariants = tp.entries.filter { lookup.hasModifier(it, Modifier.Error) }
@@ -875,6 +1258,15 @@ sealed class Instruction {
             }
         }
 
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
+        }
+
     }
 
     data class Catch(
@@ -885,14 +1277,24 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val ins = instruction.inferTypes(variables, lookup, handle)
+            val ins = instruction.inferTypes(variables, lookup, handle, hist)
             val errorType = with(lookup) { errorType?.populate(emptyMap()) }
                 ?: Type.BasicJvmType(SignatureString("java::lang::Throwable"))
             val errorTypes = findErrorTypes(errorType)
 
             return TypedInstruction.Catch(ins, errorTypes, errorType)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
 
         private fun findErrorTypes(tp: Type): Set<SignatureString> =
@@ -911,11 +1313,21 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val returnValue = instruction.inferTypes(variables, lookup, handle)
+            val returnValue = instruction.inferTypes(variables, lookup, handle, hist)
             handle.issueReturnTypeAppend(returnValue.type)
             return TypedInstruction.Return(returnValue, handle.returnLabel)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
 
     }
@@ -925,13 +1337,23 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return TypedInstruction.StaticPropertyAccess(
                 parentName,
                 name,
                 lookup.lookUpFieldType(parentName, name)
             )
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
     }
 
@@ -941,9 +1363,19 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return TypedInstruction.Pop
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
     }
 
@@ -952,9 +1384,19 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
             return TypedInstruction.Null
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
     }
 
@@ -968,10 +1410,11 @@ sealed class Instruction {
         override suspend fun inferTypes(
             variables: VariableManager,
             lookup: IRLookup,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedInstruction {
-            val first = first.inferTypes(variables, lookup, handle)
-            val second = second.inferTypes(variables, lookup, handle)
+            val first = first.inferTypes(variables, lookup, handle, hist)
+            val second = second.inferTypes(variables, lookup, handle, hist)
 
             if (first is TypedInstruction.Const && second is TypedInstruction.Const) {
                 return evalComparison(first, second, op)
@@ -990,6 +1433,15 @@ sealed class Instruction {
                 second,
                 op
             )
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): Type.Broad {
+            TODO("Not yet implemented")
         }
     }
 
@@ -1025,24 +1477,27 @@ data class ForLoop(
     val body: Instruction.ConstructingArgument,
     val info: MetaData
 ) {
-    suspend fun inferTypes(variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle): TypedInstruction {
-        val parent = parent.inferTypes(variables, lookup, handle)
+    suspend fun inferTypes(
+        variables: VariableManager, lookup: IRLookup, handle: MetaDataHandle,
+        hist: History
+    ): TypedInstruction {
+        val parent = parent.inferTypes(variables, lookup, handle, hist)
         return when {
-            IteratorI.validate(lookup, parent.type) -> {
-                val hasNext = lookup.lookUpCandidate(parent.type, "hasNext", emptyList())
-                val next = lookup.lookUpCandidate(parent.type, "next", emptyList())
+            IteratorI.validate(lookup, parent.type, hist) -> {
+                val hasNext = lookup.lookUpCandidate(parent.type, "hasNext", emptyList<Type>(), hist)
+                val next = lookup.lookUpCandidate(parent.type, "next", emptyList<Type>(), hist)
 
-                compileForLoopBody(variables, next, hasNext, parent, lookup, handle)
+                compileForLoopBody(variables, next, hasNext, parent, lookup, handle, hist)
             }
 
-            IterableI.validate(lookup, parent.type) -> {
+            IterableI.validate(lookup, parent.type, hist) -> {
                 val iterCall =
-                    DynamicCall(this.parent, "iterator", emptyList(), info).inferTypes(variables, lookup, handle)
+                    DynamicCall(this.parent, "iterator", emptyList(), info).inferTypes(variables, lookup, handle, hist)
 
-                val hasNext = lookup.lookUpCandidate(iterCall.type, "hasNext", emptyList())
-                val next = lookup.lookUpCandidate(iterCall.type, "next", emptyList())
+                val hasNext = lookup.lookUpCandidate(iterCall.type, "hasNext", emptyList<Type>(), hist)
+                val next = lookup.lookUpCandidate(iterCall.type, "next", emptyList<Type>(), hist)
 
-                compileForLoopBody(variables, next, hasNext, iterCall, lookup, handle)
+                compileForLoopBody(variables, next, hasNext, iterCall, lookup, handle, hist)
             }
 
             else -> error("Invalid type ${parent.type}; it is neither an iterable nor an iterator")
@@ -1055,7 +1510,8 @@ data class ForLoop(
         hasNextCall: FunctionCandidate,
         parent: TypedInstruction,
         lookup: IRLookup,
-        handle: MetaDataHandle
+        handle: MetaDataHandle,
+        hist: History
     ): TypedInstruction.ForLoop {
         val bodyScope = variables.clone()
         val itemId = bodyScope.change(name, nextCall.oxideReturnType)
@@ -1063,9 +1519,9 @@ data class ForLoop(
 
         val bodyScopePre = bodyScope.clone()
         //infer it twice for non consts to unfold
-        body.inferTypes(bodyScope, lookup, handle)
+        body.inferTypes(bodyScope, lookup, handle, hist)
         val adjustments = bodyScopePre.loopMerge(bodyScope, variables)
-        val body = body.inferTypes(bodyScopePre, lookup, handle)
+        val body = body.inferTypes(bodyScopePre, lookup, handle, hist)
         val postLoopAdjustments = variables.merge(listOf(bodyScopePre))[0]
         return TypedInstruction.ForLoop(
             parent,
@@ -1096,6 +1552,7 @@ sealed interface IRPattern {
         lookup: IRLookup,
         variables: VariableManager,
         handle: MetaDataHandle,
+        hist: History
     ): TypedIRPattern
 
     data class Binding(val name: String) : IRPattern {
@@ -1103,12 +1560,13 @@ sealed interface IRPattern {
             ctx: PatternMatchingContext,
             lookup: IRLookup,
             variables: VariableManager,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedIRPattern {
             val binding = ctx.nextBinding()
             if (name in handle.inheritedGenerics) {
                 return TypedIRPattern.Destructuring(
-                    handle.inheritedGenerics[name]!!,
+                    handle.inheritedGenerics[name]!!.asBoxed(),
                     emptyList(),
                     variables.getExternal(binding),
                     ctx.isLast,
@@ -1129,7 +1587,8 @@ sealed interface IRPattern {
             ctx: PatternMatchingContext,
             lookup: IRLookup,
             variables: VariableManager,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedIRPattern {
             val type = with(lookup) {
                 type.populate(handle.inheritedGenerics).asBoxed()
@@ -1152,7 +1611,7 @@ sealed interface IRPattern {
 
             return TypedIRPattern.Destructuring(
                 type = type,
-                patterns = patterns.map { it.inferTypes(context, lookup, variables, handle) },
+                patterns = patterns.map { it.inferTypes(context, lookup, variables, handle, hist) },
                 isLast = ctx.isLast,
                 castStoreId = binding.physicalId!!,
                 loadItem = variables.getExternal(binding)
@@ -1166,18 +1625,21 @@ sealed interface IRPattern {
             ctx: PatternMatchingContext,
             lookup: IRLookup,
             variables: VariableManager,
-            handle: MetaDataHandle
+            handle: MetaDataHandle,
+            hist: History
         ): TypedIRPattern {
-            val parent = parent.inferTypes(ctx, lookup, variables, handle)
-            val condition = condition.inferTypes(variables, lookup, handle)
+            val parent = parent.inferTypes(ctx, lookup, variables, handle, hist)
+            val condition = condition.inferTypes(variables, lookup, handle, hist)
             return TypedIRPattern.Condition(parent, condition)
         }
     }
 }
 
-inline fun Type.BroadType.mapKnown(closure: (tp: Type) -> Type) = when (this) {
-    is Type.BroadType.Known -> Type.BroadType.Known(closure(type))
-    Type.BroadType.Unset -> this
+
+inline fun Type.Broad.mapKnown(closure: (tp: Type) -> Type) = when (this) {
+    is Type.Broad.Known -> Type.Broad.Known(closure(type))
+    Type.Broad.Unset -> this
+    is Type.Broad.UnknownUnionized -> Type.Broad.Known(closure(type))
 }
 
 
@@ -1189,11 +1651,11 @@ fun Type.intersectsWith(other: Type): Boolean = when {
     else -> false
 }
 
-fun Type.BroadType.isContainedOrEqualTo(other: Type.BroadType) = when {
+fun Type.Broad.isContainedOrEqualTo(other: Type.Broad) = when {
     this == other -> true
-    this is Type.BroadType.Unset && other is Type.BroadType.Known -> false
-    other is Type.BroadType.Unset && this is Type.BroadType.Known -> false
-    this is Type.BroadType.Known && other is Type.BroadType.Known -> type.isContainedOrEqualTo(other.type)
+    this is Type.Broad.Unset && other is Type.Broad.Known -> false
+    other is Type.Broad.Unset && this is Type.Broad.Known -> false
+    this is Type.Broad.Known && other is Type.Broad.Known -> type.isContainedOrEqualTo(other.type)
     else -> error("Unreachable")
 }
 
@@ -1246,18 +1708,23 @@ sealed interface Type {
 
     sealed interface JvmType : Type {
         val signature: SignatureString
-        val genericTypes: Map<String, BroadType>
+        val genericTypes: Map<String, Broad>
     }
 
-    sealed interface BroadType {
-        data object Unset : BroadType
-        data class Known(val type: Type) : BroadType
+    sealed interface Broad {
+        data object Unset : Broad
+        sealed interface Typeful : Broad {
+            val type: Type
+        }
+
+        data class Known(override val type: Type) : Typeful
+        data class UnknownUnionized(override val type: Type) : Typeful
     }
 
 
     data class BasicJvmType(
         override val signature: SignatureString,
-        override val genericTypes: Map<String, BroadType> = mapOf()
+        override val genericTypes: Map<String, Broad> = mapOf()
     ) : JvmType {
         override val size: Int = 1
 
@@ -1268,25 +1735,25 @@ sealed interface Type {
 
 
     sealed interface JvmArray : Type {
-        val itemType: BroadType
+        val itemType: Broad
     }
 
-    data class Array(override val itemType: BroadType) : JvmArray {
+    data class Array(override val itemType: Broad) : JvmArray {
         override val size: Int = 1
     }
 
     data object IntArray : JvmArray {
-        override val itemType: BroadType = BroadType.Known(IntT)
+        override val itemType: Broad = Broad.Known(IntT)
         override val size: Int = 1
     }
 
     data object DoubleArray : JvmArray {
-        override val itemType: BroadType = BroadType.Known(DoubleT)
+        override val itemType: Broad = Broad.Known(DoubleT)
         override val size: Int = 1
     }
 
     data object BoolArray : JvmArray {
-        override val itemType: BroadType = BroadType.Known(BoolUnknown)
+        override val itemType: Broad = Broad.Known(BoolUnknown)
         override val size: Int = 1
     }
 
@@ -1343,15 +1810,13 @@ sealed interface Type {
 
 }
 
-fun Type.JvmType.extendGeneric(name: String, type: Type): Type.JvmType {
-    val generics = genericTypes.toMutableMap()
-    when (val tp = generics[name]) {
-        is Type.BroadType.Known -> generics[name] = Type.BroadType.Known(tp.type.join(type))
-        Type.BroadType.Unset -> generics[name] = Type.BroadType.Known(type)
-        null -> error("No generic type $name")
-    }
-
-    return Type.BasicJvmType(signature, generics)
+fun Type.Broad.join(other: Type.Broad): Type.Broad = when {
+    this is Type.Broad.Unset && other is Type.Broad.Unset -> this
+    this is Type.Broad.Unset && other is Type.Broad.Typeful -> Type.Broad.UnknownUnionized(other.type)
+    other is Type.Broad.Unset && this is Type.Broad.Typeful -> Type.Broad.UnknownUnionized(this.type)
+    other is Type.Broad.Known && this is Type.Broad.Known -> Type.Broad.Known(this.type.join(other.type))
+    other is Type.Broad.Typeful && this is Type.Broad.Typeful -> Type.Broad.UnknownUnionized(this.type.join(other.type))
+    else -> error("Should not be reachable")
 }
 
 fun Type.Union.mapEntries(closure: (item: Type) -> Type): Type.Union {
@@ -1396,7 +1861,7 @@ fun Type.join(other: Type): Type {
                     first != null && second == null -> first.asBroadType()
                     else -> {
                         val type = second?.let { first?.join(second) }
-                        val broadType = type?.let { Type.BroadType.Known(it) } ?: Type.BroadType.Unset
+                        val broadType = type?.let { Type.Broad.Known(it) } ?: Type.Broad.Unset
 
                         broadType
                     }
@@ -1506,7 +1971,8 @@ data class IRInlineFunction(
         variables: VariableManager,
         instance: TypedInstruction?,
         lookup: IRLookup,
-        generics: Map<String, Type>
+        generics: Map<String, Type>,
+        hist: History
     ): TypedInstruction {
 
         if (args.size != this.args.size - if (instance == null) 0 else 1) {
@@ -1548,7 +2014,7 @@ data class IRInlineFunction(
                 }
             }
         }
-        val bodyInstruction = inferTypes(scope, lookup, generics, inlinableLambdas)
+        val bodyInstruction = inferTypes(scope, lookup, generics, inlinableLambdas, hist)
 
         variables.mapping().minVarCount(scope.mapping().varCount())
 
@@ -1562,11 +2028,12 @@ data class IRInlineFunction(
         variables: VariableManager,
         lookup: IRLookup,
         generics: Map<String, Type>,
-        inlinableLambdas: List<TypedInstruction.Lambda>
+        inlinableLambdas: List<TypedInstruction.Lambda>,
+        hist: History
     ): TypedInstruction {
         val end = Label()
         val metaDataHandle = FunctionMetaDataHandle(generics, module, inlinableLambdas, end)
-        val typedBody = body.inferTypes(variables, lookup, metaDataHandle)
+        val typedBody = body.inferTypes(variables, lookup, metaDataHandle, hist)
         metaDataHandle.issueReturnTypeAppend(typedBody.type)
         return TypedInstruction.InlineBody(typedBody, end, metaDataHandle.returnType)
     }
@@ -1582,18 +2049,86 @@ data class BasicIRFunction(
     private val mutex = Mutex()
     private val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, FunctionMetaData>> = mutableMapOf()
 
+    private val checkedUnknownVariants: MutableMap<List<Type.Broad>, Type.Broad> = mutableMapOf()
+
     override val keepBlocks: MutableMap<String, Type> = mutableMapOf()
 
     override fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>> {
         return checkedVariants
     }
 
-    suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup, generics: Map<String, Type>): Type {
+    suspend fun inferUnknown(argTypes: List<Type.Broad>, lookup: IRLookup, generics: Map<String, Type>, hist: History, check: Boolean = true): Type.Broad {
+        mutex.withLock {
+            if (argTypes in checkedUnknownVariants) {
+                return checkedUnknownVariants[argTypes]!!
+            }
+        }
+
+        //if it is already substituted by anything, we want to return the substituded call
+        if (check)
+        hist.isSubstituted(this, argTypes)?.let { return it }
+
+        //this means we have reached a seperate recursion loop within our own recusion
+        if (check && hist.isPresent(this, argTypes)) {
+            return Type.Broad.Known(inferRecursive(argTypes, lookup, generics, hist))
+        }
+
+        hist.appendRecCallStack(this, argTypes)
+
+        val vars = TypeVariableManagerImpl()
+        args.zip(argTypes).forEach { (name, tp) -> vars.set(name, tp) }
+        val metaHandle = MetaDataTypeHandleImpl(inheritedGenerics = generics)
+
+        val result = body.inferUnknown(vars, lookup, metaHandle, hist)
+
+        return result
+    }
+
+    private suspend fun inferRecursive(argTypes: List<Type.Broad>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Type {
+        hist.substitute(this, argTypes, Type.Broad.Unset)
+        val result = inferUnknown(argTypes, lookup, generics, hist, false)
+        
+        //when the type is solely unknown, the function can only ever call itself to produce the return value in other words it has to be nothing
+        if (result is Type.Broad.Unset) {
+            return Type.Nothing
+        }
+        
+        //this means the return value did not depend on the recursive calls so we already know it for sure
+        if (result is Type.Broad.Known) {
+            return result.type
+        }
+        
+        var prev = (result as Type.Broad.UnknownUnionized).type
+        while(true) {
+            val res = inferUnknown(argTypes, lookup, generics, hist, false)
+            res as Type.Broad.Typeful
+            if (res.type == prev) {
+                return prev
+            }
+            hist.substitute(this, argTypes, res)
+            prev = res.type
+        }
+    }
+
+    suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Type {
         mutex.withLock {
             if (argTypes in checkedVariants) {
                 return checkedVariants[argTypes]!!.second.returnType
             }
         }
+
+        val variant = CallVariant(this, argTypes)
+        if (hist.isPresent(variant)) {
+            val broadArgs = argTypes.lazyMap { Type.Broad.Known(it) }
+            val type = inferRecursive(broadArgs, lookup, generics, hist)
+            mutex.withLock {
+                checkedVariants[argTypes] = TypedInstruction.Noop(type) to FunctionMetaData(type, -1)
+            }
+
+            return type
+        }
+
+        hist.appendCallStack(variant)
 
         if (argTypes.size != this.args.size) {
             error("Expected ${this.args.size} but got ${argTypes.size} arguments when calling $args (TypeChecking)")
@@ -1601,7 +2136,9 @@ data class BasicIRFunction(
         val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList(), null)
         val variables =
             VariableManagerImpl.fromVariables(argTypes.zip(this.args).associate { (tp, name) -> name to tp })
-        val result = body.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle)
+
+        val result = body.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle, hist)
+
 
         val returnType =
             if (metaDataHandle.hasReturnType()) result.type.join(metaDataHandle.returnType) else result.type
@@ -1615,6 +2152,8 @@ data class BasicIRFunction(
     }
 
 }
+
+class RecursiveTracingError(val variant: CallVariant) : RuntimeException()
 
 fun Type.isNumType() = isInt() || isDouble()
 fun Type.isInt() = this == Type.Int || this == Type.IntT
@@ -1729,7 +2268,7 @@ data class LambdaContainer(
     private val mutex = Mutex()
     val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, FunctionMetaData>> = mutableMapOf()
 
-    suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup): Type {
+    suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup, hist: History): Type {
         if (argTypes in checkedVariants) {
             return checkedVariants[argTypes]!!.second.returnType
         }
@@ -1745,7 +2284,7 @@ data class LambdaContainer(
         captures.forEach { (name, type) ->
             variables.putVar(name, FieldBinding(TypedInstruction.LoadVar(0, Type.BasicJvmType(signature)), type, name))
         }
-        val result = closureBody.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle)
+        val result = closureBody.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle, hist)
         val requireImplicitNull = metaDataHandle.hasReturnType() && result.type == Type.Nothing
 
         val returnType = if (requireImplicitNull) Type.Null else result.type
@@ -1777,29 +2316,30 @@ suspend inline fun inferCall(
     generics: Map<String, Type>,
     genericTypeChange: (name: String, type: Type) -> Unit,
     callBuilder: (candidate: FunctionCandidate, args: List<TypedInstruction>) -> TypedInstruction,
+    hist: History
 ): TypedInstruction {
-    val typedArgs = args.map { it.inferTypes(variables, lookup, handle) }
+    val typedArgs = args.map { it.inferTypes(variables, lookup, handle, hist) }
 
     val changes = lookup.lookUpGenericTypes(parent.type, name, typedArgs.map { it.type })
     for ((changeName, tp) in changes) {
         genericTypeChange(changeName, tp)
     }
 
-    return lookup.processInlining(variables, parent, name, typedArgs, args, generics)
+    return lookup.processInlining(variables, parent, name, typedArgs, args, generics, hist)
         ?.let { return it }
-        ?: callBuilder(lookup.lookUpCandidate(parent.type, name, typedArgs.map { it.type }), typedArgs)
+        ?: callBuilder(lookup.lookUpCandidate(parent.type, name, typedArgs.map { it.type }, hist), typedArgs)
 
 }
 
-fun Type?.asBroadType() = this?.let { Type.BroadType.Known(it) } ?: Type.BroadType.Unset
+fun Type?.asBroadType() = this?.let { Type.Broad.Known(it) } ?: Type.Broad.Unset
 
 suspend fun List<TypedConstructingArgument>.itemType(lookup: IRLookup) = map {
     when (it) {
         is TypedConstructingArgument.Collected -> when (val tp = it.type) {
-            is Type.Array -> (tp.itemType as? Type.BroadType.Known)?.type
+            is Type.Array -> (tp.itemType as? Type.Broad.Known)?.type
             is Type.BasicJvmType -> {
                 if (lookup.typeHasInterface(tp, SignatureString("java::util::Collection"))) {
-                    (tp.genericTypes["E"]!! as? Type.BroadType.Known)?.type
+                    (tp.genericTypes["E"]!! as? Type.Broad.Known)?.type
                 } else {
                     error("")
                 }
@@ -1812,4 +2352,4 @@ suspend fun List<TypedConstructingArgument>.itemType(lookup: IRLookup) = map {
     }
 }
     .reduceOrNull { acc, type -> type?.let { acc?.join(type) } ?: acc }
-    .let { if (it == null) Type.BroadType.Unset else Type.BroadType.Known(it) }
+    .let { if (it == null) Type.Broad.Unset else Type.Broad.Known(it) }

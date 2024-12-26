@@ -46,7 +46,7 @@ sealed interface TypedInstruction {
         override val type: Type = Type.Never
     }
 
-    data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type.BroadType, val tempArrayVariable: Int?) : TypedInstruction {
+    data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type.Broad, val tempArrayVariable: Int?) : TypedInstruction {
         val isConstList = items.all { it is TypedConstructingArgument.Normal }
         override val type: Type = Type.BasicJvmType(
             SignatureString("java::util::ArrayList"),
@@ -54,7 +54,7 @@ sealed interface TypedInstruction {
         )
     }
 
-    data class LoadArray(val items: List<TypedConstructingArgument>, val arrayType: ArrayType, val itemType: Type.BroadType, val tempIndexVarId: Int, val tempArrayVarId: Int) : TypedInstruction {
+    data class LoadArray(val items: List<TypedConstructingArgument>, val arrayType: ArrayType, val itemType: Type.Broad, val tempIndexVarId: Int, val tempArrayVarId: Int) : TypedInstruction {
         override val type: Type = when(arrayType) {
             ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
             ArrayType.Int -> Type.IntArray
@@ -87,7 +87,7 @@ sealed interface TypedInstruction {
             get() = value.type.asBoxed()
     }
 
-    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.BroadType) : TypedInstruction {
+    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.Broad) : TypedInstruction {
         override val type: Type = when(arrayType) {
             ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
             ArrayType.Int -> Type.IntArray
@@ -96,7 +96,7 @@ sealed interface TypedInstruction {
         }
     }
 
-    data class LoadConstConstArray(val items: List<Const>, val arrayType: ArrayType, val itemType: Type.BroadType): Const {
+    data class LoadConstConstArray(val items: List<Const>, val arrayType: ArrayType, val itemType: Type.Broad): Const {
         override val type: Type = when(arrayType) {
             ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
             ArrayType.Int -> Type.IntArray

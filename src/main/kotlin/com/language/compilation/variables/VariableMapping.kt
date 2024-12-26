@@ -4,7 +4,6 @@ import com.language.codegen.VarFrame
 import com.language.codegen.VarFrameImpl
 import com.language.compilation.*
 import java.io.Closeable
-import java.util.*
 import kotlin.math.max
 
 
@@ -158,7 +157,7 @@ class VariableMappingImpl private constructor(
 
     override fun genericChangeRequest(id: Int, genericName: String, type: Type) {
         val (signature, generics) = (getType(id) as Type.JvmType).let { it.signature to it.genericTypes }
-        variables[id] = Type.BasicJvmType(signature, generics + mapOf(genericName to Type.BroadType.Known(type)))
+        variables[id] = Type.BasicJvmType(signature, generics + mapOf(genericName to Type.Broad.Known(type)))
     }
 
     override fun getType(id: Int): Type {

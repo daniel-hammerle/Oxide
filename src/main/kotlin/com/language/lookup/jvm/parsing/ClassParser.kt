@@ -10,7 +10,6 @@ import com.language.lookup.jvm.rep.defaultVariant
 import org.objectweb.asm.*
 import org.objectweb.asm.signature.SignatureReader
 import org.objectweb.asm.signature.SignatureVisitor
-import java.lang.reflect.Method
 import java.util.LinkedList
 
 typealias AsmType = org.objectweb.asm.Type
@@ -27,7 +26,7 @@ private fun AsmType.toOxideType(): Type {
         AsmType.FLOAT -> error("Doesn't exist yet")
         AsmType.LONG -> error("Doesn't exist yet")
         AsmType.DOUBLE -> Type.DoubleT
-        AsmType.ARRAY -> Type.Array(Type.BroadType.Known(elementType.toOxideType()))
+        AsmType.ARRAY -> Type.Array(Type.Broad.Known(elementType.toOxideType()))
         AsmType.OBJECT -> Type.BasicJvmType(SignatureString.fromDotNotation(className), emptyMap())
         else -> throw IllegalArgumentException("Unsupported type: ${this.descriptor}")
     }

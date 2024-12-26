@@ -15,13 +15,28 @@ interface JvmLookup {
         lookup: IRLookup
     ): FunctionCandidate?
 
+    suspend fun lookUpMethodUnknown(
+        instance: Type.JvmType,
+        functionName: String,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup
+    ): Type.Broad?
+
     suspend fun lookUpAssociatedFunction(
         className: SignatureString,
         functionName: String,
         argTypes: List<Type>,
         lookup: IRLookup,
-        generics: Map<String, Type.BroadType>
+        generics: Map<String, Type.Broad>
     ): FunctionCandidate?
+
+    suspend fun lookUpAssociatedFunctionUnknown(
+        className: SignatureString,
+        functionName: String,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup,
+        generics: Map<String, Type.Broad>
+    ): Type.Broad?
 
     suspend fun lookUpField(instance: Type.JvmType, fieldName: String, lookup: IRLookup): Type?
 
@@ -43,6 +58,12 @@ interface JvmLookup {
         argTypes: List<Type>,
         lookup: IRLookup
     ): FunctionCandidate?
+
+    suspend fun lookupConstructorUnknown(
+        className: SignatureString,
+        argTypes: List<Type.Broad>,
+        lookup: IRLookup
+    ): Type.Broad?
 
     suspend fun lookUpGenericTypes(
         instance: Type.JvmType,

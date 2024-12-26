@@ -5,7 +5,6 @@ import com.language.compilation.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.variables.VariableManager
-import com.language.parser.Variables
 
 interface IRLookup {
 
@@ -25,7 +24,7 @@ interface IRLookup {
      * # Note
      * If the given module or class doesn't have a matching static method it will throw
      */
-    suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>, generics: Map<String, Type.BroadType> = emptyMap()): FunctionCandidate
+    suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>, history: History, generics: Map<String, Type.Broad> = emptyMap()): FunctionCandidate
 
     /**
      * Returns the function candidate for a given method
@@ -37,7 +36,22 @@ interface IRLookup {
      * # Note
      * If the type doesn't have a matching method, the function will throw
      */
-    suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>): FunctionCandidate
+    suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>, history: History): FunctionCandidate
+
+
+    /**
+     * Returns the function candidate for a given method
+     * A candidate can be a:
+     * - Literal method call
+     * - A static call to an impl block class
+     * - an Interface call
+     *
+     * # Note
+     * If the type doesn't have a matching method, the function will throw
+     */
+    suspend fun lookUpCandidateUnknown(instance: Type, funcName: String, argTypes: List<Type.Broad>, history: History): Type.Broad
+
+    suspend fun lookUpCandidateUnknown(modName: SignatureString, funcName: String, argTypes: List<Type.Broad>, history: History, generics: Map<String, Type.Broad> = emptyMap()): Type.Broad
 
 
     /**
@@ -55,7 +69,8 @@ interface IRLookup {
         funcName: String,
         args: List<TypedInstruction>,
         untypedArgs: List<Instruction>,
-        generics: Map<String, Type>
+        generics: Map<String, Type>,
+        history: History
     ): TypedInstruction?
 
 
@@ -65,7 +80,8 @@ interface IRLookup {
         funcName: String,
         args: List<TypedInstruction>,
         untypedArgs: List<Instruction>,
-        generics: Map<String, Type>
+        generics: Map<String, Type>,
+        history: History
     ): TypedInstruction?
     /**
      * Returns a new instance of Self with the new ModFrame
@@ -79,6 +95,7 @@ interface IRLookup {
      * The function will throw if the class / struct doesn't exist or no matching constructor is found
      */
     suspend fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate
+    suspend fun lookUpConstructorUnknown(className: SignatureString, argTypes: List<Type.Broad>): Type.Broad
 
     /**
      * Returns the type of the field or throw in case it doesn't exist
@@ -108,7 +125,7 @@ interface IRLookup {
 
     suspend fun lookupLambdaInit(signatureString: SignatureString): FunctionCandidate
 
-    suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<Type>): FunctionCandidate
+    suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<Type>, history: History): FunctionCandidate
 
     suspend fun TemplatedType.populate(generics: Map<String, Type>): Type
 }
