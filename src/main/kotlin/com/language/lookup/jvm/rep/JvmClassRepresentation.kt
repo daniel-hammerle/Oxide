@@ -5,7 +5,7 @@ import com.language.codegen.getOrThrow
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
-import com.language.compilation.templatedType.matches
+import com.language.compilation.templatedType.matchesImpl
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.*
 import com.language.lookup.jvm.parsing.ClassInfo
@@ -351,11 +351,11 @@ data class JvmClassInfoRepresentation(
     }
 
     private suspend fun getMethod(name: String, argTypes: List<Type>, lookup: IRLookup): FunctionInfo? =
-        info.methods[name]?.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) }
+        info.methods[name]?.find { it.args.matchesImpl(argTypes, mutableMapOf(), emptyMap(), lookup) }
 
 
     private suspend fun getAssociatedFunction(name: String, argTypes: List<Type>, lookup: IRLookup): FunctionInfo? {
-        return info.associatedFunctions[name]?.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) }
+        return info.associatedFunctions[name]?.find { it.args.matchesImpl(argTypes, mutableMapOf(), emptyMap(), lookup) }
     }
 
 
@@ -474,7 +474,7 @@ data class JvmClassInfoRepresentation(
 
     override suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
         val constructor =
-            info.constructors.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
+            info.constructors.find { it.args.matchesImpl(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
 
         val candidate = SimpleFunctionCandidate(
             argTypes,
@@ -492,7 +492,7 @@ data class JvmClassInfoRepresentation(
     }
 
     override suspend fun lookupConstructorUnknown(argTypes: List<Type.Broad>, lookup: IRLookup): Type.Broad? {
-        info.constructors.find { it.args.matches(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
+        info.constructors.find { it.args.matchesImpl(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
         return Type.Broad.Known(instanceType)
     }
 
@@ -507,7 +507,7 @@ data class JvmClassInfoRepresentation(
         jvmLookup: JvmLookup
     ): Set<SignatureString> {
         val constructor =
-            info.constructors.find { it.args.matches(argTypes, modifiers = emptyMap(), lookup = lookup) } ?: error("No constructor found")
+            info.constructors.find { it.args.matchesImpl(argTypes, modifiers = emptyMap(), lookup = lookup) } ?: error("No constructor found")
 
         return traceInfo(constructor.exceptionInfo, jvmLookup, visited, lookup)
     }

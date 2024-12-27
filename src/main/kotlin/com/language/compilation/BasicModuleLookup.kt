@@ -1,9 +1,8 @@
 package com.language.compilation
 
+import com.language.*
 import com.language.Function
-import com.language.Module
-import com.language.ModuleChild
-import com.language.Struct
+import com.language.compilation.templatedType.scope
 
 data class BasicModuleLookup(
     val current: Module,
@@ -48,5 +47,25 @@ data class BasicModuleLookup(
     override fun hasLocalStruct(name: SignatureString): Boolean = current.children[name.value] is Struct
 
     override fun nativeModule(name: SignatureString): Module? = modules[name]
+    override fun hasType(name: SignatureString): Boolean {
+        return current.children[name.value] is TypeDef || nativeModule(name.modName)?.children?.get(name.structName) is TypeDef
+    }
+
+    private fun withModule(signatureString: SignatureString) = BasicModuleLookup(modules[signatureString]!!, signatureString, modules, externalJars, containerName)
+
+    override fun unwindType(name: SignatureString, tp: TemplatedType.Complex): TemplatedType {
+        current.children[name.value]?.takeIf { it is TypeDef }?.let { typedef ->
+            typedef as TypeDef
+            val gens = typedef.generics.zip(tp.generics).associate { (gen, tp) -> gen.first to tp }
+            return typedef.type.scope(gens).populate(this)
+        }
+        nativeModule(name.modName)?.children?.get(name.structName)?.takeIf { it is TypeDef }?.let { typedef ->
+            typedef as TypeDef
+            val gens = typedef.generics.zip(tp.generics).associate { (gen, tp) -> gen.first to tp }
+            return typedef.type.scope(gens).populate(withModule(name.modName))
+        }
+
+        error("Type $name not found")
+    }
 
 }

@@ -233,7 +233,7 @@ class IRModuleLookup(
     }
 
     override suspend fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate {
-        return runCatching { oxideLookup.lookupConstructor(className, argTypes, this) }.getOrNull()
+        return oxideLookup.lookupConstructor(className, argTypes, this)
             ?: jvmLookup.lookupConstructor(className, argTypes, this)
             ?: error("NO constructor found for $className($argTypes)")
     }

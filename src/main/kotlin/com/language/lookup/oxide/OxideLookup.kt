@@ -72,7 +72,7 @@ interface OxideLookup {
         history: History
     ): FunctionCandidate
 
-    suspend fun lookupConstructor(structName: SignatureString, args: List<Type>, lookup: IRLookup): FunctionCandidate
+    suspend fun lookupConstructor(structName: SignatureString, args: List<Type>, lookup: IRLookup): FunctionCandidate?
     suspend fun lookupConstructorUnknown(structName: SignatureString, args: List<Type.Broad>, lookup: IRLookup): Type.Broad
     suspend fun lookupModifiers(structName: Type): Modifiers
 

@@ -40,8 +40,8 @@ fun compile(module: ModuleLookup): IRModule {
                 val block = compileImplBlock(entry, module, appender)
                 implBlocks[type]?.add(block) ?: run { implBlocks[type] = mutableSetOf(block) }
             }
-
-            is UseStatement -> {}
+            is TypeDef -> {}  //ignore they don't exist after this stage
+            is UseStatement -> {} //ignore they don't exist after this stage
             else -> throw CompilationException(
                 entry.info.join(module.localName),
                 "Invalid construct",
@@ -54,9 +54,16 @@ fun compile(module: ModuleLookup): IRModule {
 }
 
 fun TemplatedType.populate(module: ModuleLookup): TemplatedType = when (this) {
-    is TemplatedType.Complex -> TemplatedType.Complex(
-        populateSignature(signatureString, module),
-        generics.map { it.populate(module) })
+    is TemplatedType.Complex -> {
+        if (module.hasType(signatureString)) {
+            module.unwindType(signatureString, this)
+        } else {
+            TemplatedType.Complex(
+                populateSignature(signatureString, module),
+                generics.map { it.populate(module) }
+            )
+        }
+    }
 
     is TemplatedType.Union -> TemplatedType.Union(types.map { it.populate(module) }.toSet())
     else -> this
@@ -64,7 +71,7 @@ fun TemplatedType.populate(module: ModuleLookup): TemplatedType = when (this) {
 
 fun compileStruct(struct: Struct, module: ModuleLookup): IRStruct {
     val fields = struct.args.mapValues { it.value.populate(module) }
-    return IRStruct(fields, struct.generics, struct.modifiers)
+    return IRStruct(fields, struct.generics, struct.modifiers, struct.info)
 }
 
 fun compileImplBlock(implBlock: Impl, module: ModuleLookup, lambdaAppender: LambdaAppender): IRImpl {
@@ -544,6 +551,9 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup, uctl: Boolean
 
 fun populateSignature(signatureString: SignatureString, module: ModuleLookup): SignatureString {
     if (module.hasStruct(signatureString)) {
+        return module.localName + signatureString
+    }
+    if (module.localSymbols[signatureString.oxideNotation] is TypeDef) {
         return module.localName + signatureString
     }
     return when (val ctx = module.getImport(signatureString.members[0])) {

@@ -1,10 +1,50 @@
 use std::{random, io}
 
+type Expression = IfExpression | str | bool | i32 | f64 | MathExpression | ComparisonExpression | BlockExpression
+
+type Statement = WhileLoop | ExprStatement
+
+struct WhileLoop {
+    cond Expression,
+    body Expression
+}
+
+struct ExprStatement {
+    expr Expression
+}
+
+struct BlockExpression {
+    statements [Statement]
+}
+
+struct ComparisonExpression {
+    fist Expression,
+    second Expression,
+    op str
+}
+
+struct MathExpression {
+    fist Expression,
+    second Expression,
+    op str
+}
+
+struct IfExpression {
+    cond Expression,
+    body Expression,
+    elseBody Expression | null
+}
+
+func parseExpression(iter) {
+
+}
 
 func main {
+    ifexpr = IfExpression(true, 23, "Hello World")
     a(1, 0)
     a("Hello", 9)
     add("Hello", " World!")
+    io.println(ifexpr.cond)
 }
 
 func add(a, b) {

@@ -66,18 +66,20 @@ fun parse(tokens: List<PositionedToken<*>>): Module {
 fun parseFile(tokens: Tokens): Module {
     val entries = mutableMapOf<String, ModuleChild>()
     val implBlocks = mutableMapOf<TemplatedType, Impl>()
+    val typeAliases = mutableMapOf<String, TypeDef>()
     val imports: MutableMap<String, SignatureString> = mutableMapOf()
     while(tokens.hasNext()) {
         val (name, entry) = parseTopLevelEntity(tokens)
         when(entry) {
             is Impl -> implBlocks[entry.type] = entry
             is UseStatement -> imports += entry.signatureStrings.map { it.structName to it }
+            is TypeDef -> typeAliases[name] = entry
             else -> {}
         }
         entries[name] = entry
 
     }
-    return Module(entries, implBlocks, imports)
+    return Module(entries, implBlocks, imports, typeAliases)
 }
 
 fun parseModifiers(tokens: Tokens): Pair<Modifiers, MetaInfo> {
@@ -118,12 +120,22 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             val body = parseExpression(tokens, BasicVariables.withEntries(args.map { it.first }.toSet()))
             name to Function(args, returnType, generics, body, modifiers, info.finish())
         }
+        Token.Type -> {
+            val name = tokens.expect<Token.Identifier>().name
+            val generics = parseGenericDefinition(tokens)
+
+            tokens.expect<Token.EqualSign>()
+
+            val type = parseType(tokens)
+
+            name to TypeDef(generics, type, name, modifiers, info.finish())
+        }
         Token.Struct -> {
             if (!modifiers.isSubsetOf(Modifiers.StructModifiers)) {
                 tokens.error("Invalid Modifiers cannot apply $modifiers to a struct", mInfo, MessageKind.Logic)
             }
             val name = tokens.expect<Token.Identifier>().name
-            val generics = parseGenericDefinition(tokens)
+            val generics = parseGenericDefinition(tokens).toMap()
             val args = when(tokens.visitNext()) {
                 Token.OpenCurly -> {
                     tokens.expect<Token.OpenCurly>()
@@ -137,7 +149,7 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             if (!modifiers.isSubsetOf(Modifiers.ImplBlockModifiers)) {
                 tokens.error("Invalid Modifiers cannot apply $modifiers to an impl block", mInfo, MessageKind.Logic)
             }
-            val generics = parseGenericDefinition(tokens)
+            val generics = parseGenericDefinition(tokens).toMap()
             val type = parseType(tokens, generics.keys)
             tokens.expect<Token.OpenCurly>()
             val entries: MutableMap<String, ModuleChild> = mutableMapOf()
@@ -763,12 +775,12 @@ private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
 
 }
 
-private fun parseGenericDefinition(tokens: Tokens): Map<String, GenericType> {
+private fun parseGenericDefinition(tokens: Tokens): List<Pair<String, GenericType>> {
     if (tokens.visitNext() != Token.St) {
-        return emptyMap()
+        return emptyList()
     }
     tokens.expect<Token.St>()
-    val generics = mutableMapOf<String, GenericType>()
+    val generics = mutableListOf<Pair<String, GenericType>>()
     while(true) {
         val (modifiers, _) = parseModifiers(tokens)
         generics+=tokens.expect<Token.Identifier>().name to GenericType(modifiers, emptyList())

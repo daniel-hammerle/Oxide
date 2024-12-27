@@ -46,6 +46,9 @@ sealed interface Token {
     data object Self : KeyWord, Identifier {
         override val name: String = "self"
     }
+    data object Type : KeyWord, Identifier {
+        override val name: String = "type"
+    }
     data object Return : KeyWord
     sealed interface ModifierToken : Token {
         val modifier: Modifier
@@ -54,6 +57,7 @@ sealed interface Token {
     sealed interface Identifier : Token {
         val name: String
     }
+
     data class BasicIdentifier(override val name: String) : Identifier
 
     sealed interface Literal : Token
@@ -137,6 +141,7 @@ private fun tryFindKeyWord(string: String): Token? {
         "return" -> Token.Return
         "_or" -> Token.Or
         "_and" -> Token.And
+        "type" -> Token.Type
         else -> null
     }
 }

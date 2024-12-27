@@ -231,7 +231,8 @@ sealed interface Statement {
 data class Module(
     val children: Map<String, ModuleChild>,
     val implBlocks: Map<TemplatedType, Impl>,
-    val imports: Map<String, SignatureString>
+    val imports: Map<String, SignatureString>,
+    val typeAliases: Map<String, TypeDef>
 )
 
 sealed interface ModuleChild {
@@ -242,7 +243,7 @@ sealed interface ModuleChild {
 data class Function(
     val args: List<Pair<String, TemplatedType?>>,
     val returnType: TemplatedType?,
-    val generics: Map<String, GenericType>,
+    val generics: List<Pair<String, GenericType>>,
     val body: Expression,
     override val modifiers: Modifiers,
     override val info: MetaInfo
@@ -254,6 +255,14 @@ data class Struct(
     override val modifiers: Modifiers,
     override val info: MetaInfo
 ) : ModuleChild
+
+data class TypeDef(
+    val generics: List<Pair<String, GenericType>>,
+    val type: TemplatedType,
+    val name: String,
+    override val modifiers:
+    Modifiers, override val info: MetaInfo
+): ModuleChild
 
 data class Impl(
     val type: TemplatedType,

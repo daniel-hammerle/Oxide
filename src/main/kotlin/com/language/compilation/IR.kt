@@ -12,7 +12,7 @@ import com.language.compilation.Instruction.DynamicCall
 import com.language.compilation.metadata.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
-import com.language.compilation.templatedType.matches
+import com.language.compilation.templatedType.matchesSubset
 import com.language.compilation.variables.*
 import com.language.eval.*
 import com.language.lexer.MetaInfo
@@ -1947,7 +1947,7 @@ fun Type.toActualJvmType() = when (this) {
 interface IRFunction {
     val args: List<Pair<String, TemplatedType?>>
     val returnType: TemplatedType?
-    val generics: Map<String, GenericType>
+    val generics: List<Pair<String, GenericType>>
     val body: Instruction
     val imports: Set<SignatureString>
     val keepBlocks: MutableMap<String, Type>
@@ -1973,7 +1973,7 @@ interface IRFunction {
 data class BasicIRFunction(
     override val args: List<Pair<String, TemplatedType?>>,
     override val returnType: TemplatedType?,
-    override val generics: Map<String, GenericType>,
+    override val generics: List<Pair<String, GenericType>>,
     override val body: Instruction,
     override val imports: Set<SignatureString>,
     override val module: LambdaAppender,
@@ -2078,7 +2078,7 @@ data class BasicIRFunction(
             VariableManagerImpl.fromVariables(argTypes
                 .zip(this.args)
                 .associate { (tp, name) ->
-                    if (name.second?.matches(tp, inferredGenerics, this.generics, lookup) == false) error("Invalid type mismatch $tp : ${name.second}")
+                    if (name.second?.matchesSubset(tp, inferredGenerics, this.generics.toMap(), lookup) == false) error("Invalid type mismatch $tp : ${name.second}")
                     name.first to tp
                 }
             )
@@ -2090,7 +2090,7 @@ data class BasicIRFunction(
             if (metaDataHandle.hasReturnType()) result.type.join(metaDataHandle.returnType) else result.type
         metaDataHandle.issueReturnTypeAppend(returnType)
 
-        if (this.returnType?.matches(returnType, inferredGenerics, this.generics, lookup) == false) error("Invalid type mismatch return type $returnType : ${this.returnType}")
+        if (this.returnType?.matchesSubset(returnType, inferredGenerics, this.generics.toMap(), lookup) == false) error("Invalid type mismatch return type $returnType : ${this.returnType}")
         mutex.withLock {
             keepBlocks.putAll(metaDataHandle.keepBlocks)
             checkedVariants[argTypes] =
@@ -2129,7 +2129,7 @@ data class BasicIRFunction(
         val inferredGenerics = mutableMapOf<String, Type>()
 
         args.zip(uncompiledArgs).zip(slicedArgs).forEach { (it, name) ->
-            if (name.second?.matches(it.first.type, inferredGenerics, this.generics, lookup) == false) error("Type error mismatch ${it.first.type} : ${name.second}")
+            if (name.second?.matchesSubset(it.first.type, inferredGenerics, this.generics.toMap(), lookup) == false) error("Type error mismatch ${it.first.type} : ${name.second}")
             val (typed, untyped) = it
             if (untyped is Instruction.LoadVar) {
                 scope.reference(newName = name.first, oldName = untyped.name)
@@ -2153,7 +2153,7 @@ data class BasicIRFunction(
         }
         val bodyInstruction = inferTypesInPlace(scope, lookup, generics, inlinableLambdas, hist)
 
-        if (this.returnType?.matches(bodyInstruction.type, inferredGenerics, this.generics, lookup) == false) error("Type mismatch return type ${bodyInstruction.type} : ${this.returnType}")
+        if (this.returnType?.matchesSubset(bodyInstruction.type, inferredGenerics, this.generics.toMap(), lookup) == false) error("Type mismatch return type ${bodyInstruction.type} : ${this.returnType}")
 
         variables.mapping().minVarCount(scope.mapping().varCount())
 
@@ -2234,7 +2234,8 @@ data class GenericType(val modifiers: Modifiers, val upperBounds: List<Signature
 data class IRStruct(
     val fields: Map<String, TemplatedType>,
     val generics: Map<String, GenericType>,
-    val modifiers: Modifiers
+    val modifiers: Modifiers,
+    val info: MetaInfo
 ) {
     private val mutex = Mutex()
 
@@ -2247,6 +2248,13 @@ data class IRStruct(
         }
     }
 }
+
+data class IRTypeDef(
+    val type: TemplatedType,
+    val generics: List<Pair<String, GenericType>>,
+    val modifiers: Modifiers,
+    val inf: MetaData
+)
 
 data class IRImpl(
     val fullSignature: SignatureString,
