@@ -6,7 +6,8 @@ import com.language.compilation.IRFunction
 import com.language.compilation.Type
 import com.language.compilation.TypedInstruction
 import com.language.compilation.metadata.FunctionMetaDataHandle
-import com.language.compilation.templatedType.matches
+import com.language.compilation.templatedType.matchesImpl
+import com.language.compilation.templatedType.matchesSubset
 import com.language.compilation.variables.*
 import com.language.lookup.IRLookup
 
@@ -79,14 +80,14 @@ suspend fun evalFunction(
     val inferredGenerics = mutableMapOf<String, Type>()
 
     function.args.zip(args).forEach { (name, instruction) ->
-        if (name.second?.matches(instruction.type, inferredGenerics, function.generics, lookup) == false) error("Type mismatch ${instruction.type} : ${name.second}")
+        if (name.second?.matchesSubset(instruction.type, inferredGenerics, function.generics.toMap(), lookup) == false) error("Type mismatch ${instruction.type} : ${name.second}")
         variables.putVar(name.first, ConstBinding(instruction))
     }
 
     val handle = FunctionMetaDataHandle(generics, function.module, emptyList(), null)
 
     val result = function.body.inferTypes(variables, lookup, handle, history)
-    if (function.returnType?.matches(result.type, inferredGenerics, function.generics, lookup) == false) error("Type mismatch return type ${result.type} : ${function.returnType}")
+    if (function.returnType?.matchesSubset(result.type, inferredGenerics, function.generics.toMap(), lookup) == false) error("Type mismatch return type ${result.type} : ${function.returnType}")
     if (result !is TypedInstruction.Const) error("Failed")
     return result
 }

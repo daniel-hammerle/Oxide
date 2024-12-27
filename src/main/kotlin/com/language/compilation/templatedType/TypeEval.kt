@@ -8,25 +8,92 @@ import com.language.compilation.join
 import com.language.compilation.modifiers.Modifiers
 import com.language.lookup.oxide.lazyTransform
 
-suspend fun Iterable<TemplatedType>.matches(
+suspend fun Iterable<TemplatedType>.matchesImpl(
     other: List<Type.Broad>,
     generics: MutableMap<String, Type> = mutableMapOf(),
     modifiers: Map<String, GenericType>,
     lookup: IRLookup
 ) : Boolean {
-    return this.zip(other).all { (first, second) -> first.matches(second, generics, modifiers, lookup) }
+    return this.zip(other).all { (first, second) -> first.matchesImpl(second, generics, modifiers, lookup) }
 }
 
-suspend fun Iterable<TemplatedType>.matches(
+suspend fun Iterable<TemplatedType>.matchesImpl(
     other: Iterable<Type>,
     generics: MutableMap<String, Type> = mutableMapOf(),
     modifiers: Map<String, GenericType>,
     lookup: IRLookup
 ) : Boolean {
-    return this.zip(other).all { (first, second) -> first.matches(second, generics, modifiers, lookup) }
+    return this.zip(other).all { (first, second) -> first.matchesImpl(second, generics, modifiers, lookup) }
 }
 
-suspend fun TemplatedType.matches(
+suspend fun TemplatedType.matchesSubset(
+    type: Type.Broad,
+    generics: MutableMap<String, Type> = mutableMapOf(),
+    modifiers: Map<String, GenericType>,
+    lookup: IRLookup
+): Boolean = when(type) {
+    is Type.Broad.Known -> matchesSubset(type.type, generics, modifiers, lookup)
+    is Type.Broad.UnknownUnionized -> true
+    Type.Broad.Unset -> true
+}
+
+suspend fun TemplatedType.matchesSubset(
+    type: Type,
+    generics: MutableMap<String, Type> = mutableMapOf(),
+    modifiers: Map<String, GenericType>,
+    lookup: IRLookup
+) : Boolean {
+    return when(this) {
+        is TemplatedType.Union -> {
+            if (type is Type.Union) {
+               type.entries.all { this.matchesSubset(it, generics, modifiers, lookup) }
+            } else {
+                types.any { it.matchesSubset(type, generics, modifiers, lookup) }
+            }
+        }
+        is TemplatedType.Complex -> {
+            if (type !is Type.JvmType || !(type.signature == signatureString || lookup.typeHasInterface(type, signatureString))) {
+                return false
+            }
+            type.genericTypes.entries.zip(this.generics).forEach { (entry, template) ->
+                when(val v = entry.value) {
+                    is Type.Broad.Unset -> {
+                        println("Unset type ($type cannot match $this)")
+                        println("Defaulting to true")
+                    }
+                    is Type.Broad.Known -> when (template.matchesSubset(v.type, generics, modifiers, lookup)) {
+                        false-> return false
+                        else -> {}
+                    }
+
+                    is Type.Broad.UnknownUnionized -> {} //assume unknown is true
+                }
+            }
+            true
+        }
+        is TemplatedType.Generic -> when {
+            modifiers[name]?.modifiers is Modifiers && modifiers[name]?.modifiers != Modifiers.Empty && !lookup.satisfiesModifiers(type, modifiers[name]?.modifiers!!) -> {
+                false
+            }
+            else -> {
+                generics.apply { put(name, get(name)?.join(type) ?: type) }
+                true
+            }
+        }
+        is TemplatedType.Array -> {
+            type is Type.JvmArray && itemType.matchesSubset(type.itemType, generics, modifiers, lookup)
+        }
+        TemplatedType.BoolT ->type is Type.BoolT
+        TemplatedType.DoubleT ->type == Type.DoubleT
+        TemplatedType.IntT -> type == Type.IntT
+        TemplatedType.Null -> type == Type.Null
+        TemplatedType.Nothing -> type == Type.Nothing
+        TemplatedType.Never -> type == Type.Never
+    }
+}
+
+
+suspend fun TemplatedType.matchesImpl(
     type: Type,
     generics: MutableMap<String, Type> = mutableMapOf(),
     modifiers: Map<String, GenericType>,
@@ -39,7 +106,7 @@ suspend fun TemplatedType.matches(
             }
             val entries = type.entries.toMutableSet()
             for (templateEntry in types) {
-                val entry = entries.firstOrNull { templateEntry.matches(it, generics, modifiers, lookup) } ?: return false
+                val entry = entries.firstOrNull { templateEntry.matchesImpl(it, generics, modifiers, lookup) } ?: return false
                 entries.remove(entry)
             }
             if (entries.isNotEmpty()) {
@@ -61,7 +128,7 @@ suspend fun TemplatedType.matches(
                         println("Unset type ($type cannot match $this)")
                         println("Defaulting to true")
                     }
-                    is Type.Broad.Known -> when (template.matches(v.type, generics, modifiers, lookup)) {
+                    is Type.Broad.Known -> when (template.matchesImpl(v.type, generics, modifiers, lookup)) {
                         false-> return false
                         else -> {}
                     }
@@ -82,7 +149,7 @@ suspend fun TemplatedType.matches(
             true
         }
         is TemplatedType.Array -> {
-            type is Type.JvmArray && itemType.matches(type.itemType, generics, modifiers, lookup)
+            type is Type.JvmArray && itemType.matchesImpl(type.itemType, generics, modifiers, lookup)
         }
         TemplatedType.BoolT ->type is Type.BoolT
         TemplatedType.DoubleT ->type == Type.DoubleT
@@ -93,14 +160,32 @@ suspend fun TemplatedType.matches(
     }
 }
 
-suspend fun TemplatedType.matches(
+
+fun TemplatedType.scope(
+    generics: Map<String, TemplatedType>
+): TemplatedType {
+    return when(this) {
+        is TemplatedType.Array -> TemplatedType.Array(itemType.scope(generics))
+        is TemplatedType.Complex -> TemplatedType.Complex(signatureString, this.generics.map { it.scope(generics) })
+        is TemplatedType.Union -> TemplatedType.Union(types.map { it.scope(generics) }.toSet())
+        is TemplatedType.Generic -> generics[name] ?: error("No substitute found for generic $name")
+        TemplatedType.IntT -> TemplatedType.IntT
+        TemplatedType.DoubleT -> TemplatedType.DoubleT
+        TemplatedType.Never -> TemplatedType.Never
+        TemplatedType.Nothing -> TemplatedType.Nothing
+        TemplatedType.Null -> TemplatedType.Null
+        TemplatedType.BoolT -> TemplatedType.BoolT
+    }
+}
+
+suspend fun TemplatedType.matchesImpl(
     type: Type.Broad,
     generics: MutableMap<String, Type> = mutableMapOf(),
     modifiers: Map<String, GenericType>,
     lookup: IRLookup
 ): Boolean {
     return when(type) {
-        is Type.Broad.Known -> matches(type.type, generics, modifiers, lookup)
+        is Type.Broad.Known -> this@matchesImpl.matchesImpl(type.type, generics, modifiers, lookup)
         Type.Broad.Unset -> true
         is Type.Broad.UnknownUnionized -> true //assuming unknown always matches
     }

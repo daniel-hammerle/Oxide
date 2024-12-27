@@ -3,7 +3,8 @@ package com.language.lookup.oxide
 import com.language.TemplatedType
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifiers
-import com.language.compilation.templatedType.matches
+import com.language.compilation.templatedType.matchesImpl
+import com.language.compilation.templatedType.matchesSubset
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.rep.asLazyTypeMap
 import org.objectweb.asm.Opcodes
@@ -39,7 +40,7 @@ class BasicOxideLookup(
         for ((template, blocks) in allowedImplBlocks) {
             val generics = mutableMapOf<String, Type>()
             blocks.forEach { impl ->
-                if (funcName in impl.methods && template.matches(instance, generics, impl.genericModifiers, lookup)) {
+                if (funcName in impl.methods && template.matchesImpl(instance, generics, impl.genericModifiers, lookup)) {
                     return true
                 }
             }
@@ -134,7 +135,7 @@ class BasicOxideLookup(
         for ((template, blocks) in allowedImplBlocks) {
             val generics = mutableMapOf<String, Type>()
             val impl = blocks.first { impl ->
-                funcName in impl.methods && template.matches(instance, generics, impl.genericModifiers, lookup)
+                funcName in impl.methods && template.matchesImpl(instance, generics, impl.genericModifiers, lookup)
             }
 
             val func = impl.methods[funcName]!!
@@ -205,8 +206,8 @@ class BasicOxideLookup(
         structName: SignatureString,
         args: List<Type>,
         lookup: IRLookup
-    ): FunctionCandidate {
-        val struct = getStruct(structName) ?: error("Cannot find struct `$structName`")
+    ): FunctionCandidate? {
+        val struct = getStruct(structName) ?: return null
         val fields = struct.getDefaultVariant(lookup)
         if (fields.size != args.size) error("Invalid arg count")
 
@@ -217,9 +218,11 @@ class BasicOxideLookup(
             .fields
             .toList()
             .zip(args)
-            .all { (field, tp) -> field.second.matches(tp, generics, struct.generics, lookup) }
+            .all { (field, tp) -> field.second.matchesSubset(tp, generics, struct.generics, lookup) }
 
-        if (!result) error("Types did not match")
+        if (!result) {
+            error("Types did not match")
+        }
 
         return SimpleFunctionCandidate(
             oxideArgs = args,
@@ -250,7 +253,7 @@ class BasicOxideLookup(
             .fields
             .toList()
             .zip(args)
-            .all { (field, tp) -> field.second.matches(tp, generics, struct.generics, lookup) }
+            .all { (field, tp) -> field.second.matchesImpl(tp, generics, struct.generics, lookup) }
 
         if (!result) error("Types did not match")
 
@@ -331,7 +334,7 @@ class BasicOxideLookup(
         for ((template, blocks) in allowedImplBlocks) {
             val generics = mutableMapOf<String, Type>()
             blocks.forEach { impl ->
-                if (funcName in impl.methods && template.matches(instance, generics, impl.genericModifiers, lookup)) {
+                if (funcName in impl.methods && template.matchesImpl(instance, generics, impl.genericModifiers, lookup)) {
                     val func = impl.methods[funcName]!! to generics
                     return func
                 }
