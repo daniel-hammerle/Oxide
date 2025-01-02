@@ -208,6 +208,7 @@ data class BasicJvmClassRepresentation(
     override suspend fun lookUpStaticField(name: String): Type? {
         if (associatedFields.contains(name)) return associatedFields.get(name)
         val field =
+
             clazz.fields.firstOrNull { ReflectModifiers.isStatic(it.modifiers) && it.name == name } ?: return null
         val fieldType = field.type.toType()
         associatedFields.set(name, fieldType)
