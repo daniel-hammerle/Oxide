@@ -6,6 +6,7 @@ import com.language.Function
 import com.language.compilation.metadata.LambdaAppender
 import com.language.compilation.metadata.LambdaAppenderImpl
 import com.language.compilation.modifiers.Modifier
+import com.language.compilation.modifiers.Modifiers
 import com.language.controlflow.MessageKind
 import com.language.lexer.MetaInfo
 import org.apache.commons.codec.binary.Base32
@@ -70,8 +71,17 @@ fun TemplatedType.populate(module: ModuleLookup): TemplatedType = when (this) {
 }
 
 fun compileStruct(struct: Struct, module: ModuleLookup): IRStruct {
-    val fields = struct.args.mapValues { it.value.populate(module) }
-    return IRStruct(fields, struct.generics, struct.modifiers, struct.info)
+    val appendedGenerics = mutableMapOf<String, GenericType>()
+    val fields = struct.args.mapValues {
+        if (it.value == null) {
+            val genericName = "__gen_"+it.key
+            appendedGenerics[genericName] = GenericType(Modifiers.Empty, emptyList())
+            TemplatedType.Generic(genericName)
+        } else {
+            it.value!!.populate(module)
+        }
+    }
+    return IRStruct(fields, struct.generics + appendedGenerics, struct.modifiers, struct.info)
 }
 
 fun compileImplBlock(implBlock: Impl, module: ModuleLookup, lambdaAppender: LambdaAppender): IRImpl {

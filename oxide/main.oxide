@@ -5,7 +5,7 @@ type Expression = IfExpression | str | bool | i32 | f64 | MathExpression | Compa
 type Statement = WhileLoop | ExprStatement
 
 struct WhileLoop {
-    cond Expression,
+    cond,
     body Expression
 }
 
@@ -30,7 +30,7 @@ struct MathExpression {
 }
 
 struct IfExpression {
-    cond Expression,
+    cond,
     body Expression,
     elseBody Expression | null
 }
@@ -39,13 +39,41 @@ func parseExpression(iter) {
 
 }
 
+struct A {
+    name,
+    age
+}
+
+struct B {
+    name
+}
+
+impl A {
+    func x(self) {
+        self.name + self.age
+    }
+}
+
+impl B {
+    func x(self) {
+        self.name
+    }
+}
+
+
 func main {
-    ifexpr = IfExpression(true, 23, "Hello World")
+    instance = A("Tom", 18)
+    if random.bool() {
+        instance = B("Tim")
+    }
+
+    io.println(instance.x())
+
     a(1, 0)
     a("Hello", 9)
-    add("Hello", " World!")
-    io.println(ifexpr.cond)
+    io.println(add("Hello", " World!"))
 }
+
 
 func add(a, b) {
     a + b

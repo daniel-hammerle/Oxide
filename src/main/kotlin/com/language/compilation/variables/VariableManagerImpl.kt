@@ -147,6 +147,18 @@ class VariableManagerImpl(
         for ((name, nativeProv, providers) in requiredAllocationChanges) {
             mergeAllocation(name, nativeProv, providers, changeInstructions)
         }
+
+        //here only type changes are required but not chaning the allocation
+        val requiredTypeChanges = commonVariables.filter {
+            it !in requiredAllocationChanges && !it.third.map { it.first.type(it.second.parent) }.allEqual()
+        }
+
+        for ((_, nativeProv, providers) in requiredTypeChanges) {
+            val commonType = providers
+                .map { (provider, variables) -> provider.type(variables.parent) }
+                .reduce { acc, type -> acc.join(type) }
+            nativeProv.put(TypedInstruction.Noop(commonType), parent)
+        }
     }
 
     private fun mergeAllocation(

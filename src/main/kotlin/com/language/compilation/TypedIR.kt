@@ -170,7 +170,8 @@ sealed interface TypedInstruction {
         val body: TypedInstruction,
         val elseBody: TypedInstruction?,
         val bodyAdjust: ScopeAdjustment,
-        val elseBodyAdjust: ScopeAdjustment
+        val elseBodyAdjust: ScopeAdjustment,
+        val varFrame: VarFrame
     ) : TypedInstruction {
         override val type: Type =when {
             body.type == Type.Nothing && (elseBody?.type ?: Type.Nothing) == Type.Nothing -> Type.Nothing
@@ -227,7 +228,7 @@ sealed interface TypedInstruction {
 
     data class LoadVar(val id: Int, override val type: Type) : TypedInstruction
 
-    data class DynamicPropertyAccess(val parent: TypedInstruction, val name: String, override val type: Type) : TypedInstruction
+    data class DynamicPropertyAccess(val parent: TypedInstruction, val name: String, override val type: Type, val physicalType: Type) : TypedInstruction
 
     data class DynamicPropertyAssignment(val parent: TypedInstruction, val name: String, val value: TypedInstruction) : TypedInstruction {
         override val type: Type = Type.Nothing

@@ -194,15 +194,18 @@ fun parseImport(tokens: Tokens): Set<SignatureString> {
     }
 }
 
-fun parseTypedArgs(tokens: Tokens, generics: Set<String>, closingSymbol: Token = Token.ClosingCurly): Map<String, TemplatedType> {
+fun parseTypedArgs(tokens: Tokens, generics: Set<String>, closingSymbol: Token = Token.ClosingCurly): Map<String, TemplatedType?> {
     if (tokens.visitNext() == closingSymbol) {
         tokens.next()
         return emptyMap()
     }
-    val entries = mutableMapOf<String, TemplatedType>()
+    val entries = mutableMapOf<String, TemplatedType?>()
     while(true) {
         val name = tokens.expect<Token.Identifier>().name
-        val type = parseType(tokens, generics)
+
+        val type = if (tokens.visitNext() != closingSymbol && tokens.visitNext() !is Token.Comma) {
+            parseType(tokens, generics)
+        } else null
         entries[name] = type
         when(tokens.next()) {
             closingSymbol -> return entries

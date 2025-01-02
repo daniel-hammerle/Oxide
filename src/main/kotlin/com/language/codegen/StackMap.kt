@@ -22,6 +22,7 @@ interface StackMap {
 
     fun changeVar(id: Int, type: Type)
 
+    fun adaptFrame(varFrame: VarFrame)
     fun generateFrame(mv: MethodVisitor)
     fun generateFrame(mv: MethodVisitor, varFrame: VarFrame)
     fun dup()
@@ -122,6 +123,10 @@ class StackMapImpl(
         mutableVarFrames.last().change(id, type)
     }
 
+    override fun adaptFrame(varFrame: VarFrame) {
+        mutableVarFrames.last().variables = varFrame.variables.toMutableList()
+    }
+
 
     //private val frameHistory: MutableList<StackFrame> = mutableListOf()
 
@@ -145,15 +150,13 @@ class StackMapImpl(
 
 
          */
-        try {
-            mv.visitFrame(
-                Opcodes.F_FULL,
-                variables.variables.size,
-                variables.variables.map { it?.toFrameSignature() ?: Opcodes.TOP }.toTypedArray(),
-                currentStackPtr,
-                stack.map { it?.toFrameSignature() }.toTypedArray()
-            )
-        }catch (_: Exception) {}
+        mv.visitFrame(
+            Opcodes.F_FULL,
+            variables.variables.size,
+            variables.variables.map { it?.toFrameSignature() ?: Opcodes.TOP }.toTypedArray(),
+            currentStackPtr,
+            stack.map { it?.toFrameSignature() }.toTypedArray()
+        )
 
     }
 

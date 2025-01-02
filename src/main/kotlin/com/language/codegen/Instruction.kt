@@ -58,7 +58,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                             Opcodes.GETFIELD,
                             type.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
                             instruction.name,
-                            instruction.type.toJVMDescriptor()
+                            instruction.physicalType.toJVMDescriptor()
                         )
                     }
                 }
@@ -67,11 +67,18 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                         Opcodes.GETFIELD,
                         instruction.parent.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
                         instruction.name,
-                        instruction.type.toJVMDescriptor()
+                        instruction.physicalType.toJVMDescriptor()
                     )
                 }
             }
             stackMap.pop() //pop instance
+            if (instruction.type != instruction.physicalType) {
+                if (instruction.type.isUnboxedPrimitive()) {
+                    unboxOrIgnore(mv, instruction.physicalType, instruction.type)
+                } else {
+                    mv.visitTypeInsn(Opcodes.CHECKCAST, instruction.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+                }
+            }
             stackMap.push(instruction.type)
         }
         is TypedInstruction.DynamicPropertyAssignment -> {
@@ -86,60 +93,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 instruction.value.type.toJVMDescriptor()
             )
         }
-        is TypedInstruction.If -> {
-            //eval condition
-            compileInstruction(mv, instruction.cond, stackMap, clean)
-
-            val betweenBodyAndElseBody = Label()
-            val afterElseBody = Label()
-            //if the condition is false goto else
-            mv.visitJumpInsn(Opcodes.IFEQ, betweenBodyAndElseBody)
-            //the ifeq removes the bool from the stack
-            stackMap.pop()
-            //stackMap.generateFrame(mv)
-            //body
-            compileInstruction(mv, instruction.body, stackMap, clean)
-            if (instruction.type != instruction.body.type) {
-                boxOrIgnore(mv, instruction.body.type)
-            }
-            compileScopeAdjustment(mv, instruction.bodyAdjust, stackMap, clean)
-
-            if(instruction.elseBody == null && instruction.body.type == Type.Nothing) {
-                mv.visitLabel(betweenBodyAndElseBody)
-                stackMap.generateFrame(mv)
-                return
-            }
-
-            //pop the result of the other branch for now
-            if (instruction.body.type != Type.Nothing && instruction.body.type != Type.Never) {
-                stackMap.pop()
-            }
-
-
-            if (instruction.body.type != Type.Never) {
-                //skip else body when body was executed
-                //if a type is never we don't need that
-                mv.visitJumpInsn(Opcodes.GOTO, afterElseBody)
-            }
-
-            stackMap.generateFrame(mv)
-            //here is the between body and else body label
-            mv.visitLabel(betweenBodyAndElseBody)
-            //else body
-            compileInstruction(mv, instruction.elseBody ?: TypedInstruction.Null, stackMap, clean)
-            if (instruction.type != instruction.elseBody?.type) {
-                 boxOrIgnore(mv, instruction.elseBody?.type ?: Type.Null)
-            }
-            compileScopeAdjustment(mv, instruction.elseBodyAdjust, stackMap, clean)
-            //label after else body
-            mv.visitLabel(afterElseBody)
-
-            stackMap.pop()
-            stackMap.push(instruction.type)
-
-
-            stackMap.generateFrame(mv)
-        }
+        is TypedInstruction.If -> compileIf(mv, instruction, stackMap, clean)
         is TypedInstruction.LoadConstBoolean -> {
             when(instruction.value) {
                 true -> mv.visitInsn(Opcodes.ICONST_1)
@@ -947,6 +901,74 @@ inline fun compileForLoop(
     compileScopeAdjustment(mv, instruction.postLoopAdjustments, stackMap, clean)
 }
 
+fun compileIf(
+    mv: MethodVisitor,
+    instruction: TypedInstruction.If,
+    stackMap: StackMap,
+    clean: CleanupStack,
+    nested: Boolean = false
+) {
+    //eval condition
+    compileInstruction(mv, instruction.cond, stackMap, clean)
+
+    val betweenBodyAndElseBody = Label()
+    val afterElseBody = Label()
+    //if the condition is false goto else
+    mv.visitJumpInsn(Opcodes.IFEQ, betweenBodyAndElseBody)
+    //the ifeq removes the bool from the stack
+    stackMap.pop()
+    //body
+    compileInstruction(mv, instruction.body, stackMap, clean)
+    if (instruction.type != instruction.body.type) {
+        boxOrIgnore(mv, instruction.body.type)
+    }
+    compileScopeAdjustment(mv, instruction.bodyAdjust, stackMap, clean)
+
+    //pop the result of the other branch for now
+    if (instruction.body.type != Type.Nothing && instruction.body.type != Type.Never) {
+        stackMap.pop()
+    }
+
+    if (instruction.elseBody == null && instruction.body.type == Type.Nothing) {
+        mv.visitLabel(betweenBodyAndElseBody)
+        stackMap.adaptFrame(instruction.varFrame)
+
+        stackMap.generateFrame(mv)
+        return
+    }
+
+    if (instruction.body.type != Type.Never) {
+        //skip else body when body was executed
+        //if a type is never we don't need that
+        mv.visitJumpInsn(Opcodes.GOTO, afterElseBody)
+    }
+
+    if (instruction.elseBody != null)
+        stackMap.generateFrame(mv)
+
+    mv.visitLabel(betweenBodyAndElseBody)
+    //else body
+    if (instruction.elseBody is TypedInstruction.If) {
+        compileIf(mv, instruction.elseBody, stackMap, clean, nested = true)
+    } else {
+        compileInstruction(mv, instruction.elseBody ?: TypedInstruction.Null, stackMap, clean)
+    }
+    if (instruction.type != instruction.elseBody?.type) {
+        boxOrIgnore(mv, instruction.elseBody?.type ?: Type.Null)
+    }
+    compileScopeAdjustment(mv, instruction.elseBodyAdjust, stackMap, clean)
+    //label after else body
+    mv.visitLabel(afterElseBody)
+
+    if (instruction.elseBody?.type != Type.Nothing && instruction.elseBody?.type != Type.Never) {
+        stackMap.pop()
+    }
+    stackMap.push(instruction.type)
+
+    stackMap.adaptFrame(instruction.varFrame)
+    if (!nested)
+    stackMap.generateFrame(mv)
+}
 
 fun compileMatch(
     mv: MethodVisitor,
@@ -1189,13 +1211,8 @@ inline fun MethodVisitor.dynamicDispatch(types: Iterable<Type>, elseType: Type, 
     //introduce an else-case that literally never happens since we know its exhaustive just to keep the jvm happy
     visitInsn(Opcodes.POP)
     stackMap.pop()
-    when(elseType) {
-        is Type.BoolT, Type.IntT -> visitInsn(Opcodes.ICONST_0)
-        Type.DoubleT -> visitLdcInsn(0.0)
-        is Type.BasicJvmType, Type.Null, is Type.Union, is Type.JvmArray, Type.Never, is Type.Lambda -> visitInsn(Opcodes.ACONST_NULL)
-        Type.Nothing -> {}
-    }
 
+    neverAssertException(this)
     stackMap.push(elseType)
     visitLabel(end)
     stackMap.generateFrame(this)
@@ -1452,7 +1469,7 @@ fun returnInstruction(type: Type) = when(type) {
 fun neverAssertException(mv: MethodVisitor) {
     mv.visitTypeInsn(Opcodes.NEW, "java/lang/IllegalStateException")
     mv.visitInsn(Opcodes.DUP)
-    mv.visitLdcInsn("@Contract(fail) broken")
+    mv.visitLdcInsn("Unreachable case reached! This either results from a broken contract or a compiler error")
     mv.visitMethodInsn(
         Opcodes.INVOKESPECIAL,
         "java/lang/IllegalStateException",

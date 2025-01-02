@@ -122,7 +122,7 @@ suspend fun TemplatedType.matchesImpl(
             if (type !is Type.JvmType || !(type.signature == signatureString || lookup.typeHasInterface(type, signatureString))) {
                 return false
             }
-            type.genericTypes.entries.zip(this.generics).forEach { (entry, template) ->
+            (this.generics).zip(type.genericTypes.entries).forEach { (template, entry) ->
                 when(val v = entry.value) {
                     is Type.Broad.Unset -> {
                         println("Unset type ($type cannot match $this)")

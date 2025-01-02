@@ -93,7 +93,7 @@ class CachedJvmLookup(
     ): Boolean = getClass(instance.signature).methodHasGenericReturnType(functionName, argTypes, lookup)
 
     override suspend fun typeHasInterface(type: Type.JvmType, interfaceType: SignatureString): Boolean {
-        return getClass(type.signature).hasInterface(interfaceType)
+        return runCatching { getClass(type.signature) }.getOrNull()?.hasInterface(interfaceType) == true
     }
 
     override suspend fun getModifiers(className: SignatureString): Modifiers {

@@ -103,6 +103,7 @@ interface IRLookup {
      * When called with primitives it will throw
      */
     suspend fun lookUpFieldType(instance: Type, fieldName: String): Type
+    suspend fun lookUpPhysicalFieldType(instance: Type, fieldName: String): Type
 
     /**
      * Returns the type of the static field or throw in case it doesn't exist
@@ -127,5 +128,5 @@ interface IRLookup {
 
     suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<Type>, history: History): FunctionCandidate
 
-    suspend fun TemplatedType.populate(generics: Map<String, Type>): Type
+    suspend fun TemplatedType.populate(generics: Map<String, Type>, box: Boolean = false): Type
 }

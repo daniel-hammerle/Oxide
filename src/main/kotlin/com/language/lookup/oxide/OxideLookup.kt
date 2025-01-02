@@ -36,7 +36,7 @@ interface OxideLookup {
         args: List<Type>,
         lookup: IRLookup,
         history: History
-    ): FunctionCandidate
+    ): FunctionCandidate?
 
     suspend fun lookupExtensionMethodUnknown(
         instance: Type,
@@ -63,6 +63,7 @@ interface OxideLookup {
     ): Type.Broad
 
     suspend fun lookupMemberField(instance: Type, name: String, lookup: IRLookup): Type
+    suspend fun lookupPhysicalField(instance: Type, name: String, lookup: IRLookup): Type
 
     suspend fun lookupLambdaInit(signatureString: SignatureString): FunctionCandidate
     suspend fun lookupLambdaInvoke(

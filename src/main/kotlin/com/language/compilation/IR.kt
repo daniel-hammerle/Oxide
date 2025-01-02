@@ -493,7 +493,8 @@ sealed class Instruction {
                 body,
                 elseBody,
                 bodyAdjust,
-                elseBodyAdjust
+                elseBodyAdjust,
+                variables.toVarFrame()
             )
         }
 
@@ -997,7 +998,8 @@ sealed class Instruction {
             return TypedInstruction.DynamicPropertyAccess(
                 parent,
                 name,
-                type = returnType
+                type = returnType,
+                physicalType = lookup.lookUpPhysicalFieldType(parent.type, name)
             )
         }
 

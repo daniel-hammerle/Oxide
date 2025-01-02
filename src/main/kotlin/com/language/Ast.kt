@@ -250,7 +250,7 @@ data class Function(
 ) : ModuleChild
 
 data class Struct(
-    val args: Map<String, TemplatedType>,
+    val args: Map<String, TemplatedType?>,
     val generics: Map<String, GenericType>,
     override val modifiers: Modifiers,
     override val info: MetaInfo

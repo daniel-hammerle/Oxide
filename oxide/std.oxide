@@ -1,5 +1,9 @@
 use std::io
 
+error struct ExhaustionError {
+    message str
+}
+
 struct Box<T> {
     value T
 }

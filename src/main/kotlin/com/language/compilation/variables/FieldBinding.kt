@@ -13,6 +13,7 @@ class FieldBinding(
         return TypedInstruction.DynamicPropertyAccess(
             instance,
             name,
+            type,
             type
         )
     }

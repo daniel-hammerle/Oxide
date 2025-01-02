@@ -7,6 +7,7 @@ import com.language.compilation.templatedType.matchesImpl
 import com.language.compilation.templatedType.matchesSubset
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.rep.asLazyTypeMap
+import com.language.lookup.jvm.rep.defaultVariant
 import org.objectweb.asm.Opcodes
 
 class BasicOxideLookup(
@@ -105,8 +106,8 @@ class BasicOxideLookup(
         funcName: String,
         args: List<Type>, lookup: IRLookup,
         history: History
-    ): FunctionCandidate {
-        val (func, generics, impl) = findExtensionMethod(instance, funcName, lookup)
+    ): FunctionCandidate? {
+        val (func, generics, impl) = findExtensionMethod(instance, funcName, lookup) ?: return null
 
         val returnType = runCatching {
             (func as BasicIRFunction).inferTypes(
@@ -131,17 +132,17 @@ class BasicOxideLookup(
 
     }
 
-    private suspend inline fun findExtensionMethod(instance: Type, funcName: String, lookup: IRLookup): Triple<IRFunction, Map<String, Type>, IRImpl> {
+    private suspend inline fun findExtensionMethod(instance: Type, funcName: String, lookup: IRLookup): Triple<IRFunction, Map<String, Type>, IRImpl>? {
         for ((template, blocks) in allowedImplBlocks) {
             val generics = mutableMapOf<String, Type>()
-            val impl = blocks.first { impl ->
+            val impl = blocks.firstOrNull { impl ->
                 funcName in impl.methods && template.matchesImpl(instance, generics, impl.genericModifiers, lookup)
-            }
+            } ?: continue
 
             val func = impl.methods[funcName]!!
             return Triple(func, generics, impl)
         }
-        error("No extension method found")
+        return null
     }
 
 
@@ -152,7 +153,7 @@ class BasicOxideLookup(
         lookup: IRLookup,
         history: History
     ): Type.Broad {
-        val (func, generics) = findExtensionMethod(instance, funcName, lookup)
+        val (func, generics) = findExtensionMethod(instance, funcName, lookup)!!
 
         return (func as BasicIRFunction).inferUnknown(args, lookup, generics, history)
     }
@@ -265,7 +266,22 @@ class BasicOxideLookup(
             is Type.JvmType -> {
                 val type = getStruct(instance.signature)?.fields?.get(name)
                 val transformedGenerics = instance.genericTypes.asLazyTypeMap()
-                with(lookup) { type?.populate(transformedGenerics) } ?: error("No field $instance.$name")
+                with(lookup) { type?.populate(transformedGenerics, true) } ?: error("No field $instance.$name")
+            }
+
+            else -> error("$instance does not have the field `$name`")
+        }
+    }
+
+    override suspend fun lookupPhysicalField(
+        instance: Type,
+        name: String,
+        lookup: IRLookup
+    ): Type {
+        return when (instance) {
+            is Type.JvmType -> {
+                val type = getStruct(instance.signature)?.fields?.get(name)
+                return type?.defaultVariant()  ?: error("No field $instance.$name")
             }
 
             else -> error("$instance does not have the field `$name`")

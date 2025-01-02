@@ -82,8 +82,7 @@ class IRModuleLookup(
         argTypes: List<Type>,
         history: History
     ): FunctionCandidate {
-        val candidate =
-            runCatching { oxideLookup.lookupExtensionMethod(instance, funcName, argTypes, this, history) }.getOrNull()
+        val candidate = oxideLookup.lookupExtensionMethod(instance, funcName, argTypes, this, history)
         if (candidate != null) return candidate
         return when {
             instance is Type.Union -> {
@@ -255,6 +254,17 @@ class IRModuleLookup(
         } ?: error("No field $instance.$fieldName")
     }
 
+    override suspend fun lookUpPhysicalFieldType(
+        instance: Type,
+        fieldName: String
+    ): Type {
+        runCatching { oxideLookup.lookupPhysicalField(instance, fieldName, this) }.map { return it }
+        return when (instance) {
+            is Type.JvmType -> jvmLookup.lookUpField(instance, fieldName, this)
+            else -> null
+        } ?: error("No field $instance.$fieldName")
+    }
+
     override suspend fun lookUpFieldType(modName: SignatureString, fieldName: String): Type {
         //only jvm classes can have static fields:
         return jvmLookup.lookUpAssociatedField(modName, fieldName) ?: error("No static field $modName.$fieldName")
@@ -304,19 +314,19 @@ class IRModuleLookup(
             ?: jvmLookup.lookUpGenericsDefinitionOrder(structSig)
     }
 
-    override suspend fun TemplatedType.populate(generics: Map<String, Type>): Type = when (this) {
+    override suspend fun TemplatedType.populate(generics: Map<String, Type>, box: Boolean): Type = when (this) {
         is TemplatedType.Array -> Type.Array(Type.Broad.Known(itemType.populate(generics)))
         is TemplatedType.Complex -> {
             val availableGenerics = getStructGenericNames(signatureString)
             val entries = availableGenerics.toList().mapIndexed { index, s ->
-                s to Type.Broad.Known(this.generics[index].populate(generics))
+                s to (this.generics.getOrNull(index)?.populate(generics)?.let { Type.Broad.Known(it) } ?: Type.Broad.Unset)
             }.toMap()
 
             Type.BasicJvmType(signatureString, entries)
         }
 
         TemplatedType.Nothing -> Type.Nothing
-        is TemplatedType.Generic -> generics[name]!!
+        is TemplatedType.Generic -> generics[name]!!.let { if (box) it.asBoxed() else it }
         TemplatedType.IntT -> Type.IntT
         TemplatedType.DoubleT -> Type.DoubleT
         TemplatedType.BoolT -> Type.BoolUnknown
