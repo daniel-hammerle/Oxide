@@ -46,7 +46,8 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             }
             stackMap.push(instruction.type)
             mv.visitLabel(instruction.endLabel)
-            stackMap.generateFrame(mv)
+            if (!instruction.body.pushesStackFrame())
+                stackMap.generateFrame(mv)
         }
         is TypedInstruction.DynamicPropertyAccess -> {
             //load instance onto the stack
@@ -268,7 +269,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             val end = Label()
             mv.visitLabel(top)
             //compile condition
-            stackMap.generateFrame(mv)
+            runCatching { stackMap.generateFrame(mv) }
             if (!instruction.infinite) {
                 compileInstruction(mv, instruction.cond, stackMap, clean)
                 //if the condition is false (equal to 0), jump to end
@@ -667,6 +668,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             compileForLoop(mv, instruction, stackMap, clean) {
                 when (instruction.body.type) {
                     Type.Nothing -> {}
+                    Type.Never -> {}
                     else -> {
                         stackMap.pop()
                         mv.visitInsn(Opcodes.POP)
@@ -943,8 +945,7 @@ fun compileIf(
         mv.visitJumpInsn(Opcodes.GOTO, afterElseBody)
     }
 
-    if (instruction.elseBody != null)
-        stackMap.generateFrame(mv)
+    stackMap.generateFrame(mv)
 
     mv.visitLabel(betweenBodyAndElseBody)
     //else body

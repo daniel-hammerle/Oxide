@@ -1,99 +1,59 @@
-use std::{random, io}
 
-type Expression = IfExpression | str | bool | i32 | f64 | MathExpression | ComparisonExpression | BlockExpression
+use java::{lang::System, util::{Scanner, Random}}
+inline func print(value) System.out.print(value)
+inline func println(value) System.out.println(value)
 
-type Statement = WhileLoop | ExprStatement
 
-struct WhileLoop {
-    cond,
-    body Expression
+func randBool {
+    random = keep { Random() }
+    random.nextBoolean()
 }
 
-struct ExprStatement {
-    expr Expression
+func read {
+    scanner = keep { Scanner(System.in) }
+    scanner.nextLine()
 }
 
-struct BlockExpression {
-    statements [Statement]
-}
 
-struct ComparisonExpression {
-    fist Expression,
-    second Expression,
-    op str
-}
-
-struct MathExpression {
-    fist Expression,
-    second Expression,
-    op str
-}
-
-struct IfExpression {
-    cond,
-    body Expression,
-    elseBody Expression | null
-}
-
-func parseExpression(iter) {
-
-}
-
-struct A {
-    name,
-    age
-}
-
-struct B {
-    name
-}
-
-impl A {
-    func x(self) {
-        self.name + self.age
+impl<T> T | null {
+    inline func unwrap(self, message) {
+        match self {
+            null -> panic(message)
+            T -> self
+        }
     }
 }
-
-impl B {
-    func x(self) {
-        self.name
-    }
-}
-
 
 func main {
-    instance = A("Tom", 18)
-    if random.bool() {
-        instance = B("Tim")
-    }
-
-    io.println(instance.x())
-
-    a(1, 0)
-    a("Hello", 9)
-    io.println(add("Hello", " World!"))
+    result = example().unwrap("expected value (panicing)")
+    print(result.toString())
 }
 
+struct A
 
-func add(a, b) {
-    a + b
-}
-
-func a(i, j) {
-    io.println(i)
-    if random.bool() {
-        32
-    } else if random.bool() {
-        a(b(i + 1) + j,  i+ j)
-    } else {
-        b(32)
+impl A {
+    func toString(self) {
+        "A"
     }
 }
 
-func b(i) {
-    if random.bool() {
-        b(i+45)
+func panic(message) {
+    println(message)
+    while true {}
+}
+
+func magic(value) {
+    if randBool() {
+        value
     } else {
-        i + i
+        value
+    }
+}
+
+func example {
+    if magic(false) {
+        A()
+    } else {
+        null
     }
 }

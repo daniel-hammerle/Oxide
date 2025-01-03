@@ -377,13 +377,12 @@ class Samples {
 
     @Test
     fun testNeverTypesInMatchStatements()  {
-        val code = MinimalTestingLib + """
-
-        use java::{lang::System, util::Scanner}
+        val code = """
+        
+        use java::{lang::System, util::{Scanner, Random}}
         inline func print(value) System.out.print(value)
         inline func println(value) System.out.println(value)
         
-        use java::util::Random
         
         func randBool {
             random = keep { Random() }
@@ -394,7 +393,7 @@ class Samples {
             scanner = keep { Scanner(System.in) }
             scanner.nextLine()
         }
-       
+        
         
         impl<T> T | null {
             inline func unwrap(self, message) {
@@ -416,6 +415,11 @@ class Samples {
             func toString(self) {
                 "A"
             }
+        }
+        
+        func panic(message) {
+            println(message)
+            while true {}
         }
         
         func magic(value) {

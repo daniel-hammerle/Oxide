@@ -166,6 +166,9 @@ class ClassParser(
             val tp = SignatureString.fromJVMNotation(type)
 
             var i = exceptions.indexOfFirst { it.first == start }
+            if (i < 0) {
+                return
+            }
             while(exceptions[i].first != end) {
                 exceptions[i].second.remove(tp) //remove the type form any mentions within the try block
                 i++
@@ -294,7 +297,7 @@ private class MethodSignatureVisitor(val clazzName: SignatureString, val funcNam
         }
 
         override fun visitClassType(name: String) {
-            callback(TemplatedType.Complex(SignatureString(name.replace('/', '.')), emptyList()))
+            callback(TemplatedType.Complex(SignatureString.fromDotNotation(name.replace('/', '.')), emptyList()))
         }
     }
 

@@ -55,9 +55,9 @@ class BasicOxideLookup(
         args: List<Type>,
         lookup: IRLookup,
         history: History
-    ): FunctionCandidate {
-        val mod = modules[module] ?: error("No Module found with name `$module`")
-        val func = mod.functions[funcName] ?: error("No Function `$funcName` on module `$module`")
+    ): FunctionCandidate? {
+        val mod = modules[module] ?: return null
+        val func = mod.functions[funcName] ?: return null
         val returnType =
             (func as BasicIRFunction).inferTypes(
                 args,

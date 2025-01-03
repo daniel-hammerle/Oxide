@@ -1471,6 +1471,11 @@ data class PatternMatchingContextImpl(
 }
 
 fun TypedInstruction.isConst() = this is TypedInstruction.Const
+fun TypedInstruction.pushesStackFrame(): Boolean = when(this) {
+    is TypedInstruction.Match, is TypedInstruction.While, is TypedInstruction.InlineBody -> true
+    is TypedInstruction.MultiInstructions -> instructions.lastOrNull()?.pushesStackFrame() == true
+    else -> false
+}
 fun TypedConstructingArgument.isConst() = instruction.isConst()
 
 data class ForLoop(
@@ -2200,7 +2205,7 @@ fun Type.asBoxed(): Type = when (this) {
 @JvmInline
 value class SignatureString(val value: String) {
     init {
-        val pattern = """^[a-zA-Z0-9]+(::[a-zA-Z0-9]+)*$""".toRegex()
+        val pattern = """^[a-zA-Z0-9$\\_]+(::[a-zA-Z0-9$\\_]+)*$""".toRegex()
         if (!pattern.matches(value)) error("Invalid Signature string `$value`")
     }
 

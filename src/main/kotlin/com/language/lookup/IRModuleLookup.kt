@@ -65,9 +65,7 @@ class IRModuleLookup(
         generics: Map<String, Type.Broad>,
     ): FunctionCandidate {
         println("Static candidate $modName.$funcName($argTypes)")
-        try {
-            return oxideLookup.lookupFunction(modName, funcName, argTypes, this, history)
-        } catch (e: Exception) {e.printStackTrace()}
+        oxideLookup.lookupFunction(modName, funcName, argTypes, this, history)?.let { return it }
         try {
             return oxideLookup.lookupAssociatedExtensionFunction(modName, funcName, argTypes, this, history)
         } catch (_: Exception) { }

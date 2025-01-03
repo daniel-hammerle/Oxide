@@ -20,7 +20,7 @@ interface OxideLookup {
         args: List<Type>,
         lookup: IRLookup,
         history: History
-    ): FunctionCandidate
+    ): FunctionCandidate?
 
     suspend fun lookupFunctionUnknown(
         module: SignatureString,
