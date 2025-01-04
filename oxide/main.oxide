@@ -27,6 +27,7 @@ impl<T> T | null {
 func main {
     result = example().unwrap("expected value (panicing)")
     print(result.toString())
+    todo.main()
 }
 
 struct A
@@ -51,7 +52,7 @@ func magic(value) {
 }
 
 func example {
-    if magic(false) {
+    if magic(true) {
         A()
     } else {
         null
