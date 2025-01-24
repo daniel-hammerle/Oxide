@@ -70,6 +70,10 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                         instruction.name,
                         instruction.physicalType.toJVMDescriptor()
                     )
+                    if (instruction.physicalType != instruction.type) {
+                        mv.visitTypeInsn(Opcodes.CHECKCAST, instruction.type.asBoxed().toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+                        unboxOrIgnore(mv, instruction.type.asBoxed(), instruction.type)
+                    }
                 }
             }
             stackMap.pop() //pop instance
@@ -87,11 +91,17 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             compileInstruction(mv, instruction.parent, stackMap, clean)
             compileInstruction(mv, instruction.value, stackMap, clean)
 
+            if (instruction.value.type != instruction.physicalType) {
+                boxOrIgnore(mv, instruction.value.type)
+                unboxOrIgnore(mv, instruction.value.type, instruction.physicalType)
+            }
+
+            stackMap.pop(2)
             mv.visitFieldInsn(
                 Opcodes.PUTFIELD,
                 instruction.parent.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
                 instruction.name,
-                instruction.value.type.toJVMDescriptor()
+                instruction.physicalType.toJVMDescriptor()
             )
         }
         is TypedInstruction.If -> compileIf(mv, instruction, stackMap, clean)
@@ -219,9 +229,9 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         is TypedInstruction.StaticCall -> {
             //load args
             mv.loadAndBox(instruction.candidate, instruction.args, stackMap, clean)
-            stackMap.pop(instruction.candidate.oxideArgs.size)
 
             instruction.candidate.generateCall(mv, stackMap)
+            stackMap.pop(instruction.candidate.oxideArgs.size)
             if (instruction.candidate.oxideReturnType == Type.Never) {
                 neverAssertException(mv)
             }
@@ -231,9 +241,9 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         is TypedInstruction.ModuleCall -> {
             //load args
             mv.loadAndBox(instruction.candidate, instruction.args, stackMap, clean)
-            stackMap.pop(instruction.candidate.oxideArgs.size)
 
             instruction.candidate.generateCall(mv, stackMap)
+            stackMap.pop(instruction.candidate.oxideArgs.size)
 
             if (instruction.candidate.oxideReturnType == Type.Never) {
                 neverAssertException(mv)
@@ -312,11 +322,6 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             instruction.candidate.generateCall(mv, stackMap)
             stackMap.pop(instruction.args.size)
             stackMap.push(instruction.candidate.oxideReturnType)
-        }
-
-        is TypedInstruction.Dup -> {
-            mv.visitInsn(Opcodes.DUP)
-            stackMap.dup()
         }
         is TypedInstruction.Match -> compileMatch(mv, instruction, stackMap, clean)
         is TypedInstruction.LoadList -> {
@@ -816,29 +821,6 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             stackMap.generateFrame(mv)
 
         }
-
-        is TypedInstruction.Catch -> {
-            val tryStart = Label()
-            val tryEnd = Label()
-            val catch = Label()
-            val end = Label()
-
-            mv.visitLabel(tryStart)
-            compileInstruction(mv, instruction.parent, stackMap, clean)
-            stackMap.pop() //doesn't corespond to a real instruction just wipes
-            // it from the compiler internal stackmap record
-            mv.visitLabel(tryEnd)
-            mv.visitJumpInsn(Opcodes.GOTO, end)
-
-            mv.visitLabel(catch)
-            stackMap.generateFrame(mv)
-
-            for(type in instruction.errorTypes) {
-                mv.visitTryCatchBlock(tryStart, tryEnd, catch, type.toJvmNotation())
-            }
-
-            stackMap.push(instruction.type) //push the return type of the given instruction onto the stack
-        }
     }
 }
 
@@ -1076,7 +1058,7 @@ fun compilePatternDestructuring(
     compileInstruction(mv, pattern.loadItem, stackMap, clean)
     mv.visitInsn(Opcodes.DUP)
     stackMap.dup()
-    mv.visitTypeInsn(Opcodes.INSTANCEOF, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+    mv.visitTypeInsn(Opcodes.INSTANCEOF, pattern.forge.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
     stackMap.pop()
 
     stackMap.push(Type.BoolUnknown)
@@ -1092,10 +1074,10 @@ fun compilePatternDestructuring(
     //IF SUCCESS
     mv.visitLabel(success)
     stackMap.generateFrame(mv)
-    mv.visitTypeInsn(Opcodes.CHECKCAST, pattern.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+    mv.visitTypeInsn(Opcodes.CHECKCAST, pattern.forge.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
     stackMap.pop()
-    stackMap.push(pattern.type)
-    compileInstruction(mv, TypedInstruction.StoreVar(pattern.castStoreId, TypedInstruction.Noop(pattern.type)), stackMap, clean)
+    stackMap.push(pattern.forge.type)
+    compileInstruction(mv, TypedInstruction.StoreVar(pattern.castStoreId, TypedInstruction.Noop(pattern.forge.type)), stackMap, clean)
 
     //compile all the desturcturing patterns
     pattern.patterns.forEach {

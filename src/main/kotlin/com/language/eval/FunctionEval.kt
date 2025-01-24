@@ -44,13 +44,10 @@ object NoopVariableMapping: VariableMapping {
         TODO("Not yet implemented")
     }
 
-    override fun changeVar(id: Int, value: TypedInstruction): Pair<Int?, TypedInstruction> {
+    override fun changeVar(id: Int, value: TypedInstruction): Int? {
         TODO("Not yet implemented")
     }
 
-    override fun loadVar(id: Int): TypedInstruction {
-        TODO("Not yet implemented")
-    }
 
     override fun getTempVar(type: Type): TempVariable {
         TODO("Not yet implemented")

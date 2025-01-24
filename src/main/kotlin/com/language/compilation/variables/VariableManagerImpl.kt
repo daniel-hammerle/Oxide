@@ -2,7 +2,11 @@ package com.language.compilation.variables
 
 import com.language.codegen.VarFrame
 import com.language.compilation.*
+import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.join
+import com.language.compilation.tracking.mapValuesToMutable
 import com.language.eval.NoopVariableMapping
+import java.util.UUID
 
 
 class VariableManagerImpl(
@@ -11,14 +15,13 @@ class VariableManagerImpl(
 ) : VariableManager {
 
     companion object {
-        fun fromVariables(variables: Map<String, Type>, reserveThis: Boolean = false): VariableManager {
-            val parent = VariableMappingImpl.empty()
-            if (reserveThis) parent.new(Type.Object)
-            val instance = VariableManagerImpl(parent)
-            for ((name, type) in variables) {
-                instance.change(name, type)
+        fun fromForges(items: List<Pair<String, InstanceForge>>): VariableManager {
+            val mapping = VariableMappingImpl.empty()
+            val variables: MutableMap<String, VariableProvider> = mutableMapOf()
+            for ((name, forge) in items) {
+                variables[name] = VariableBinding(mapping.new(forge.type), forge)
             }
-            return instance
+            return VariableManagerImpl(mapping, variables)
         }
     }
 
@@ -37,23 +40,14 @@ class VariableManagerImpl(
         return ins
     }
 
-    override fun change(name: String, type: Type): Int {
-        if (name in variables) {
-            deleteVar(name)
-        }
-        val binding = VariableBinding.ofType(type, parent)
-        variables[name] = binding
-        return binding.id
-    }
-
     override fun toVarFrame(): VarFrame = parent.toVarFrame()
 
     override fun getType(name: String): Type = variables[name]?.type(parent) ?: error("No variable found with name `$name`")
-    override fun mapping(): VariableMapping = parent
-
-    override fun genericChangeRequest(name: String, genericName: String, type: Type) {
-        variables[name]?.genericChangeRequest(parent, genericName, type) ?: error("No variable found with name `$name`")
+    override fun getForge(name: String): InstanceForge {
+        return variables[name]?.forge ?: error("No variable found with name `$name`")
     }
+
+    override fun mapping(): VariableMapping = parent
 
     override fun loopMerge(postLoop: VariableManager, parentScope: VariableManager?): ScopeAdjustment {
         val previousAllocations = variables
@@ -81,8 +75,8 @@ class VariableManagerImpl(
                 loadVar(name), // get the const-expr value
                 newId
             )
-            putVar(name, VariableBinding(newId))
-            parentScope?.putVar(name, VariableBinding(newId))
+            putVar(name, VariableBinding(newId, getForge(name)))
+            parentScope?.putVar(name, VariableBinding(newId, getForge(name)))
 
             changeInstructions.add(storeIns)
         }
@@ -90,14 +84,21 @@ class VariableManagerImpl(
         return ScopeAdjustment(changeInstructions)
     }
 
+    data class MergeVariable(
+        val name: String,
+        val nativeProv: VariableProvider,
+        val providers: List<VariableProvider>,
+        val commonForge: InstanceForge
+    )
+
     override fun merge(branches: List<VariableManager>): List<ScopeAdjustment> {
         val commonVariables = variables.mapNotNull { (name, provider) ->
-            val branchesProviders = branches.mapNotNull { it.variables[name]?.let { a -> a to it }  }
+            val branchesProviders = branches.mapNotNull { it.variables[name]  }
             when(branchesProviders.size) {
-                branches.size -> Triple(name, provider, branchesProviders)
+                branches.size -> MergeVariable(name, provider, branchesProviders, provider.forge.mergeMut(branchesProviders.map { it.forge }))
                 else -> null
             }
-        }.filter { hasVar(it.first) }
+        }.filter { hasVar(it.name) }
 
         val changeInstructions = branches.map { mutableListOf<ScopeAdjustInstruction>() }
 
@@ -109,24 +110,21 @@ class VariableManagerImpl(
 
     private fun mergeTypeConversions(
         changeInstructions: List<MutableList<ScopeAdjustInstruction>>,
-        commonVariables: List<Triple<String, VariableProvider, List<Pair<VariableProvider, VariableManager>>>>,
+        commonVariables: List<MergeVariable>,
     ) {
-        for ((name, nativeProv, providers) in commonVariables) {
-            val commonType = providers
-                .map { (provider, variables) -> provider.type(variables.parent) }
-                .reduce { acc, type -> acc.join(type) }
+        for ((_, _, providers, forge) in commonVariables) {
             for ((index, provider) in providers.withIndex()) {
-                val id = provider.first.physicalId ?: continue
+                val id = provider.physicalId ?: continue
 
                 //gracefully ignore type conversions on values that are not allocated
                 //(since they don't have a type anyway)
 
-                val provType = provider.first.type(provider.second.parent)
-                if (commonType is Type.Union) {
+                val provType = provider.forge.type
+                if (forge.type is Type.Union) {
                     changeInstructions[index].add(ScopeAdjustInstruction.Box(id, provType))
                 }
 
-                if (commonType.isUnboxedPrimitive() && !provType.isUnboxedPrimitive()) {
+                if (forge.type.isUnboxedPrimitive() && !provType.isUnboxedPrimitive()) {
                     changeInstructions[index].add(ScopeAdjustInstruction.Unbox(id, provType))
                 }
             }
@@ -135,43 +133,29 @@ class VariableManagerImpl(
 
     private fun mergeAllocations(
         changeInstructions: List<MutableList<ScopeAdjustInstruction>>,
-        commonVariables: List<Triple<String, VariableProvider, List<Pair<VariableProvider, VariableManager>>>>
+        commonVariables: List<MergeVariable>
     ) {
         val requiredAllocationChanges = commonVariables.filter { (_, nativeProv, providers) ->
             //if the variable was allocated before branching, then the ids would be the same.
             //if both haven't been allocated, they would also be the same.
             //and if one of the branches is allocated, then there is a change to be made.
-            providers.any { (prov, _) -> prov.physicalId != nativeProv.physicalId }
+            providers.any { prov -> prov.physicalId != nativeProv.physicalId }
         }
 
-        for ((name, nativeProv, providers) in requiredAllocationChanges) {
-            mergeAllocation(name, nativeProv, providers, changeInstructions)
+        for ((name, nativeProv, providers, commonForge) in requiredAllocationChanges) {
+            mergeAllocation(name, nativeProv, providers, changeInstructions, commonForge)
         }
 
-        //here only type changes are required but not chaning the allocation
-        val requiredTypeChanges = commonVariables.filter {
-            it !in requiredAllocationChanges && !it.third.map { it.first.type(it.second.parent) }.allEqual()
-        }
-
-        for ((_, nativeProv, providers) in requiredTypeChanges) {
-            val commonType = providers
-                .map { (provider, variables) -> provider.type(variables.parent) }
-                .reduce { acc, type -> acc.join(type) }
-            nativeProv.put(TypedInstruction.Noop(commonType), parent)
-        }
     }
 
     private fun mergeAllocation(
         name: String,
         nativeProv: VariableProvider,
-        providers: List<Pair<VariableProvider, VariableManager>>,
-        changeInstructions: List<MutableList<ScopeAdjustInstruction>>
+        providers: List<VariableProvider>,
+        changeInstructions: List<MutableList<ScopeAdjustInstruction>>,
+        commonForge: InstanceForge
     ) {
-        val ids = providers.map { (provider, _) -> provider.physicalId }
-
-        val commonType = providers
-            .map { (provider, variables) -> provider.type(variables.parent) }
-            .reduce { acc, type -> acc.join(type) }
+        val ids = providers.map { provider -> provider.physicalId }
 
         val nativeId = nativeProv.physicalId
 
@@ -180,19 +164,19 @@ class VariableManagerImpl(
             if (ids.allEqual()) {
                 when(val commonId = ids.first()) {
                     is Int -> {
-                        if (parent.tryAllocateId(commonId, commonType)) {
-                            variables[name] = VariableBinding(commonId)
+                        if (parent.tryAllocateId(commonId, commonForge.type)) {
+                            variables[name] = VariableBinding(commonId, commonForge)
                             return
                         }
                     }
                     null -> {
                         //in this case, there hasn't been any allocation on any scope so far.
                         if (providers.size == 1) {
-                            variables[name] = providers.first().first
+                            variables[name] = providers.first()
                         } else {
-                            val newId = parent.new(commonType)
-                            variables[name] = VariableBinding(newId)
-                            generateAdjustOperation(ids, newId, commonType, providers, changeInstructions)
+                            val newId = parent.new(commonForge.type)
+                            variables[name] = VariableBinding(newId, commonForge)
+                            generateAdjustOperation(ids, newId, commonForge.type, providers, changeInstructions)
                         }
 
                         return
@@ -202,15 +186,15 @@ class VariableManagerImpl(
             }
             //now there is either no common id, or it is already allocated on this scope.
             //therefore, we force to migrate every scope to change to this
-            val newId = parent.new(commonType)
-            variables[name] = VariableBinding(newId)
-            generateAdjustOperation(ids, newId, commonType, providers, changeInstructions)
+            val newId = parent.new(commonForge.type)
+            variables[name] = VariableBinding(newId, commonForge)
+            generateAdjustOperation(ids, newId, commonForge.type, providers, changeInstructions)
         } else {
             //the native scope seems to already have an allocation for that,
             // and it seems to have been dropped in a scope
-            val newId = parent.new(commonType)
-            variables[name] = VariableBinding(newId)
-            generateAdjustOperation(ids, newId, commonType, providers, changeInstructions)
+            val newId = parent.new(commonForge.type)
+            variables[name] = VariableBinding(newId, commonForge)
+            generateAdjustOperation(ids, newId, commonForge.type, providers, changeInstructions)
         }
 
     }
@@ -219,13 +203,13 @@ class VariableManagerImpl(
         ids: List<Int?>,
         newId: Int,
         commonType: Type,
-        providers: List<Pair<VariableProvider, VariableManager>>,
+        providers: List<VariableProvider>,
         changeInstructions: List<MutableList<ScopeAdjustInstruction>>
     ) {
         ids.forEachIndexed { index, id ->
             val ins = when(id) {
                 null -> ScopeAdjustInstruction.Store(
-                    providers[index].first.get(NoopVariableMapping), //get the constexpr value.
+                    providers[index].get(NoopVariableMapping), //get the constexpr value.
                     // (use noop mapping
                     // to prevent unwanted physical variable interaction)
                     newId
@@ -251,7 +235,8 @@ class VariableManagerImpl(
     }
 
     override fun clone(): VariableManagerImpl {
-        return VariableManagerImpl(parent.clone(), variables.mapValues { (_, value) -> value.clone() }.toMutableMap())
+        val map = mutableMapOf<UUID, InstanceForge>()
+        return VariableManagerImpl(parent.clone(), variables.mapValuesToMutable { (_, value) -> value.clone(map) })
     }
 
     override fun putVar(name: String, provider: VariableProvider) {
@@ -265,6 +250,14 @@ class VariableManagerImpl(
     override fun reference(newName: String, oldName: String) {
         val value = variables[oldName] ?: error("No variable with `$oldName` exists")
         variables[newName] = value
+    }
+
+    override fun change(name: String, forge: InstanceForge): Int {
+        return variables[name]?.put(TypedInstruction.Noop(forge.type, forge), parent)?.let { (it as TypedInstruction.StoreVar).id } ?: run {
+            val id = parent.new(forge.type)
+            variables[name] = VariableBinding(id, forge)
+            id
+        }
     }
 
 

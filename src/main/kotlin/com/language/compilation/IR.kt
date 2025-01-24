@@ -7,12 +7,20 @@ import com.language.TemplatedType
 import com.language.codegen.asUnboxed
 import com.language.codegen.getOrDefault
 import com.language.codegen.getOrNull
-import com.language.codegen.lazyMap
 import com.language.compilation.Instruction.DynamicCall
 import com.language.compilation.metadata.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.templatedType.matchesSubset
+import com.language.compilation.tracking.BroadForge
+import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.InstanceLookup
+import com.language.compilation.tracking.StructInstanceForge
+import com.language.compilation.tracking.asStruct
+import com.language.compilation.tracking.build
+import com.language.compilation.tracking.change
+import com.language.compilation.tracking.member
+import com.language.compilation.tracking.toBroadType
 import com.language.compilation.variables.*
 import com.language.eval.*
 import com.language.lexer.MetaInfo
@@ -89,10 +97,6 @@ sealed class Instruction {
 
     abstract val info: MetaData
 
-    open fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
-        //gracefully ignore if not overwritten
-    }
-
     abstract suspend fun inferTypes(
         variables: VariableManager,
         lookup: IRLookup,
@@ -130,9 +134,6 @@ sealed class Instruction {
                 variables,
                 handle,
                 handle.inheritedGenerics,
-                genericTypeChange = { name, type ->
-                    genericChangeRequest(variables, name, type)
-                },
                 callBuilder = { candidate, typedArgs ->
                     TypedInstruction.DynamicCall(
                         candidate,
@@ -162,9 +163,6 @@ sealed class Instruction {
             }
         }
 
-        override fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
-            parent.genericChangeRequest(variables, name, type)
-        }
     }
 
     data class Keep(
@@ -597,12 +595,11 @@ sealed class Instruction {
             hist: History
         ): TypedInstruction {
             val args = args.map { it.inferTypes(variables, lookup, handle, hist) }
-            val candidate = lookup.lookUpConstructor(className, args.map { it.type })
+            val candidate = lookup.lookUpConstructor(className, args.map { it.forge })
             return TypedInstruction.ConstructorCall(
                 className,
                 args,
                 candidate,
-                candidate.oxideReturnType
             )
         }
 
@@ -653,7 +650,7 @@ sealed class Instruction {
             //when lambda invoked
             val candidate = when (val tp = parent.type) {
                 is Type.Lambda -> {
-                    lookup.lookupLambdaInvoke(tp.signature, args.map { it.type }, hist)
+                    lookup.lookupLambdaInvoke(tp.signature, args.map { it.forge }, hist)
                 }
 
                 else -> error("Cannot invoke non lambda")
@@ -688,7 +685,7 @@ sealed class Instruction {
             val args = args.map { it.inferTypes(variables, lookup, handle, hist) }
             lookup.processInlining(variables, moduleName, name, args, this.args, handle.inheritedGenerics, hist)
                 ?.let { return it }
-            val candidate = lookup.lookUpCandidate(moduleName, name, args.map { it.type }, hist)
+            val candidate = lookup.lookUpCandidate(moduleName, name, args.map { it.forge }, hist)
             return TypedInstruction.ModuleCall(
                 candidate,
                 name,
@@ -815,7 +812,7 @@ sealed class Instruction {
             val candidate = lookup.lookUpCandidate(
                 classModuleName,
                 name,
-                args.map { it.type },
+                args.map { it.forge },
                 hist,
                 handle.inheritedGenerics.lazyTransform { _, it -> Type.Broad.Known(it) })
             return TypedInstruction.StaticCall(
@@ -859,7 +856,7 @@ sealed class Instruction {
                 op,
                 first,
                 second,
-                resultType
+                InstanceForge.make(resultType)
             )
         }
 
@@ -901,7 +898,7 @@ sealed class Instruction {
 
             return when (value) {
                 is TypedInstruction.Const -> {
-                    variables.putVar(name, SemiConstBinding(value))
+                    variables.putVar(name, SemiConstBinding(value, value.forge))
                     TypedInstruction.Noop(Type.Nothing)
                 }
 
@@ -915,7 +912,7 @@ sealed class Instruction {
             handle: MetaDataTypeHandle,
             hist: History
         ): Type.Broad {
-            variables.set(name, value.inferUnknown(variables, lookup, handle, hist))
+            //variables.set(name, value.inferUnknown(variables, lookup, handle, hist))
             return Type.Broad.Known(Type.Nothing)
         }
     }
@@ -938,20 +935,12 @@ sealed class Instruction {
             handle: MetaDataTypeHandle,
             hist: History
         ): Type.Broad {
-            return variables.get(name)
-        }
-
-        override fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
-            variables.genericChangeRequest(this.name, name, type)
+            //return variables.get(name)
+            TODO()
         }
     }
 
     data class MultiInstructions(val instructions: List<Instruction>, override val info: MetaData) : Instruction() {
-
-
-        override fun genericChangeRequest(variables: VariableManager, name: String, type: Type) {
-            instructions.lastOrNull()?.genericChangeRequest(variables, name, type)
-        }
 
         override suspend fun inferTypes(
             variables: VariableManager,
@@ -988,17 +977,12 @@ sealed class Instruction {
             hist: History
         ): TypedInstruction {
             val parent = parent.inferTypes(variables, lookup, handle, hist)
-            val returnType = when (val parentType = parent.type) {
-                is Type.Union -> {
-                    parentType.entries.map { lookup.lookUpFieldType(it, name) }.reduce { acc, type -> acc.join(type) }
-                }
+            val returnForge = parent.forge.member(name)
 
-                else -> lookup.lookUpFieldType(parentType, name)
-            }
             return TypedInstruction.DynamicPropertyAccess(
                 parent,
                 name,
-                type = returnType,
+                returnForge,
                 physicalType = lookup.lookUpPhysicalFieldType(parent.type, name)
             )
         }
@@ -1026,7 +1010,7 @@ sealed class Instruction {
             handle: MetaDataHandle,
             hist: History
         ): TypedInstruction {
-            val captures = capturedVariables.associateWith { variables.getType(it) }
+            val captures = capturedVariables.associateWith { variables.getForge(it) }
             val sig = handle.addLambda(argNames, captures, body, handle.inheritedGenerics, imports)
             val candidate = lookup.lookupLambdaInit(sig)
 
@@ -1064,12 +1048,14 @@ sealed class Instruction {
         ): TypedInstruction {
             val parent = parent.inferTypes(variables, lookup, handle, hist)
 
-            val fieldType = lookup.lookUpFieldType(parent.type, name)
             val value = value.inferTypes(variables, lookup, handle, hist)
-            if (!value.type.isContainedOrEqualTo(fieldType))
-                error("Invalid type ${value.type} cannot be assigned to field $name of type $fieldType")
 
-            return TypedInstruction.DynamicPropertyAssignment(parent, name, value)
+            parent.forge as StructInstanceForge
+            val fieldType = lookup.lookUpPhysicalFieldType(parent.type, name)
+
+            parent.forge.asStruct().changeMember(name, value.forge)
+
+            return TypedInstruction.DynamicPropertyAssignment(parent, name, value, fieldType)
         }
 
         override suspend fun inferUnknown(
@@ -1081,27 +1067,6 @@ sealed class Instruction {
             TODO("Not yet implemented")
         }
 
-    }
-
-    //The type is unchecked
-    data class Noop(val type: Type, override val info: MetaData) : Instruction() {
-        override suspend fun inferTypes(
-            variables: VariableManager,
-            lookup: IRLookup,
-            handle: MetaDataHandle,
-            hist: History
-        ): TypedInstruction {
-            return TypedInstruction.Noop(type)
-        }
-
-        override suspend fun inferUnknown(
-            variables: TypeVariableManager,
-            lookup: IRLookup,
-            handle: MetaDataTypeHandle,
-            hist: History
-        ): Type.Broad {
-            TODO("Not yet implemented")
-        }
     }
 
 
@@ -1122,14 +1087,14 @@ sealed class Instruction {
                 this@Match.parent,
                 parent.type,
                 variables
-            ) { castStoreId: VariableProvider ->
+            ) { prov: VariableProvider ->
                 //iterate over every pattern
                 patterns.mapIndexed { i, (pattern, body) ->
 
                     val ctx = PatternMatchingContextImpl(
-                        types = listOf(castStoreId),
+                        types = listOf(prov),
                         isLast = i == patterns.lastIndex,
-                        castStoreId = castStoreId.physicalId!!
+                        castStoreId = prov.physicalId!!
                     )
                     //check patterns
                     val typedPattern = pattern.inferTypes(ctx, lookup, variables, handle, hist)
@@ -1138,13 +1103,15 @@ sealed class Instruction {
                     val bodyScope = variables.clone()
                     async {
                         val parentName = if (this@Match.parent is LoadVar) this@Match.parent.name else null
-                        compileBodyBranch(body, typedPattern, bodyScope, parentName, lookup, handle, hist)
+                        compileBodyBranch(body, typedPattern, bodyScope, parentName, parent.forge, lookup, handle, hist)
                     }
 
 
                 }.awaitAll()
             }
+
             val adjustments = variables.merge(typedPatterns.map { it.third })
+
             val compiledBranches = typedPatterns
                 .zip(adjustments)
                 .map { (triple, adjustment) ->
@@ -1176,7 +1143,7 @@ sealed class Instruction {
                 }
             }
             val tempVar = variables.getTempVar(parentType)
-            return tempVar.use { closure(TempVarBinding(tempVar)) } to tempVar.id
+            return tempVar.use { closure(TempVarBinding(tempVar, InstanceForge.make(Type.String))) } to tempVar.id
 
         }
 
@@ -1185,6 +1152,7 @@ sealed class Instruction {
             typedPattern: TypedIRPattern,
             bodyScope: VariableManager,
             parentName: String?,
+            parentForge: InstanceForge,
             lookup: IRLookup,
             handle: MetaDataHandle,
             hist: History
@@ -1192,12 +1160,12 @@ sealed class Instruction {
             if (typedPattern is TypedIRPattern.Destructuring) {
                 //populate the scope with bindings
                 if (parentName != null) {
-                    bodyScope.change(parentName, typedPattern.type)
+                    bodyScope.change(parentName, typedPattern.forge)
                 }
                 typedPattern.bindings.map { (name, tp) ->
                     bodyScope.putVar(
                         name,
-                        FieldBinding(TypedInstruction.LoadVar(typedPattern.castStoreId, typedPattern.type), tp, name)
+                        FieldBinding(TypedInstruction.LoadVar(typedPattern.castStoreId, parentForge), parentForge, tp, name, tp)
                     )
                 }
             }
@@ -1253,7 +1221,7 @@ sealed class Instruction {
                         //eliminate the need for any try logic if we dont have an error variant
                         return typedIns
                     }
-                    errorVariants.forEach { handle.issueReturnTypeAppend(it) }
+                    errorVariants.forEach { handle.issueReturnTypeAppend(InstanceForge.make(it)) }
                     TypedInstruction.Try(typedIns, errorVariants.map { (it as Type.JvmType).signature })
                 }
 
@@ -1288,7 +1256,7 @@ sealed class Instruction {
                 ?: Type.BasicJvmType(SignatureString("java::lang::Throwable"))
             val errorTypes = findErrorTypes(errorType)
 
-            return TypedInstruction.Catch(ins, errorTypes, errorType)
+            TODO("Catch blocks no longer exist (at least for now)")
         }
 
         override suspend fun inferUnknown(
@@ -1320,7 +1288,7 @@ sealed class Instruction {
             hist: History
         ): TypedInstruction {
             val returnValue = instruction.inferTypes(variables, lookup, handle, hist)
-            handle.issueReturnTypeAppend(returnValue.type)
+            handle.issueReturnTypeAppend(returnValue.forge)
             return TypedInstruction.Return(returnValue, handle.returnLabel)
         }
 
@@ -1346,7 +1314,8 @@ sealed class Instruction {
             return TypedInstruction.StaticPropertyAccess(
                 parentName,
                 name,
-                lookup.lookUpFieldType(parentName, name)
+                lookup.lookUpFieldForge(parentName, name),
+                lookup.lookUpFieldType(parentName, name),
             )
         }
 
@@ -1491,22 +1460,23 @@ data class ForLoop(
     ): TypedInstruction {
         val parent = parent.inferTypes(variables, lookup, handle, hist)
         return when {
-            IteratorI.validate(lookup, parent.type, hist) -> {
-                val hasNext = lookup.lookUpCandidate(parent.type, "hasNext", emptyList<Type>(), hist)
-                val next = lookup.lookUpCandidate(parent.type, "next", emptyList<Type>(), hist)
+            runCatching { lookup.lookUpCandidate(parent.forge, "iterator", emptyList<InstanceForge>(), hist) }.isSuccess -> {
+                val iterCall =
+                    DynamicCall(this.parent, "iterator", emptyList(), info).inferTypes(variables, lookup, handle, hist)
+
+                val hasNext = lookup.lookUpCandidate(iterCall.forge, "hasNext", emptyList<InstanceForge>(), hist)
+                val next = lookup.lookUpCandidate(iterCall.forge, "next", emptyList<InstanceForge>(), hist)
+
+                compileForLoopBody(variables, next, hasNext, iterCall, lookup, handle, hist)
+            }
+            runCatching { lookup.lookUpCandidate(parent.forge, "next", emptyList<InstanceForge>(), hist) }.isSuccess -> {
+                val hasNext = lookup.lookUpCandidate(parent.forge, "hasNext", emptyList<InstanceForge>(), hist)
+                val next = lookup.lookUpCandidate(parent.forge, "next", emptyList<InstanceForge>(), hist)
 
                 compileForLoopBody(variables, next, hasNext, parent, lookup, handle, hist)
             }
 
-            IterableI.validate(lookup, parent.type, hist) -> {
-                val iterCall =
-                    DynamicCall(this.parent, "iterator", emptyList(), info).inferTypes(variables, lookup, handle, hist)
 
-                val hasNext = lookup.lookUpCandidate(iterCall.type, "hasNext", emptyList<Type>(), hist)
-                val next = lookup.lookUpCandidate(iterCall.type, "next", emptyList<Type>(), hist)
-
-                compileForLoopBody(variables, next, hasNext, iterCall, lookup, handle, hist)
-            }
 
             else -> error("Invalid type ${parent.type}; it is neither an iterable nor an iterator")
         }
@@ -1522,8 +1492,8 @@ data class ForLoop(
         hist: History
     ): TypedInstruction.ForLoop {
         val bodyScope = variables.clone()
-        val itemId = bodyScope.change(name, nextCall.oxideReturnType)
-        val indexId = indexName?.let { bodyScope.change(indexName, Type.IntT) }
+        val itemId = bodyScope.change(name, nextCall.returnForge)
+        val indexId = indexName?.let { bodyScope.change(indexName, InstanceForge.ConstInt) }
 
         val bodyScopePre = bodyScope.clone()
         //infer it twice for non consts to unfold
@@ -1553,6 +1523,7 @@ interface PatternMatchingContext {
     val castStoreId: Int
 }
 
+
 sealed interface IRPattern {
 
     suspend fun inferTypes(
@@ -1574,7 +1545,7 @@ sealed interface IRPattern {
             val binding = ctx.nextBinding()
             if (name in handle.inheritedGenerics) {
                 return TypedIRPattern.Destructuring(
-                    handle.inheritedGenerics[name]!!.asBoxed(),
+                    binding.forge,
                     emptyList(),
                     variables.getExternal(binding),
                     ctx.isLast,
@@ -1599,7 +1570,7 @@ sealed interface IRPattern {
             hist: History
         ): TypedIRPattern {
             val type = with(lookup) {
-                type.populate(handle.inheritedGenerics).asBoxed()
+                type.populate(handle.inheritedGenerics.mapValues { it.value }).asBoxed()
                 //we box it because there cant be primitives anyway,
                 // but we still want matching for int
                 // to result in Integer and so on
@@ -1613,12 +1584,12 @@ sealed interface IRPattern {
                 .lookUpOrderedFields(signature)
                 .map { (name, it) -> name to with(lookup) { it.populate(handle.inheritedGenerics) } }
             val fieldBindings =
-                orderedFields.map { (name, type) -> FieldBinding(binding.get(variables.parent), type, name) }
+                orderedFields.map { (name, tp) -> FieldBinding(binding.get(variables.parent), binding.forge, tp, name, tp) }
 
             val context = PatternMatchingContextImpl(fieldBindings, false, binding.physicalId!!)
 
             return TypedIRPattern.Destructuring(
-                type = type,
+                binding.forge,
                 patterns = patterns.map { it.inferTypes(context, lookup, variables, handle, hist) },
                 isLast = ctx.isLast,
                 castStoreId = binding.physicalId!!,
@@ -1963,8 +1934,8 @@ interface IRFunction {
 
     fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>>
 
-    suspend fun inferUnknown(argTypes: List<Type.Broad>, lookup: IRLookup, generics: Map<String, Type>, hist: History, check: Boolean = true): Type.Broad
-    suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Type
+    suspend fun inferUnknown(argTypes: List<BroadForge>, lookup: IRLookup, generics: Map<String, Type>, hist: History, check: Boolean = true): BroadForge
+    suspend fun inferTypes(argTypes: List<InstanceForge>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Pair<InstanceForge, Int>
     suspend fun generateInlining(
         args: List<TypedInstruction>,
         uncompiledArgs: List<Instruction>,
@@ -1989,7 +1960,9 @@ data class BasicIRFunction(
     private val mutex = Mutex()
     private val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, FunctionMetaData>> = mutableMapOf()
 
-    private val checkedUnknownVariants: MutableMap<List<Type.Broad>, Type.Broad> = mutableMapOf()
+    private var count: Int = 0
+
+    private val checkedUnknownVariants: MutableMap<List<Type.Broad>, BroadForge> = mutableMapOf()
 
     override val keepBlocks: MutableMap<String, Type> = mutableMapOf()
 
@@ -1999,23 +1972,27 @@ data class BasicIRFunction(
 
     //this algorithm purposely neglects annotated types simply because it is always only called in combination with the normal algorithm,
     //thus not performing redundant checks
-    override suspend fun inferUnknown(argTypes: List<Type.Broad>, lookup: IRLookup, generics: Map<String, Type>, hist: History, check: Boolean): Type.Broad {
+    override suspend fun inferUnknown(argTypes: List<BroadForge>, lookup: IRLookup, generics: Map<String, Type>, hist: History, check: Boolean): BroadForge {
+        val tps = argTypes.map { it.toBroadType() }
         mutex.withLock {
-            if (argTypes in checkedUnknownVariants) {
-                return checkedUnknownVariants[argTypes]!!
+            if (tps in checkedUnknownVariants) {
+                return checkedUnknownVariants[tps]!!
             }
         }
 
         //if it is already substituted by anything, we want to return the substituded call
         if (check)
-        hist.isSubstituted(this, argTypes)?.let { return it }
-
-        //this means we have reached a seperate recursion loop within our own recusion
-        if (check && hist.isPresent(this, argTypes)) {
-            return Type.Broad.Known(inferRecursive(argTypes, lookup, generics, hist))
+        hist.isSubstituted(this, tps)?.let {
+            //return it
+            TODO()
         }
 
-        hist.appendRecCallStack(this, argTypes)
+        //this means we have reached a seperate recursion loop within our own recusion
+        if (check && hist.isPresent(this, tps)) {
+            return inferRecursive(argTypes, lookup, generics, hist)
+        }
+
+        hist.appendRecCallStack(this, tps)
 
         val vars = TypeVariableManagerImpl()
         args.zip(argTypes).forEach { (name, tp) -> vars.set(name.first, tp) }
@@ -2023,54 +2000,65 @@ data class BasicIRFunction(
 
         val result = body.inferUnknown(vars, lookup, metaHandle, hist)
 
-        return result
+        //return result
+        TODO()
     }
 
-    private suspend fun inferRecursive(argTypes: List<Type.Broad>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Type {
-        hist.substitute(this, argTypes, Type.Broad.Unset)
+    private suspend fun inferRecursive(argTypes: List<BroadForge>, lookup: IRLookup, generics: Map<String, Type>, hist: History): InstanceForge {
+        val tps = argTypes.map { it.toBroadType() }
+        hist.substitute(this, tps, Type.Broad.Unset)
         val result = inferUnknown(argTypes, lookup, generics, hist, false)
         
         //when the type is solely unknown, the function can only ever call itself to produce the return value in other words it has to be nothing
-        if (result is Type.Broad.Unset) {
-            return Type.Nothing
+        if (result is BroadForge.Empty) {
+            return InstanceForge.ConstNothing
         }
         
         //this means the return value did not depend on the recursive calls so we already know it for sure
-        if (result is Type.Broad.Known) {
-            return result.type
+        if (result is InstanceForge) {
+            return result
         }
         
-        var prev = (result as Type.Broad.UnknownUnionized).type
+        var prev = (result as BroadForge.Unionized).forge
         while(true) {
             val res = inferUnknown(argTypes, lookup, generics, hist, false)
-            res as Type.Broad.Typeful
+            res as InstanceForge
             if (res.type == prev) {
                 return prev
             }
-            hist.substitute(this, argTypes, res)
-            prev = res.type
+            hist.substitute(this, tps, res.toBroadType())
+            prev = res
         }
     }
 
-    override suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Type {
+    override suspend fun inferTypes(argTypes: List<InstanceForge>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Pair<InstanceForge, Int> {
         //generics = inherited generics form impl block or other context
         //inferredGenerics = generics specifically from the function itself inferred based on arg and return types.
         //this.generics = prototyped generics with constraints
-        mutex.withLock {
-            if (argTypes in checkedVariants) {
-                return checkedVariants[argTypes]!!.second.returnType
-            }
+        val tps = argTypes.map { it.type }
+        val data = mutex.withLock {
+            if (tps in checkedVariants) {
+                val (_, data) = checkedVariants[tps]!!
+                data
+            } else null
+        }
+        if (data != null) {
+            //apply all the changes to the arguments
+            argTypes.zip(data.args).forEach { it.first.change(it.second, argTypes) }
+            //craft the return forge
+            return data.returnBuilder.build(argTypes) to data.uniqueId
         }
 
-        val variant = CallVariant(this, argTypes)
+        val variant = CallVariant(this, tps)
+
+
         if (hist.isPresent(variant)) {
-            val broadArgs = argTypes.lazyMap { Type.Broad.Known(it) }
-            val type = inferRecursive(broadArgs, lookup, generics, hist)
+            val forge = inferRecursive(argTypes, lookup, generics, hist)
             mutex.withLock {
-                checkedVariants[argTypes] = TypedInstruction.Noop(type) to FunctionMetaData(type, -1)
+                checkedVariants[tps] = TypedInstruction.Noop(forge.type, forge) to FunctionMetaData(forge.type, TODO(), TODO(), -1, -1)
             }
 
-            return type
+            TODO()
         }
 
         hist.appendCallStack(variant)
@@ -2081,29 +2069,40 @@ data class BasicIRFunction(
         val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList(), null)
         val inferredGenerics = mutableMapOf<String, Type>()
 
+        val instanceLookup = InstanceLookup.make(argTypes)
+
+        val preState = argTypes.map { it.clone(mutableMapOf()) }
+
         val variables =
-            VariableManagerImpl.fromVariables(argTypes
+            VariableManagerImpl.fromForges(argTypes
                 .zip(this.args)
-                .associate { (tp, name) ->
-                    if (name.second?.matchesSubset(tp, inferredGenerics, this.generics.toMap(), lookup) == false) error("Invalid type mismatch $tp : ${name.second}")
+                .map { (tp, name) ->
+                    if (name.second?.matchesSubset(tp.type, inferredGenerics, this.generics.toMap(), lookup) == false) error("Invalid type mismatch $tp : ${name.second}")
                     name.first to tp
                 }
             )
 
         val result = body.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle, hist)
+        metaDataHandle.issueReturnTypeAppend(result.forge)
+
+        val returnForge = metaDataHandle.returnType
+
+        //now the goal here is to find out what changed in the arguments in terms of instances
+        //and out of what the return type is crafted
+        // (this is done so the cached result can sustain instance tracking)
+        val change = preState.zip(argTypes).map { (pre, now) -> pre.compare(now, instanceLookup) }
+        val returnTemplate = returnForge.toTemplate(instanceLookup)
 
 
-        val returnType =
-            if (metaDataHandle.hasReturnType()) result.type.join(metaDataHandle.returnType) else result.type
-        metaDataHandle.issueReturnTypeAppend(returnType)
-
-        if (this.returnType?.matchesSubset(returnType, inferredGenerics, this.generics.toMap(), lookup) == false) error("Invalid type mismatch return type $returnType : ${this.returnType}")
-        mutex.withLock {
+        if (this.returnType?.matchesSubset(returnForge.type, inferredGenerics, this.generics.toMap(), lookup) == false) error("Invalid type mismatch return type $returnType : ${this.returnType}")
+        val id = mutex.withLock {
+            val id = count++
             keepBlocks.putAll(metaDataHandle.keepBlocks)
-            checkedVariants[argTypes] =
-                (result) to metaDataHandle.apply { varCount = variables.parent.varCount() }.toMetaData()
+            checkedVariants[tps] =
+                (result) to metaDataHandle.apply { varCount = variables.parent.varCount() }.toMetaData(returnTemplate, change, id)
+            id
         }
-        return returnType
+        return returnForge to id
     }
 
     override suspend fun generateInlining(
@@ -2124,7 +2123,7 @@ data class BasicIRFunction(
         val actualArgInstruction = mutableListOf<TypedInstruction>()
         if (instance != null) {
             if (instance is TypedInstruction.LoadVar) {
-                scope.putVar("self", VariableBinding(instance.id))
+                scope.putVar("self", VariableBinding(instance.id, instance.forge))
             } else {
                 actualArgInstruction += scope.changeVar("self", instance)
             }
@@ -2135,6 +2134,7 @@ data class BasicIRFunction(
 
         val inferredGenerics = mutableMapOf<String, Type>()
 
+        //place the arguments into the scope
         args.zip(uncompiledArgs).zip(slicedArgs).forEach { (it, name) ->
             if (name.second?.matchesSubset(it.first.type, inferredGenerics, this.generics.toMap(), lookup) == false) error("Type error mismatch ${it.first.type} : ${name.second}")
             val (typed, untyped) = it
@@ -2144,15 +2144,15 @@ data class BasicIRFunction(
             }
             when (typed) {
                 is TypedInstruction.LoadVar -> {
-                    scope.putVar(name.first, VariableBinding(typed.id))
+                    scope.putVar(name.first, VariableBinding(typed.id, typed.forge))
                 }
 
                 is TypedInstruction.Lambda -> {
-                    scope.putVar(name.first, ConstBinding(typed))
+                    scope.putVar(name.first, SemiConstBinding(typed, typed.forge))
                     inlinableLambdas.add(typed)
                 }
 
-                is TypedInstruction.Const -> scope.putVar(name.first, SemiConstBinding(typed))
+                is TypedInstruction.Const -> scope.putVar(name.first, SemiConstBinding(typed, typed.forge))
                 else -> {
                     actualArgInstruction += scope.changeVar(name.first, typed)
                 }
@@ -2182,7 +2182,7 @@ data class BasicIRFunction(
         val end = Label()
         val metaDataHandle = FunctionMetaDataHandle(generics, module, inlinableLambdas, end)
         val typedBody = body.inferTypes(variables, lookup, metaDataHandle, hist)
-        metaDataHandle.issueReturnTypeAppend(typedBody.type)
+        metaDataHandle.issueReturnTypeAppend(typedBody.forge)
         return TypedInstruction.InlineBody(typedBody, end, metaDataHandle.returnType)
     }
 
@@ -2239,7 +2239,7 @@ value class SignatureString(val value: String) {
 data class GenericType(val modifiers: Modifiers, val upperBounds: List<SignatureString>)
 
 data class IRStruct(
-    val fields: Map<String, TemplatedType>,
+    val fields: List<Pair<String, TemplatedType>>,
     val generics: Map<String, GenericType>,
     val modifiers: Modifiers,
     val info: MetaInfo
@@ -2281,7 +2281,7 @@ data class IRModule(
 
     override suspend fun addLambda(
         argNames: List<String>,
-        captures: Map<String, Type>,
+        captures: Map<String, InstanceForge>,
         body: Instruction,
         generics: Map<String, Type>,
         imports: Set<SignatureString>
@@ -2299,7 +2299,7 @@ data class IRModule(
 
 data class LambdaContainer(
     val signature: SignatureString,
-    val captures: Map<String, Type>,
+    val captures: Map<String, InstanceForge>,
     val closureBody: Instruction,
     val argNames: List<String>,
     val imports: Set<SignatureString>,
@@ -2308,30 +2308,52 @@ data class LambdaContainer(
 ) {
     private val mutex = Mutex()
     val checkedVariants: MutableMap<List<Type>, Pair<TypedInstruction, FunctionMetaData>> = mutableMapOf()
+    private var count: Int = 0
 
-    suspend fun inferTypes(argTypes: List<Type>, lookup: IRLookup, hist: History): Type {
-        if (argTypes in checkedVariants) {
-            return checkedVariants[argTypes]!!.second.returnType
+    suspend fun inferTypes(argTypes: List<InstanceForge>, lookup: IRLookup, hist: History): Pair<InstanceForge, Int> {
+
+        val tps = argTypes.map { it.type }
+        val data = mutex.withLock {
+            if (tps in checkedVariants) {
+                val (_, data) = checkedVariants[tps]!!
+                data
+            } else null
         }
+        if (data != null) {
+            //apply all the changes to the arguments
+            argTypes.zip(data.args).forEach { it.first.change(it.second, argTypes) }
+            //craft the return forge
+            return data.returnBuilder.build(argTypes) to data.uniqueId
+        }
+
 
         if (argTypes.size != this.argNames.size) {
             error("Expected ${this.argNames.size} but got ${argTypes.size} arguments when calling $argNames (TypeChecking)")
         }
         val metaDataHandle = FunctionMetaDataHandle(generics, module, emptyList(), null)
-        val variables = VariableManagerImpl.fromVariables(
-            argTypes.zip(argNames).associate { (tp, name) -> name to tp },
-            reserveThis = true
+
+        val instanceLookup = InstanceLookup.make(argTypes)
+
+        val preState = argTypes.map { it.clone(mutableMapOf()) }
+
+
+        val variables = VariableManagerImpl.fromForges(
+            listOf("this" to InstanceForge.make(Type.Lambda(signature))) + argTypes.zip(argNames).map { (tp, name) -> name to tp },
         )
-        captures.forEach { (name, type) ->
-            variables.putVar(name, FieldBinding(TypedInstruction.LoadVar(0, Type.BasicJvmType(signature)), type, name))
+        captures.forEach { (name, forge) ->
+            variables.putVar(name, FieldBinding(TypedInstruction.LoadVar(0, InstanceForge.make(Type.BasicJvmType(signature))), forge, forge.type, name, forge.type))
         }
         val result = closureBody.inferTypes(variables, lookup.newModFrame(imports), metaDataHandle, hist)
         val requireImplicitNull = metaDataHandle.hasReturnType() && result.type == Type.Nothing
 
-        val returnType = if (requireImplicitNull) Type.Null else result.type
-        metaDataHandle.issueReturnTypeAppend(returnType)
-        mutex.withLock {
-            checkedVariants[argTypes] = (
+        val returnForge = if (requireImplicitNull) InstanceForge.ConstNull else result.forge
+        metaDataHandle.issueReturnTypeAppend(returnForge)
+
+        val change = preState.zip(argTypes).map { (pre, now) -> pre.compare(now, instanceLookup) }
+        val returnTemplate = returnForge.toTemplate(instanceLookup)
+        val id = mutex.withLock {
+            val id = count++
+            checkedVariants[tps] = (
                     if (requireImplicitNull)
                         TypedInstruction.MultiInstructions(
                             listOf(result, TypedInstruction.Null),
@@ -2341,9 +2363,10 @@ data class LambdaContainer(
                         result
                     ) to metaDataHandle.apply {
                 varCount = variables.parent.varCount()
-            }.toMetaData()
+            }.toMetaData(returnTemplate, change, id)
+            id
         }
-        return returnType
+        return result.forge to id
     }
 }
 
@@ -2355,20 +2378,14 @@ suspend inline fun inferCall(
     variables: VariableManager,
     handle: MetaDataHandle,
     generics: Map<String, Type>,
-    genericTypeChange: (name: String, type: Type) -> Unit,
     callBuilder: (candidate: FunctionCandidate, args: List<TypedInstruction>) -> TypedInstruction,
     hist: History
 ): TypedInstruction {
     val typedArgs = args.map { it.inferTypes(variables, lookup, handle, hist) }
 
-    val changes = lookup.lookUpGenericTypes(parent.type, name, typedArgs.map { it.type })
-    for ((changeName, tp) in changes) {
-        genericTypeChange(changeName, tp)
-    }
-
     return lookup.processInlining(variables, parent, name, typedArgs, args, generics, hist)
         ?.let { return it }
-        ?: callBuilder(lookup.lookUpCandidate(parent.type, name, typedArgs.map { it.type }, hist), typedArgs)
+        ?: callBuilder(lookup.lookUpCandidate(parent.forge, name, typedArgs.map { it.forge }, hist), typedArgs)
 
 }
 

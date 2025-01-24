@@ -3,31 +3,20 @@ package com.language.compilation.variables
 import com.language.compilation.Type
 import com.language.compilation.TypedInstruction
 import com.language.compilation.generateName
+import com.language.compilation.tracking.InstanceForge
+import java.util.UUID
 
 class SemiConstBinding(
-    var value: TypedInstruction.Const
+    var value: TypedInstruction.Const,
+    override var forge: InstanceForge
 ) : VariableProvider, AllocationRecord {
     @Volatile
     private var id: Int? = null
 
-
-    override fun clone(): VariableProvider {
-        return SemiConstBinding(value).also { it.value = this.value }
-    }
-
-    override fun genericChangeRequest(parent: VariableMapping, genericName: String, type: Type) {
-        synchronized(this) {
-            when(val n = id) {
-                is Int -> parent.genericChangeRequest(n, genericName, type)
-                else -> error("Cannot change generic type of const")
-            }
-        }
-    }
-
     override fun get(parent: VariableMapping): TypedInstruction {
         return synchronized(this) {
             when(val id = id) {
-                is Int -> parent.loadVar(id)
+                is Int -> TypedInstruction.LoadVar(id, forge)
                 else -> value
             }
         }
@@ -35,25 +24,24 @@ class SemiConstBinding(
 
 
     override fun put(value: TypedInstruction, parent: VariableMapping): TypedInstruction {
+        this.forge = value.forge
         if (allocated && value is TypedInstruction.Const) {
-            synchronized(this) {
-                //if we had a physical allocation, we can now remove it since we now have a constant value
-                if (id != null) {
-                    parent.deleteVar(id!!)
-                    id = null
-                }
-                this.value = value
+            //if we had a physical allocation, we can now remove it since we now have a constant value
+            if (id != null) {
+                parent.deleteVar(id!!)
+                id = null
             }
+            this.value = value
             return TypedInstruction.Noop(Type.Nothing)
         }
         val ins = synchronized(this) {
             when(val i = id) {
                 is Int -> {
-                    val (id, ins) = parent.changeVar(i, value)
+                    val id = parent.changeVar(i, value)
                     if (id != null) {
                         this.id = id
                     }
-                    ins
+                    return TypedInstruction.StoreVar(this.id!!, value)
                 }
                 else -> {
                     this.id = parent.new(value.type)
@@ -65,15 +53,16 @@ class SemiConstBinding(
     }
 
     override fun delete(parent: VariableMapping) {
-        synchronized(this) {
-            when(val id = id) {
-                is Int -> parent.deleteVar(id)
-                else -> {}
-            }
+        when(val id = id) {
+            is Int -> parent.deleteVar(id)
+            else -> {}
         }
     }
 
-    override val physicalId: Int? = synchronized(this) { id }
+    override val physicalId: Int? = id
+    override fun clone(forges: MutableMap<UUID, InstanceForge>): VariableProvider {
+        return SemiConstBinding(value, forge.clone(forges)).also { it.value = this.value }
+    }
 
     override val allocated: Boolean
         get() = id != null

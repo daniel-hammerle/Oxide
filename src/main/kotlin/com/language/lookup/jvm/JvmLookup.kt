@@ -4,14 +4,17 @@ import com.language.compilation.FunctionCandidate
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.InstanceLookup
+import com.language.compilation.tracking.StructInstanceForge
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.parsing.FunctionInfo
 
 interface JvmLookup {
     suspend fun lookUpMethod(
-        instance: Type.JvmType,
+        instance: InstanceForge,
         functionName: String,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup
     ): FunctionCandidate?
 
@@ -25,7 +28,7 @@ interface JvmLookup {
     suspend fun lookUpAssociatedFunction(
         className: SignatureString,
         functionName: String,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup,
         generics: Map<String, Type.Broad>
     ): FunctionCandidate?
@@ -42,6 +45,8 @@ interface JvmLookup {
 
     suspend fun lookUpAssociatedField(className: SignatureString, fieldName: String): Type?
 
+    suspend fun lookupFieldForge(className: SignatureString, fieldName: String): InstanceForge?
+
     suspend fun hasGenericReturnType(
         instance: Type.JvmType,
         functionName: String,
@@ -55,7 +60,7 @@ interface JvmLookup {
 
     suspend fun lookupConstructor(
         className: SignatureString,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup
     ): FunctionCandidate?
 

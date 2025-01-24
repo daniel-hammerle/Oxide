@@ -39,7 +39,7 @@ impl<T> [T] {
         [...self, ...other]
     }
 
-    func sum(self, initialValue) {
+    inline func sum(self, initialValue) {
         value = initialValue
         for item in self {
             value = value + item

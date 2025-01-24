@@ -5,21 +5,24 @@ import com.language.compilation.ScopeAdjustment
 import com.language.compilation.Type
 import com.language.compilation.TypedInstruction
 import com.language.compilation.join
+import com.language.compilation.tracking.BroadForge
+import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.join
 
 interface TypeVariableManager {
-    fun get(name: String): Type.Broad
-    fun set(name: String, tp: Type.Broad)
+    fun get(name: String): BroadForge
+    fun set(name: String, tp: BroadForge)
 
     fun branch(): TypeVariableManager
     fun merge(branches: Iterable<TypeVariableManager>)
 
-    val vars: Map<String, Type.Broad>
+    val vars: Map<String, BroadForge>
 }
 
-class TypeVariableManagerImpl(override var vars: MutableMap<String, Type.Broad> = mutableMapOf()) : TypeVariableManager {
-    override fun get(name: String): Type.Broad = vars[name] ?: error("No variable $name")
+class TypeVariableManagerImpl(override var vars: MutableMap<String, BroadForge> = mutableMapOf()) : TypeVariableManager {
+    override fun get(name: String) = vars[name] ?: error("No variable $name")
 
-    override fun set(name: String, tp: Type.Broad) {
+    override fun set(name: String, tp: BroadForge) {
         vars[name] = tp
     }
 
@@ -58,6 +61,7 @@ interface VariableManager : ReadOnlyVariableManager {
 
     fun reference(newName: String, oldName: String)
 
+    fun change(name: String, forge: InstanceForge): Int
 
     override fun clone(): VariableManager
 }
@@ -69,15 +73,14 @@ interface ReadOnlyVariableManager {
 
     fun changeVar(name: String, value: TypedInstruction): TypedInstruction
 
-    fun change(name: String, type: Type): Int
 
     fun toVarFrame(): VarFrame
 
     fun getType(name: String): Type
 
-    fun mapping(): VariableMapping
+    fun getForge(name: String): InstanceForge
 
-    fun genericChangeRequest(name: String, genericName: String, type: Type)
+    fun mapping(): VariableMapping
 
     val variables: Map<String, VariableProvider>
 

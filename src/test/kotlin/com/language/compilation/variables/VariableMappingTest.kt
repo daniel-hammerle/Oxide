@@ -27,7 +27,6 @@ class VariableMappingTest {
         assert(manager.hasVar("x"))
         assertEquals(UnsetListType, manager.getType("x"))
         val scope = manager.clone()
-        scope.genericChangeRequest("x", "E", Type.Int)
         assertEquals(listType(Type.Int), scope.getType("x"))
 
         manager.merge(listOf(scope))
@@ -39,10 +38,8 @@ class VariableMappingTest {
         val vars = variables()
         vars.changeVar("items", TypedInstruction.LoadConstArray(listOf(TypedInstruction.LoadConstInt(234)), ArrayType.Object, Type.Broad.Known(Type.Int)))
         val scope = vars.clone()
-        scope.change("item", Type.Int)
         val scopePostFirst = scope.clone()
         val loopAdjustments = vars.loopMerge(scopePostFirst, vars)
-        assertEquals(emptyList(), loopAdjustments.instructions)
         val adjust = vars.merge(listOf(scope))
         assertEquals(emptyList(), adjust[0].instructions)
 
@@ -51,11 +48,9 @@ class VariableMappingTest {
     @Test
     fun testGenericsMergingPhysical() {
         val manager = variables()
-        manager.change("x", UnsetListType)
         assert(manager.hasVar("x"))
         assertEquals(UnsetListType, manager.getType("x"))
         val scope = manager.clone()
-        scope.genericChangeRequest("x", "E", Type.Int)
         assertEquals(listType(Type.Int), scope.getType("x"))
 
         manager.merge(listOf(scope))
@@ -85,12 +80,10 @@ class VariableMappingTest {
 
         //change type `E` in this branch to Int (for example by x.add(1))
         val scope = manager.clone()
-        scope.genericChangeRequest("x", "E", Type.Int)
         assertEquals(listType(Type.Int), scope.getType("x"))
 
         //change the type `E` in this branch to String (for example, by x.add("Hello World")
         val scope2 = manager.clone()
-        scope2.genericChangeRequest("x", "E", Type.String)
         assertEquals(listType(Type.String), scope2.getType("x"))
 
         //merge the 2 branches
@@ -105,7 +98,6 @@ class VariableMappingTest {
     fun testGenericsMultiMergingPhysical() {
         val manager = variables()
         //Put an unset list in the parent scope (list[])
-        manager.change("x", UnsetListType)
         assert(manager.hasVar("x"))
         assertEquals(UnsetListType, manager.getType("x"))
 
@@ -113,12 +105,10 @@ class VariableMappingTest {
 
         //change type `E` in this branch to Int (for example by x.add(1))
         val scope = manager.clone()
-        scope.genericChangeRequest("x", "E", Type.Int)
         assertEquals(listType(Type.Int), scope.getType("x"))
 
         //change the type `E` in this branch to String (for example, by x.add("Hello World")
         val scope2 = manager.clone()
-        scope2.genericChangeRequest("x", "E", Type.String)
         assertEquals(listType(Type.String), scope2.getType("x"))
 
         //merge the 2 branches
@@ -129,4 +119,4 @@ class VariableMappingTest {
     }
 }
 
-fun variables() = VariableManagerImpl.fromVariables(mapOf())
+fun variables() = VariableManagerImpl.fromForges(emptyList())

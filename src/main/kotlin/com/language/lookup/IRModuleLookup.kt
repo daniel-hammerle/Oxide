@@ -5,6 +5,10 @@ import com.language.codegen.asUnboxed
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.tracking.BasicInstanceForge
+import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.JoinedInstanceForge
+import com.language.compilation.tracking.StructInstanceForge
 import com.language.compilation.variables.VariableManager
 import com.language.eval.evalFunction
 import com.language.lookup.jvm.JvmLookup
@@ -14,40 +18,6 @@ class IRModuleLookup(
     private val jvmLookup: JvmLookup,
     private val oxideLookup: OxideLookup
 ) : IRLookup {
-
-    override suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Type> {
-        return lookUpGenericTypesInternal(instance, funcName, argTypes)
-    }
-
-    private suspend fun lookUpGenericTypesInternal(
-        instance: Type,
-        funcName: String,
-        argTypes: List<Type>,
-        checkUnboxed: Boolean = true,
-        checkBoxed: Boolean = true
-    ): Map<String, Type> {
-        oxideLookup.lookUpGenericTypes(instance, funcName, argTypes, this)?.let { return it }
-        if (instance is Type.Union) {
-            return instance.entries.map { lookUpGenericTypes(it, funcName, argTypes) }.reduce { acc, map -> acc + map }
-        }
-        if (checkUnboxed && instance.isUnboxedPrimitive()) {
-            return lookUpGenericTypesInternal(instance.asBoxed(), funcName, argTypes, checkUnboxed = false, checkBoxed)
-        }
-        if (instance !is Type.JvmType) {
-            error("No function: $instance.$funcName($argTypes)")
-        }
-        jvmLookup.lookUpGenericTypes(instance, funcName, argTypes, this)?.let { return it }
-        if (checkBoxed && instance.isBoxedPrimitive()) {
-            return lookUpGenericTypesInternal(
-                instance.asUnboxed(),
-                funcName,
-                argTypes,
-                checkUnboxed,
-                checkBoxed = false
-            )
-        }
-        error("No function: $instance.$funcName($argTypes)")
-    }
 
     override suspend fun hasGenericReturnType(instance: Type, funcName: String, argTypes: List<Type>): Boolean {
         //NOTE since oxide generics are implemented differently, this can only be true for jvm functions
@@ -60,7 +30,7 @@ class IRModuleLookup(
     override suspend fun lookUpCandidate(
         modName: SignatureString,
         funcName: String,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         history: History,
         generics: Map<String, Type.Broad>,
     ): FunctionCandidate {
@@ -75,24 +45,24 @@ class IRModuleLookup(
     }
 
     override suspend fun lookUpCandidate(
-        instance: Type,
+        instance: InstanceForge,
         funcName: String,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         history: History
     ): FunctionCandidate {
+        val instanceType = instance.type
         val candidate = oxideLookup.lookupExtensionMethod(instance, funcName, argTypes, this, history)
         if (candidate != null) return candidate
         return when {
-            instance is Type.Union -> {
-                val candidates = instance.entries.associateWith { lookUpCandidate(it, funcName, argTypes, history) }
+             instance is JoinedInstanceForge -> {
+                val candidates = instance.forges.associate { it.type to lookUpCandidate(it, funcName, argTypes, history) }
                 UnionFunctionCandidate(candidates)
             }
 
-            instance.isUnboxedPrimitive() -> lookUpCandidate(instance.asBoxed(), funcName, argTypes, history)
-            instance is Type.JvmType -> jvmLookup.lookUpMethod(instance, funcName, argTypes, this)
-                ?: error("No Method found on $instance.$funcName($argTypes)")
+            instance.type.isUnboxedPrimitive() -> lookUpCandidate(BasicInstanceForge(instanceType.asBoxed()), funcName, argTypes, history)
+            else -> jvmLookup.lookUpMethod(instance, funcName, argTypes, this)
+                ?: error("No Method found on ${instance.type}.$funcName($argTypes)")
 
-            else -> error("No Method found on $instance.$funcName($argTypes)")
         }
     }
 
@@ -229,7 +199,7 @@ class IRModuleLookup(
         return IRModuleLookup(jvmLookup, oxideLookup.newModFrame(modNames))
     }
 
-    override suspend fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate {
+    override suspend fun lookUpConstructor(className: SignatureString, argTypes: List<InstanceForge>): FunctionCandidate {
         return oxideLookup.lookupConstructor(className, argTypes, this)
             ?: jvmLookup.lookupConstructor(className, argTypes, this)
             ?: error("NO constructor found for $className($argTypes)")
@@ -268,6 +238,13 @@ class IRModuleLookup(
         return jvmLookup.lookUpAssociatedField(modName, fieldName) ?: error("No static field $modName.$fieldName")
     }
 
+    override suspend fun lookUpFieldForge(
+        modName: SignatureString,
+        fieldName: String
+    ): InstanceForge {
+        return jvmLookup.lookupFieldForge(modName, fieldName) ?: error("Not found")
+    }
+
     override fun lookUpOrderedFields(className: SignatureString): List<Pair<String, TemplatedType>> {
         return oxideLookup.lookupOrderedFields(structName = className)
     }
@@ -300,7 +277,7 @@ class IRModuleLookup(
 
     override suspend fun lookupLambdaInvoke(
         signatureString: SignatureString,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         history: History
     ): FunctionCandidate {
         return oxideLookup.lookupLambdaInvoke(signatureString, argTypes, this, history)

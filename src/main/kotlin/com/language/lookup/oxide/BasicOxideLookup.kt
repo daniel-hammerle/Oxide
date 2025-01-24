@@ -5,10 +5,14 @@ import com.language.compilation.*
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.templatedType.matchesImpl
 import com.language.compilation.templatedType.matchesSubset
+import com.language.compilation.tracking.BasicInstanceForge
+import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.StructInstanceForge
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.rep.asLazyTypeMap
 import com.language.lookup.jvm.rep.defaultVariant
 import org.objectweb.asm.Opcodes
+import kotlin.math.sign
 
 class BasicOxideLookup(
     private val modules: Map<SignatureString, IRModule>,
@@ -52,13 +56,13 @@ class BasicOxideLookup(
     override suspend fun lookupFunction(
         module: SignatureString,
         funcName: String,
-        args: List<Type>,
+        args: List<InstanceForge>,
         lookup: IRLookup,
         history: History
     ): FunctionCandidate? {
         val mod = modules[module] ?: return null
         val func = mod.functions[funcName] ?: return null
-        val returnType =
+        val (returnType, id) =
             (func as BasicIRFunction).inferTypes(
                 args,
                 lookup,
@@ -66,14 +70,17 @@ class BasicOxideLookup(
                 history
             )
 
+        val argTypes = args.map { it.type}
         return SimpleFunctionCandidate(
-            oxideArgs = args,
-            jvmArgs = args.map { it.toActualJvmType() },
-            jvmReturnType = returnType.toActualJvmType(),
-            oxideReturnType = returnType,
+            oxideArgs = argTypes,
+            jvmArgs =argTypes.map { it.toActualJvmType() },
+            jvmReturnType = returnType.type.toActualJvmType(),
+            oxideReturnType = returnType.type,
+            returnForge = returnType,
             invocationType = Opcodes.INVOKESTATIC,
             jvmOwner = module,
             name = funcName,
+            jvmName = "${funcName}_$id",
             obfuscateName = true,
             requireDispatch = false
         )
@@ -88,7 +95,7 @@ class BasicOxideLookup(
     ): Type.Broad {
         val mod = modules[module] ?: error("No Module found with name `$module`")
         val func = mod.functions[funcName] ?: error("No Function `$funcName` on module `$module`")
-        val returnType = runCatching {
+        /*val returnType = runCatching {
             (func as BasicIRFunction).inferUnknown(
                 args,
                 lookup,
@@ -98,34 +105,39 @@ class BasicOxideLookup(
         }.getOrElse { it.printStackTrace(); throw it }
 
         return returnType
+
+         */
+        TODO()
     }
 
 
     override suspend fun lookupExtensionMethod(
-        instance: Type,
+        instance: InstanceForge,
         funcName: String,
-        args: List<Type>, lookup: IRLookup,
+        args: List<InstanceForge>,
+        lookup: IRLookup,
         history: History
     ): FunctionCandidate? {
-        val (func, generics, impl) = findExtensionMethod(instance, funcName, lookup) ?: return null
+        val (func, generics, impl) = findExtensionMethod(instance.type, funcName, lookup) ?: return null
 
-        val returnType = runCatching {
-            (func as BasicIRFunction).inferTypes(
-                listOf(instance) + args,
-                lookup,
-                generics,
-                history
-            )
-        }.getOrElse { it.printStackTrace(); throw it }
+        val fullArgs =listOf(instance) + args
+        val (returnType, id) = func.inferTypes(
+            fullArgs,
+            lookup,
+            generics,
+            history
+        )
 
         return SimpleFunctionCandidate(
-            oxideArgs = listOf(instance) + args,
-            jvmArgs = listOf(instance) + args.map { it.toActualJvmType() },
-            jvmReturnType = returnType.toActualJvmType(),
-            oxideReturnType = returnType,
+            oxideArgs = fullArgs.map { it.type },
+            jvmArgs = fullArgs.map { it.type.toActualJvmType() },
+            jvmReturnType = returnType.type.toActualJvmType(),
+            oxideReturnType = returnType.type,
             Opcodes.INVOKESTATIC,
             impl.fullSignature,
             funcName,
+            "${funcName}_$id",
+            returnForge = returnType,
             obfuscateName = true,
             requireDispatch = false
         )
@@ -155,13 +167,14 @@ class BasicOxideLookup(
     ): Type.Broad {
         val (func, generics) = findExtensionMethod(instance, funcName, lookup)!!
 
-        return (func as BasicIRFunction).inferUnknown(args, lookup, generics, history)
+        //return (func as BasicIRFunction).inferUnknown(args, lookup, generics, history)
+        TODO()
     }
 
     override suspend fun lookupAssociatedExtensionFunction(
         structName: SignatureString,
         funcName: String,
-        args: List<Type>,
+        args: List<InstanceForge>,
         lookup: IRLookup,
         history: History
     ): FunctionCandidate {
@@ -171,15 +184,19 @@ class BasicOxideLookup(
             .firstNotNullOf { (_, blocks) -> blocks.find { funcName in it.associatedFunctions }  }
 
         val func = impl.associatedFunctions[funcName]!!
-        val returnType = (func as BasicIRFunction).inferTypes(args, lookup, emptyMap(), history)
+        val (returnType, id) = (func as BasicIRFunction).inferTypes(args, lookup, emptyMap(), history)
+
+        val argTypes = args.map { it.type }
         return SimpleFunctionCandidate(
-            oxideArgs = args,
-            jvmArgs = args.map { it.toActualJvmType() },
-            jvmReturnType = returnType.toActualJvmType(),
-            oxideReturnType = returnType,
+            oxideArgs = argTypes,
+            jvmArgs = argTypes.map { it.toActualJvmType() },
+            jvmReturnType = returnType.type.toActualJvmType(),
+            oxideReturnType = returnType.type,
             Opcodes.INVOKESTATIC,
             impl.fullSignature,
+            returnForge = returnType,
             name = funcName,
+            jvmName = "${funcName}_$id",
             obfuscateName = true,
             requireDispatch = false
         )
@@ -198,14 +215,15 @@ class BasicOxideLookup(
             .firstNotNullOf { (_, blocks) -> blocks.find { funcName in it.associatedFunctions }  }
 
         val func = impl.associatedFunctions[funcName]!!
-        val returnType = (func as BasicIRFunction).inferUnknown(args, lookup, emptyMap(), history)
+        //val returnType = (func as BasicIRFunction).inferUnknown(args, lookup, emptyMap(), history)
 
-        return returnType
+        //return returnType
+        TODO()
     }
 
     override suspend fun lookupConstructor(
         structName: SignatureString,
-        args: List<Type>,
+        args: List<InstanceForge>,
         lookup: IRLookup
     ): FunctionCandidate? {
         val struct = getStruct(structName) ?: return null
@@ -214,26 +232,34 @@ class BasicOxideLookup(
 
 
         val generics = mutableMapOf<String, Type>()
-
-        val result = struct
-            .fields
-            .toList()
-            .zip(args)
+        val argTypes = args.map { it.type }
+        val result = struct.fields
+            .zip(argTypes)
             .all { (field, tp) -> field.second.matchesSubset(tp, generics, struct.generics, lookup) }
 
         if (!result) {
             error("Types did not match")
         }
 
+        val members = struct.fields.zip(args).associate { (it, forge) -> it.first to forge  }
+
+        val genericArgMap = struct.fields.associateNotNull { (name, type) ->
+            (type as? TemplatedType.Generic)?.let { name to it.name}
+        }
+
+        val forge = StructInstanceForge(members.toMutableMap(), genericArgMap, structName)
+
         return SimpleFunctionCandidate(
-            oxideArgs = args,
+            oxideArgs = argTypes,
             jvmArgs = fields.values.toList(),
             jvmReturnType = Type.Nothing,
             oxideReturnType = Type.BasicJvmType(structName, generics.mapValues { Type.Broad.Known(it.value) }),
             invocationType = Opcodes.INVOKESPECIAL,
             structName,
             "<init>",
+            "<init>",
             obfuscateName = false,
+            returnForge = forge,
             requireDispatch = false
         )
     }
@@ -264,7 +290,7 @@ class BasicOxideLookup(
     override suspend fun lookupMemberField(instance: Type, name: String, lookup: IRLookup): Type {
         return when (instance) {
             is Type.JvmType -> {
-                val type = getStruct(instance.signature)?.fields?.get(name)
+                val type = getStruct(instance.signature)?.fields?.find { it.first == name }?.second
                 val transformedGenerics = instance.genericTypes.asLazyTypeMap()
                 with(lookup) { type?.populate(transformedGenerics, true) } ?: error("No field $instance.$name")
             }
@@ -280,7 +306,7 @@ class BasicOxideLookup(
     ): Type {
         return when (instance) {
             is Type.JvmType -> {
-                val type = getStruct(instance.signature)?.fields?.get(name)
+                val type = getStruct(instance.signature)?.fields?.find { it.first == name }?.second
                 return type?.defaultVariant()  ?: error("No field $instance.$name")
             }
 
@@ -291,38 +317,43 @@ class BasicOxideLookup(
     override suspend fun lookupLambdaInit(signatureString: SignatureString): FunctionCandidate {
         val lambda = modules[signatureString.modName]?.getLambda(signatureString)!!
         val args = lambda.captures.values.toList()
+        val tps = args.map { it.type }
         return SimpleFunctionCandidate(
-            args,
-            args,
+            tps,
+            tps,
             Type.Nothing,
             Type.Lambda(signatureString),
             Opcodes.INVOKESPECIAL,
             signatureString,
             "<init>",
+            "<init>",
             obfuscateName = false,
-            requireDispatch = false
+            requireDispatch = false,
+            returnForge = BasicInstanceForge(Type.Lambda(signatureString)),
         )
     }
 
     override suspend fun lookupLambdaInvoke(
         signatureString: SignatureString,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup,
         history: History
     ): FunctionCandidate {
         val lambda = modules[signatureString.modName]?.getLambda(signatureString)!!
-        val returnType = lambda.inferTypes(argTypes, lookup, history)
+        val (returnType, id) = lambda.inferTypes(argTypes, lookup, history)
 
         return SimpleFunctionCandidate(
-            listOf(Type.Lambda(signatureString)) + argTypes,
-            argTypes,
-            returnType,
-            returnType,
+            listOf(Type.Lambda(signatureString)) + argTypes.map { it.type },
+            argTypes.map { it.type  },
+            returnType.type,
+            returnType.type,
             Opcodes.INVOKEVIRTUAL,
             signatureString,
             "invoke",
+            "invoke_$id",
             obfuscateName = true,
-            requireDispatch = false
+            requireDispatch = false,
+            returnForge = returnType,
         )
     }
 
@@ -378,7 +409,13 @@ suspend fun IRStruct.getDefaultVariant(lookup: IRLookup): Map<String, Type> {
     kotlin.runCatching {
         val defaultGenerics = generics.mapValues { _ -> Type.Object }
         return defaultVariant ?: fields
-            .mapValues { (_, tp) -> with(lookup) { tp.populate(defaultGenerics) } }
+            .associate { (name, tp) -> name to with(lookup) { tp.populate(defaultGenerics) } }
             .also { setDefaultVariant(it) }
     }.getOrElse { it.printStackTrace(); throw it }
+}
+
+inline fun<T, K, V> List<T>.associateNotNull(closure: (T) -> Pair<K, V>?): Map<K, V> {
+    val map = HashMap<K, V>()
+    for (item in this) closure(item)?.let { map[it.first] = it.second }
+    return map
 }

@@ -4,6 +4,7 @@ import com.language.TemplatedType
 import com.language.compilation.*
 import com.language.lookup.IRLookup
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.tracking.InstanceForge
 
 interface OxideLookup {
     fun newModFrame(modNames: Set<SignatureString>): OxideLookup
@@ -17,7 +18,7 @@ interface OxideLookup {
     suspend fun lookupFunction(
         module: SignatureString,
         funcName: String,
-        args: List<Type>,
+        args: List<InstanceForge>,
         lookup: IRLookup,
         history: History
     ): FunctionCandidate?
@@ -31,9 +32,9 @@ interface OxideLookup {
     ): Type.Broad
 
     suspend fun lookupExtensionMethod(
-        instance: Type,
+        instance: InstanceForge,
         funcName: String,
-        args: List<Type>,
+        args: List<InstanceForge>,
         lookup: IRLookup,
         history: History
     ): FunctionCandidate?
@@ -49,7 +50,7 @@ interface OxideLookup {
     suspend fun lookupAssociatedExtensionFunction(
         structName: SignatureString,
         funcName: String,
-        args: List<Type>,
+        args: List<InstanceForge>,
         lookup: IRLookup,
         history: History
     ): FunctionCandidate
@@ -68,12 +69,12 @@ interface OxideLookup {
     suspend fun lookupLambdaInit(signatureString: SignatureString): FunctionCandidate
     suspend fun lookupLambdaInvoke(
         signatureString: SignatureString,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup,
         history: History
     ): FunctionCandidate
 
-    suspend fun lookupConstructor(structName: SignatureString, args: List<Type>, lookup: IRLookup): FunctionCandidate?
+    suspend fun lookupConstructor(structName: SignatureString, args: List<InstanceForge>, lookup: IRLookup): FunctionCandidate?
     suspend fun lookupConstructorUnknown(structName: SignatureString, args: List<Type.Broad>, lookup: IRLookup): Type.Broad
     suspend fun lookupModifiers(structName: Type): Modifiers
 

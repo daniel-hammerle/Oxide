@@ -3,8 +3,10 @@ package com.language.lookup.jvm
 import com.language.codegen.Box
 import com.language.codegen.getOrThrow
 import com.language.compilation.*
+import com.language.compilation.tracking.InstanceForge
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.rep.asLazyTypeMap
+import com.language.lookup.jvm.rep.fromTypeAsJvm
 import com.language.lookup.jvm.rep.orderByKeys
 import org.objectweb.asm.Opcodes
 import java.lang.reflect.Field
@@ -32,36 +34,40 @@ data class JvmStaticMethodRepresentation(
     private val methods: Set<Method>,
     private val variants: Cache<List<Type>, FunctionCandidate>
 ) {
-    suspend fun lookupVariant(argTypes: List<Type>, jvmLookup: JvmLookup, generics: Map<String, Type.Broad>, lookup: IRLookup): FunctionCandidate? {
-        if (variants.contains(argTypes)) return variants.get(argTypes)
+    suspend fun lookupVariant(argTypes: List<InstanceForge>, jvmLookup: JvmLookup, generics: Map<String, Type.Broad>, lookup: IRLookup): FunctionCandidate? {
+        val tps = argTypes.map { it.type  }
+        if (variants.contains(tps)) return variants.get(tps)
 
         val (vararg, method) = methods.firstNotNullOfOrNull {
-            val result = it.fitsArgTypes(argTypes)
+            val result = it.fitsArgTypes(tps)
             Box(result.first).takeIf { result.second }?.let { a -> a to it }
         } ?: return null
 
-        val oxideReturnType = evaluateReturnType(argTypes, generics, method, jvmLookup, lookup)
+        val oxideReturnType = evaluateReturnType(tps, generics, method, jvmLookup, lookup)
         val errorTypes = getErrorTypes(method)
 
         val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
+        val forge = InstanceForge.fromTypeAsJvm(actualReturnType)
 
         val jvmArgTypes = method.parameterTypes.map { it.toType() }
         val candidate =  SimpleFunctionCandidate(
-            argTypes,
+            tps,
             jvmArgTypes,
             oxideReturnType,
             actualReturnType,
             Opcodes.INVOKESTATIC,
             ownerSignature,
             name,
+            name,
             obfuscateName = false,
             requireDispatch = false,
             isInterface = ownerIsInterface,
             varargInfo = vararg.item,
+            returnForge = forge,
             requiresCatch = errorTypes
         )
 
-        variants.set(argTypes, candidate)
+        variants.set(tps, candidate)
         return candidate
     }
     fun getErrorTypes(argTypes: List<Type>): Set<SignatureString> {
@@ -117,38 +123,44 @@ data class JvmMethodRepresentation(
     }
 
 
-    suspend fun lookupVariant(type: Type, generics: Map<String, Type.Broad>, argTypes: List<Type>, jvmLookup: JvmLookup, lookup: IRLookup): FunctionCandidate? {
-        if (variants.contains(generics to argTypes)) return variants.get(generics to argTypes)
+    suspend fun lookupVariant(type: InstanceForge, generics: Map<String, Type.Broad>, argTypes: List<InstanceForge>, jvmLookup: JvmLookup, lookup: IRLookup): FunctionCandidate? {
+        val tps = argTypes.map { forge -> forge.type  }
+        if (variants.contains(generics to tps)) return variants.get(generics to tps)
 
         val (vararg, method) = methods.firstNotNullOfOrNull {
-            val result = it.fitsArgTypes(argTypes)
+            val result = it.fitsArgTypes(tps)
             Box(result.first).takeIf { result.second }?.let { a -> a to it }
         } ?: return null
 
-        val oxideReturnType = evaluateReturnType(argTypes, generics, method, jvmLookup, lookup)
+        val oxideReturnType = evaluateReturnType(tps, generics, method, jvmLookup, lookup)
 
         val errorTypes = getErrorTypes(method)
 
         val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
 
+        val forge = InstanceForge.fromTypeAsJvm(actualReturnType)
+
+
         val jvmArgTypes = method.parameterTypes.map { it.toType() }
         val candidate =  SimpleFunctionCandidate(
-            listOf(type) + argTypes,
+            listOf(type.type) + tps,
             jvmArgTypes,
             method.returnType.toType(),
             actualReturnType,
             if (isOwnerInterface) Opcodes.INVOKEINTERFACE else Opcodes.INVOKEVIRTUAL,
             ownerSignature,
             name,
+            name,
             obfuscateName = false,
             requireDispatch = false,
-            castReturnType = hasGenericReturnType(argTypes),
+            castReturnType = hasGenericReturnType(tps),
             isInterface = ownerIsInterface,
             varargInfo = vararg.item,
-            errorTypes
+            errorTypes,
+            returnForge = forge,
         )
 
-        variants.set(generics to argTypes, candidate)
+        variants.set(generics to tps, candidate)
         return candidate
     }
 

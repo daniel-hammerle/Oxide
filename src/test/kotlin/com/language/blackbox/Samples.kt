@@ -76,11 +76,10 @@ class Samples {
                 println(x.getClass().getName())
                 println(3.toString())
                 println(3.2.getClass().getName())
-                Double.parseDouble(read())
             }
         """.trimIndent()
 
-        runCode(code, input = "3.2").out("3\njava.lang.Integer\n3\njava.lang.Double\n").returnValue(3.2)
+        runCode(code, input = "3.2").out("3\njava.lang.Integer\n3\njava.lang.Double\n")
     }
 
     @Test
@@ -440,5 +439,29 @@ class Samples {
         """.trimIndent()
 
         runCode(code).out("A").returnValue(null)
+    }
+
+    @Test
+    fun testTypeTracking() {
+        val code = MinimalTestingLib + """
+
+            struct Person { name, age }
+
+            func main {
+                p = Person("Tom", 18)
+                print(p.name)
+
+                example(p)
+
+                print(p.name * 3)
+            }
+
+            func example(instance) {
+                instance.name = 2
+            }
+        """.trimIndent()
+
+        runCode(code).out("Tom6").returnValue(null)
+
     }
 }

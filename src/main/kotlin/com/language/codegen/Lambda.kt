@@ -2,6 +2,7 @@ package com.language.codegen
 
 import com.language.compilation.LambdaContainer
 import com.language.compilation.Type
+import com.language.lookup.oxide.lazyTransform
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
@@ -22,13 +23,13 @@ suspend fun compileLambda(lambda: LambdaContainer): ByteArray {
         cw.visitField(
             Opcodes.ACC_PRIVATE,
             name,
-            type.toJVMDescriptor(),
+            type.type.toJVMDescriptor(),
             null,
             null
         )
     }
 
-    generateConstructor(cw, lambda.captures, lambda.signature)
+    generateConstructor(cw, lambda.captures.mapValues { it.value.type }, lambda.signature)
 
 
     lambda.checkedVariants.map { (argTypes, body) ->

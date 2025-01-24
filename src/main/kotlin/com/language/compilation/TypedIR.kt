@@ -5,45 +5,47 @@ import com.language.CompareOp
 import com.language.MathOp
 import com.language.codegen.VarFrame
 import com.language.codegen.asUnboxedOrIgnore
+import com.language.compilation.tracking.BasicInstanceForge
+import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.join
 import org.objectweb.asm.Label
 
 sealed interface TypedInstruction {
+    val forge: InstanceForge
     val type: Type
+        get() = forge.type
 
     sealed interface Const : TypedInstruction
 
     sealed interface PrimitiveConst : Const
 
     data class LoadConstString(val value: String): PrimitiveConst {
-        override val type: Type = Type.String
+        override val forge: InstanceForge = InstanceForge.ConstString
     }
     data class LoadConstInt(val value: Int): PrimitiveConst {
-        override val type: Type = Type.IntT
+        override val forge: InstanceForge = InstanceForge.ConstInt
     }
     data class LoadConstDouble(val value: Double): PrimitiveConst {
-        override val type: Type = Type.DoubleT
+        override val forge: InstanceForge = InstanceForge.ConstDouble
     }
     data class LoadConstBoolean(val value: Boolean): PrimitiveConst {
-        override val type: Type = if(value) Type.BoolTrue else Type.BoolFalse
+        override val forge: InstanceForge =  if (value) InstanceForge.ConstBoolTrue else InstanceForge.ConstBoolFalse
     }
 
     data class Ignore(val other: TypedInstruction) : TypedInstruction {
-        override val type: Type
-            get() = Type.Nothing
+        override val forge: InstanceForge = InstanceForge.ConstNothing
     }
 
-    data class InlineBody(val body: TypedInstruction, val endLabel: Label, override val type: Type): TypedInstruction
+    data class InlineBody(val body: TypedInstruction, val endLabel: Label, override val forge: InstanceForge): TypedInstruction
 
     data class Try(val parent: TypedInstruction, val errorTypes: List<SignatureString>): TypedInstruction {
-        override val type = parent.type
+        override val forge: InstanceForge = parent.forge
     }
 
-    data class Catch(val parent: TypedInstruction, val errorTypes: Set<SignatureString>, val errorType: Type): TypedInstruction {
-        override val type = parent.type.join(errorType)
-    }
 
     data class Return(val returnValue: TypedInstruction, val label: Label?): TypedInstruction {
-        override val type: Type = Type.Never
+        override val forge: InstanceForge
+            get() = InstanceForge.ConstNever
     }
 
     data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type.Broad, val tempArrayVariable: Int?) : TypedInstruction {
@@ -52,6 +54,7 @@ sealed interface TypedInstruction {
             SignatureString("java::util::ArrayList"),
             linkedMapOf("E" to itemType)
         )
+        override val forge: InstanceForge = BasicInstanceForge(type)
     }
 
     data class LoadArray(val items: List<TypedConstructingArgument>, val arrayType: ArrayType, val itemType: Type.Broad, val tempIndexVarId: Int, val tempArrayVarId: Int) : TypedInstruction {
@@ -61,6 +64,7 @@ sealed interface TypedInstruction {
             ArrayType.Double -> Type.DoubleArray
             ArrayType.Bool -> Type.BoolArray
         }
+        override val forge: InstanceForge = BasicInstanceForge(type)
     }
 
 
@@ -75,7 +79,7 @@ sealed interface TypedInstruction {
         val postLoopAdjustments: ScopeAdjustment,
         val bodyFrame: VarFrame
     ) : TypedInstruction {
-        override val type: Type = Type.Nothing
+        override val forge: InstanceForge = InstanceForge.ConstNothing
     }
 
     data class Keep(
@@ -84,7 +88,9 @@ sealed interface TypedInstruction {
         val parentName: SignatureString
     ): TypedInstruction {
         override val type: Type
-            get() = value.type.asBoxed()
+            get() = value.type
+        override val forge: InstanceForge
+            get() = value.forge
     }
 
     data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.Broad) : TypedInstruction {
@@ -94,6 +100,7 @@ sealed interface TypedInstruction {
             ArrayType.Double -> Type.DoubleArray
             ArrayType.Bool -> Type.BoolArray
         }
+        override val forge: InstanceForge = BasicInstanceForge(type)
     }
 
     data class LoadConstConstArray(val items: List<Const>, val arrayType: ArrayType, val itemType: Type.Broad): Const {
@@ -103,6 +110,7 @@ sealed interface TypedInstruction {
             ArrayType.Double -> Type.DoubleArray
             ArrayType.Bool -> Type.BoolArray
         }
+        override val forge: InstanceForge = BasicInstanceForge(type)
     }
 
     data class DynamicCall(
@@ -112,8 +120,9 @@ sealed interface TypedInstruction {
         val args: List<TypedInstruction>,
         val commonInterface: Type.JvmType?
     ) : TypedInstruction {
-        override val type: Type
-            get() = candidate.oxideReturnType
+        override val forge: InstanceForge
+            get() = candidate.returnForge
+        override val type: Type = candidate.oxideReturnType
     }
 
     data class StaticCall(
@@ -122,8 +131,9 @@ sealed interface TypedInstruction {
         val parentName: SignatureString,
         val args: List<TypedInstruction>
     ) : TypedInstruction {
-        override val type: Type
-            get() = candidate.oxideReturnType
+        override val forge: InstanceForge
+            get() = candidate.returnForge
+        override val type: Type = candidate.oxideReturnType
     }
 
     data class ModuleCall(
@@ -132,22 +142,23 @@ sealed interface TypedInstruction {
         val parentName: SignatureString,
         val args: List<TypedInstruction>
     ) : TypedInstruction {
-        override val type: Type
-            get() = candidate.oxideReturnType
+        override val forge: InstanceForge
+            get() = candidate.returnForge
+        override val type: Type = candidate.oxideReturnType
     }
 
     data class MultiInstructions(
         val instructions: List<TypedInstruction>,
         val varFrame: VarFrame
     ) : TypedInstruction {
-        override val type: Type = instructions.lastOrNull()?.type ?: Type.Nothing
+        override val forge: InstanceForge = instructions.lastOrNull()?.forge ?: InstanceForge.ConstNothing
     }
 
     data class Math(
         val op: MathOp,
         val first: TypedInstruction,
         val second: TypedInstruction,
-        override val type: Type
+        override val forge: InstanceForge
     ) : TypedInstruction
 
     data class Comparing(
@@ -155,15 +166,19 @@ sealed interface TypedInstruction {
         val second: TypedInstruction,
         val op: CompareOp
     ) : TypedInstruction {
-        override val type: Type = Type.BoolUnknown
+        override val forge: InstanceForge
+            get() = InstanceForge.ConstBool
     }
 
     data class ConstructorCall(
         val className: SignatureString,
         val args: List<TypedInstruction>,
         val candidate: FunctionCandidate,
-        override val type: Type
-    ) : TypedInstruction
+    ) : TypedInstruction {
+        override val forge: InstanceForge
+            get() = candidate.returnForge
+        override val type: Type = candidate.oxideReturnType
+    }
 
     data class If(
         val cond: TypedInstruction,
@@ -179,12 +194,15 @@ sealed interface TypedInstruction {
             else -> body.type.asBoxed().join(elseBody?.type?.asBoxed() ?: Type.Null).asUnboxedOrIgnore()
         }
 
+        override val forge: InstanceForge
+            get() = if (elseBody != null) body.forge.join(elseBody.forge) else body.forge
+
     }
 
     data class Not(
         val ins: TypedInstruction
     ) : TypedInstruction {
-        override val type: Type = Type.BoolUnknown
+        override val forge: InstanceForge = InstanceForge.ConstBool
     }
 
     data class LogicOperation(
@@ -192,17 +210,18 @@ sealed interface TypedInstruction {
         val second: TypedInstruction,
         val op: BooleanOp
     ) : TypedInstruction {
-        override val type: Type = Type.BoolUnknown
+        override val forge: InstanceForge = InstanceForge.ConstBool
     }
 
     data class Lambda(
         val captures: Map<String, TypedInstruction>,
         val signatureString: SignatureString,
         val constructorCandidate: FunctionCandidate, //the candidate for the constructor call (when we actually need a runtime instance)
-        val body: Instruction, // the reason we also carry the body itself is just so we can potentially inline
+        val body: Instruction, // the reason the body itself is carried is potential inlining
         val args: List<String> // the same reasoning applies to the arg names
     ): PrimitiveConst {
         override val type: Type = Type.Lambda(signatureString)
+        override val forge: InstanceForge = InstanceForge.make(type)
     }
 
     data class Match(
@@ -212,6 +231,7 @@ sealed interface TypedInstruction {
     ) : TypedInstruction {
         override val type: Type
             get() = patterns.map { it.body.type }.reduce { acc, type -> acc.join(type)  }.let { if (it is Type.Union) it.asBoxed() else it }.simplifyUnbox()
+        override val forge: InstanceForge = patterns.map { it.body.forge }.reduce { acc, forge -> acc.join(forge) }
     }
 
     data class While(
@@ -219,34 +239,35 @@ sealed interface TypedInstruction {
         val body: TypedInstruction,
         val infinite: Boolean,
     ) : TypedInstruction {
-        override val type: Type = if (infinite) Type.Never else Type.Nothing
+        override val forge: InstanceForge = if (infinite) InstanceForge.ConstNever else InstanceForge.ConstNothing
     }
 
     data class StoreVar(val id: Int, val value: TypedInstruction) : TypedInstruction {
-        override val type: Type = Type.Nothing
+        override val forge: InstanceForge = InstanceForge.ConstNothing
     }
 
-    data class LoadVar(val id: Int, override val type: Type) : TypedInstruction
+    data class LoadVar(val id: Int, override val forge: InstanceForge) : TypedInstruction
 
-    data class DynamicPropertyAccess(val parent: TypedInstruction, val name: String, override val type: Type, val physicalType: Type) : TypedInstruction
+    data class DynamicPropertyAccess(val parent: TypedInstruction, val name: String, override val forge: InstanceForge, val physicalType: Type) : TypedInstruction
 
-    data class DynamicPropertyAssignment(val parent: TypedInstruction, val name: String, val value: TypedInstruction) : TypedInstruction {
-        override val type: Type = Type.Nothing
+    data class DynamicPropertyAssignment(val parent: TypedInstruction, val name: String, val value: TypedInstruction, val physicalType: Type) : TypedInstruction {
+        override val forge: InstanceForge
+            get() = InstanceForge.ConstNothing
     }
 
 
-    data class StaticPropertyAccess(val parentName: SignatureString, val name: String, override val type: Type): TypedInstruction
+    data class StaticPropertyAccess(val parentName: SignatureString, val name: String, override val forge: InstanceForge, override val type: Type): TypedInstruction
 
     data object Pop : TypedInstruction {
-        override val type: Type = Type.Nothing
+        override val forge: InstanceForge = InstanceForge.ConstNothing
     }
     data object Null : TypedInstruction {
-        override val type: Type = Type.Null
+        override val forge: InstanceForge = InstanceForge.ConstNull
     }
 
     //Doesn't for the type to be correct!!!
-    data class Dup(override val type: Type): TypedInstruction
-    data class Noop(override val type: Type): TypedInstruction
+    data class Noop(override val type: Type, override val forge: InstanceForge = BasicInstanceForge(type)): TypedInstruction {
+    }
 }
 
 
@@ -280,7 +301,7 @@ sealed interface TypedIRPattern {
         override val bindings: Set<Pair<String, Type>> = setOf(name to type)
     }
     data class Destructuring(
-        val type: Type,
+        val forge: InstanceForge,
         val patterns: List<TypedIRPattern>,
         val loadItem: TypedInstruction,
         val isLast: Boolean,

@@ -1,10 +1,11 @@
 package com.language.compilation.metadata
 
 import com.language.compilation.*
+import com.language.compilation.tracking.InstanceForge
 import org.objectweb.asm.Label
 
 interface MetaDataHandle : LambdaAppender{
-    fun issueReturnTypeAppend(type: Type)
+    fun issueReturnTypeAppend(type: InstanceForge)
 
     fun appendKeepBlock(name: String, type: Type)
 

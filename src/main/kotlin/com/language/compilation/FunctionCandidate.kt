@@ -1,6 +1,8 @@
 package com.language.compilation
 
 import com.language.codegen.*
+import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.join
 import com.language.compilation.variables.allEqual
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
@@ -11,9 +13,11 @@ interface FunctionCandidate {
     val jvmArgs: List<Type>
     val jvmReturnType: Type
     val oxideReturnType: Type
+    val returnForge: InstanceForge
     val invocationType: Int
     val jvmOwner: SignatureString
     val name: String
+    val jvmName: String
     val obfuscateName: Boolean
     val requireDispatch: Boolean
     val varargInfo: Pair<Int, Type>?
@@ -36,6 +40,9 @@ data class UnionFunctionCandidate(
                 }
         }
 
+    override val jvmName: String
+        get() = TODO("Not yet implemented")
+
     override val jvmArgs: List<Type>
         get() {
             return candidates.values
@@ -56,6 +63,7 @@ data class UnionFunctionCandidate(
                 .map { it.oxideReturnType }
                 .reduce { acc, type -> acc.join(type) }
         }
+    override val returnForge: InstanceForge = candidates.map { (_, can) -> can.returnForge  }.reduce { acc, forge -> acc.join(forge) }
     override val invocationType: Int
         get() = error("No single invocation kind exists")
     override val jvmOwner: SignatureString
@@ -92,12 +100,14 @@ data class SimpleFunctionCandidate(
     override val invocationType: Int,
     override val jvmOwner: SignatureString,
     override val name: String,
+    override val jvmName: String,
     override val obfuscateName: Boolean,
     override val requireDispatch: Boolean,
     override val castReturnType: Boolean = false,
     val isInterface: Boolean = false,
     override val varargInfo: Pair<Int, Type>? = null,
-    override val requiresCatch: Set<SignatureString> = emptySet()
+    override val requiresCatch: Set<SignatureString> = emptySet(),
+    override val returnForge: InstanceForge,
 
 ) : FunctionCandidate {
 
@@ -113,7 +123,7 @@ data class SimpleFunctionCandidate(
         mv.visitMethodInsn(
             invocationType,
             jvmOwner.toJvmNotation(),
-            if (obfuscateName) jvmName(name, oxideArgs) else name,
+            jvmName,
             this.toJvmDescriptor(),
             isInterface
         )

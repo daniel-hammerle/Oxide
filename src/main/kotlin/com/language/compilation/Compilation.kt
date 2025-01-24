@@ -72,13 +72,13 @@ fun TemplatedType.populate(module: ModuleLookup): TemplatedType = when (this) {
 
 fun compileStruct(struct: Struct, module: ModuleLookup): IRStruct {
     val appendedGenerics = mutableMapOf<String, GenericType>()
-    val fields = struct.args.mapValues {
-        if (it.value == null) {
-            val genericName = "__gen_"+it.key
+    val fields = struct.args.map { (name, value) ->
+        name to if (value == null) {
+            val genericName = "__gen_$name"
             appendedGenerics[genericName] = GenericType(Modifiers.Empty, emptyList())
             TemplatedType.Generic(genericName)
         } else {
-            it.value!!.populate(module)
+            value.populate(module)
         }
     }
     return IRStruct(fields, struct.generics + appendedGenerics, struct.modifiers, struct.info)

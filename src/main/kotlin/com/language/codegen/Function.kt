@@ -14,10 +14,9 @@ suspend fun compileCheckedFunction(
     instanceType: Type? = null
 ) {
     val accessModifiers = Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL or if (static) Opcodes.ACC_STATIC else 0
-    val methodName = jvmName(name, if (instanceType != null) listOf(instanceType) + argTypes else argTypes)
     val mv = cw.visitMethod(
         accessModifiers,
-        methodName,
+        "${name}_${metaData.uniqueId}",
         generateJVMFunctionSignature(argTypes, metaData.returnType),
         null,
         arrayOf()

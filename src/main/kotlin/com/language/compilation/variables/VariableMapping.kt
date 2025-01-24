@@ -16,8 +16,7 @@ interface VariableMapping {
     fun toVarFrame(): VarFrame
     fun deleteVar(id: Int)
     fun minVarCount(count: Int)
-    fun changeVar(id: Int, value: TypedInstruction): Pair<Int?, TypedInstruction>
-    fun loadVar(id: Int): TypedInstruction
+    fun changeVar(id: Int, value: TypedInstruction): Int?
     fun getTempVar(type: Type): TempVariable
     fun tryAllocateId(id: Int, type: Type): Boolean
     fun genericChangeRequest(id: Int, genericName: String, type: Type)
@@ -102,10 +101,6 @@ class VariableMappingImpl private constructor(
         }
     }
 
-    override fun loadVar(id: Int): TypedInstruction {
-        return TypedInstruction.LoadVar(id, getType(id))
-    }
-
     private fun reallocate(id: Int, newType: Type): Int {
         val oldType = variables[id] ?: return new(newType)
 
@@ -129,15 +124,15 @@ class VariableMappingImpl private constructor(
         error("Unreachable")
     }
 
-    override fun changeVar(id: Int, value: TypedInstruction): Pair<Int?, TypedInstruction> {
+    override fun changeVar(id: Int, value: TypedInstruction): Int? {
         if (id !in variables) {
             error("Invalid argument")
         }
         if (value.type != variables[id]) {
             val newId = reallocate(id, value.type)
-            return newId to TypedInstruction.StoreVar(newId, value)
+            return newId
         }
-        return null to TypedInstruction.StoreVar(id, value)
+        return null
     }
 
     override fun getTempVar(type: Type): TempVariable {

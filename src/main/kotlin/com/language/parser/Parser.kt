@@ -141,7 +141,7 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
                     tokens.expect<Token.OpenCurly>()
                     parseTypedArgs(tokens, generics.keys)
                 }
-                else -> emptyMap()
+                else -> emptyList()
             }
             name to Struct(args, generics, modifiers, info.finish())
         }
@@ -194,19 +194,19 @@ fun parseImport(tokens: Tokens): Set<SignatureString> {
     }
 }
 
-fun parseTypedArgs(tokens: Tokens, generics: Set<String>, closingSymbol: Token = Token.ClosingCurly): Map<String, TemplatedType?> {
+fun parseTypedArgs(tokens: Tokens, generics: Set<String>, closingSymbol: Token = Token.ClosingCurly): List<Pair<String, TemplatedType?>> {
     if (tokens.visitNext() == closingSymbol) {
         tokens.next()
-        return emptyMap()
+        return emptyList()
     }
-    val entries = mutableMapOf<String, TemplatedType?>()
+    val entries = mutableListOf<Pair<String, TemplatedType?>>()
     while(true) {
         val name = tokens.expect<Token.Identifier>().name
 
         val type = if (tokens.visitNext() != closingSymbol && tokens.visitNext() !is Token.Comma) {
             parseType(tokens, generics)
         } else null
-        entries[name] = type
+        entries += name to type
         when(tokens.next()) {
             closingSymbol -> return entries
             Token.Comma -> continue

@@ -4,15 +4,10 @@ import com.language.TemplatedType
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.tracking.InstanceForge
 import com.language.compilation.variables.VariableManager
 
 interface IRLookup {
-
-    /**
-     * It looks up what arguments of a function are generic and returns a map
-     * containing their names and their corresponding index in the function arguments
-     */
-    suspend fun lookUpGenericTypes(instance: Type, funcName: String, argTypes: List<Type>): Map<String, Type>
 
     /**
      * Checks whether a given method has a generic return type
@@ -24,7 +19,7 @@ interface IRLookup {
      * # Note
      * If the given module or class doesn't have a matching static method it will throw
      */
-    suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<Type>, history: History, generics: Map<String, Type.Broad> = emptyMap()): FunctionCandidate
+    suspend fun lookUpCandidate(modName: SignatureString, funcName: String, argTypes: List<InstanceForge>, history: History, generics: Map<String, Type.Broad> = emptyMap()): FunctionCandidate
 
     /**
      * Returns the function candidate for a given method
@@ -36,7 +31,7 @@ interface IRLookup {
      * # Note
      * If the type doesn't have a matching method, the function will throw
      */
-    suspend fun lookUpCandidate(instance: Type, funcName: String, argTypes: List<Type>, history: History): FunctionCandidate
+    suspend fun lookUpCandidate(instance: InstanceForge, funcName: String, argTypes: List<InstanceForge>, history: History): FunctionCandidate
 
 
     /**
@@ -94,7 +89,7 @@ interface IRLookup {
      * Returns a constructor which matches the argument types
      * The function will throw if the class / struct doesn't exist or no matching constructor is found
      */
-    suspend fun lookUpConstructor(className: SignatureString, argTypes: List<Type>): FunctionCandidate
+    suspend fun lookUpConstructor(className: SignatureString, argTypes: List<InstanceForge>): FunctionCandidate
     suspend fun lookUpConstructorUnknown(className: SignatureString, argTypes: List<Type.Broad>): Type.Broad
 
     /**
@@ -102,13 +97,14 @@ interface IRLookup {
      * # Note
      * When called with primitives it will throw
      */
-    suspend fun lookUpFieldType(instance: Type, fieldName: String): Type
+    suspend fun lookUpFieldType(instance: Type, fieldName: String): Type?
     suspend fun lookUpPhysicalFieldType(instance: Type, fieldName: String): Type
 
     /**
      * Returns the type of the static field or throw in case it doesn't exist
      */
     suspend fun lookUpFieldType(modName: SignatureString, fieldName: String): Type
+    suspend fun lookUpFieldForge(modName: SignatureString, fieldName: String): InstanceForge
 
     /**
      * Returns the fields and their corresponding types in the order
@@ -126,7 +122,7 @@ interface IRLookup {
 
     suspend fun lookupLambdaInit(signatureString: SignatureString): FunctionCandidate
 
-    suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<Type>, history: History): FunctionCandidate
+    suspend fun lookupLambdaInvoke(signatureString: SignatureString, argTypes: List<InstanceForge>, history: History): FunctionCandidate
 
     suspend fun TemplatedType.populate(generics: Map<String, Type>, box: Boolean = false): Type
 }

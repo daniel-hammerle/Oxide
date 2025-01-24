@@ -1,59 +1,25 @@
 
-use java::{lang::System, util::{Scanner, Random}}
-inline func print(value) System.out.print(value)
-inline func println(value) System.out.println(value)
-
-
-func randBool {
-    random = keep { Random() }
-    random.nextBoolean()
-}
-
-func read {
-    scanner = keep { Scanner(System.in) }
-    scanner.nextLine()
-}
-
-
+use std::{io, random}
 impl<T> T | null {
-    inline func unwrap(self, message) {
+    inline func map(self, closure) {
         match self {
-            null -> panic(message)
-            T -> self
+            null -> self
+            T -> closure(self)
         }
     }
 }
 
 func main {
-    result = example().unwrap("expected value (panicing)")
-    print(result.toString())
-    todo.main()
+    result = example().map { |it| it.name }
+    io.println(result)
 }
-
-struct A
-
-impl A {
-    func toString(self) {
-        "A"
-    }
-}
-
-func panic(message) {
-    println(message)
-    while true {}
-}
-
-func magic(value) {
-    if randBool() {
-        value
-    } else {
-        value
-    }
+struct A {
+    name str
 }
 
 func example {
-    if magic(true) {
-        A()
+    if random.bool() {
+        A("Hello")
     } else {
         null
     }

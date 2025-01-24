@@ -3,7 +3,10 @@ package com.language.lookup.jvm
 import com.language.compilation.FunctionCandidate
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
+import com.language.compilation.Type.JvmType
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.StructInstanceForge
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.parsing.ClassParser
 import com.language.lookup.jvm.parsing.FunctionInfo
@@ -35,15 +38,16 @@ class CachedJvmLookup(
         }
 
     override suspend fun lookUpMethod(
-        instance: Type.JvmType,
+        instance: InstanceForge,
         functionName: String,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup
     ): FunctionCandidate? {
-        return getClass(instance.signature).lookupMethod(
+        val tp = (instance.type as JvmType)
+        return getClass(tp.signature).lookupMethod(
             functionName,
             instance,
-            instance.genericTypes,
+            tp.genericTypes,
             argTypes,
             lookup,
             this
@@ -62,7 +66,7 @@ class CachedJvmLookup(
     override suspend fun lookUpAssociatedFunction(
         className: SignatureString,
         functionName: String,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup,
         generics: Map<String, Type.Broad>
     ): FunctionCandidate? = getClass(className).lookUpAssociatedFunction(functionName, argTypes, lookup, this, generics)
@@ -85,6 +89,13 @@ class CachedJvmLookup(
         return getClass(className).lookUpStaticField(fieldName)
     }
 
+    override suspend fun lookupFieldForge(
+        className: SignatureString,
+        fieldName: String
+    ): InstanceForge? {
+        return getClass(className).lookupFieldForge(fieldName)
+    }
+
     override suspend fun hasGenericReturnType(
         instance: Type.JvmType,
         functionName: String,
@@ -102,7 +113,7 @@ class CachedJvmLookup(
 
     override suspend fun lookupConstructor(
         className: SignatureString,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup
     ): FunctionCandidate? {
         return getClass(className).lookupConstructor(argTypes, lookup)

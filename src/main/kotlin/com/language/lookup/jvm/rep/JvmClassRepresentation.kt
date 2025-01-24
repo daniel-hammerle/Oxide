@@ -6,6 +6,9 @@ import com.language.compilation.*
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
 import com.language.compilation.templatedType.matchesImpl
+import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.JvmInstanceForge
+import com.language.compilation.tracking.join
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.*
 import com.language.lookup.jvm.parsing.ClassInfo
@@ -14,15 +17,16 @@ import com.language.lookup.jvm.parsing.FunctionInfo
 import com.language.lookup.oxide.lazyTransform
 import org.objectweb.asm.Opcodes
 import java.lang.reflect.Field
+import java.lang.reflect.Modifier
 
 interface JvmClassRepresentation {
     suspend fun methodHasGenericReturnType(name: String, argTypes: List<Type>, lookup: IRLookup): Boolean
 
     suspend fun lookupMethod(
         name: String,
-        type: Type,
+        type: InstanceForge,
         generics: Map<String, Type.Broad>,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
     ): FunctionCandidate?
@@ -38,7 +42,7 @@ interface JvmClassRepresentation {
 
     suspend fun lookUpAssociatedFunction(
         name: String,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup,
         generics: Map<String, Type.Broad>
@@ -56,11 +60,13 @@ interface JvmClassRepresentation {
 
     suspend fun lookUpStaticField(name: String): Type?
 
+    suspend fun lookupFieldForge(name: String): InstanceForge?
+
     fun hasInterface(signatureString: SignatureString): Boolean
 
     suspend fun lookupGenericTypes(name: String, argTypes: List<Type>, lookup: IRLookup): Map<String, Type>?
 
-    suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate?
+    suspend fun lookupConstructor(argTypes: List<InstanceForge>, lookup: IRLookup): FunctionCandidate?
     suspend fun lookupConstructorUnknown(argTypes: List<Type.Broad>, lookup: IRLookup): Type.Broad?
 
     fun getGenericDefinitionOrder(): List<String>
@@ -102,6 +108,8 @@ data class BasicJvmClassRepresentation(
 
     override val modifiers: Modifiers = parseModifiers()
     private val clazzName= SignatureString.fromDotNotation(this.clazz.name)
+    val staticFieldForges: Map<String, InstanceForge> =
+        clazz.fields.filter { Modifier.isStatic(it.modifiers) }.associate { it.name to InstanceForge.make(it.type.toType()) }
 
     private fun parseModifiers() = modifiers {
         if (hasSuperType(SignatureString("java::lang::Throwable"))) setError()
@@ -158,9 +166,9 @@ data class BasicJvmClassRepresentation(
     }
 
     override suspend fun lookupMethod(
-        name: String, type: Type,
+        name: String, type: InstanceForge,
         generics: Map<String, Type.Broad>,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
     ): FunctionCandidate? =
@@ -178,7 +186,7 @@ data class BasicJvmClassRepresentation(
     }
 
     override suspend fun lookUpAssociatedFunction(
-        name: String, argTypes: List<Type>,
+        name: String, argTypes: List<InstanceForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup,
         generics: Map<String, Type.Broad>
@@ -215,6 +223,11 @@ data class BasicJvmClassRepresentation(
         return fieldType
     }
 
+
+    override suspend fun lookupFieldForge(name: String): InstanceForge? {
+        return staticFieldForges[name]
+    }
+
     override fun hasInterface(signatureString: SignatureString): Boolean {
         return hasInterface(clazz, signatureString, mutableSetOf())
     }
@@ -244,18 +257,24 @@ data class BasicJvmClassRepresentation(
         clazz.typeParameters.associate { it.name to Type.Broad.Unset }
     )
 
-    override suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
-        val constructor = clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes).second } ?: return null
+    override suspend fun lookupConstructor(argTypes: List<InstanceForge>, lookup: IRLookup): FunctionCandidate? {
+        val constructor = clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes.map { it.type }).second } ?: return null
         val jvmArgs = constructor.parameterTypes.map { it.toType() }
 
+        val clazzGenerics = clazz.typeParameters.map { it.name }
+
+        val forge = JvmInstanceForge(clazzGenerics.associate { it to Type.Broad.Unset  }.toMutableMap(), clazzName)
+
         val candidate = SimpleFunctionCandidate(
-            oxideArgs = argTypes,
+            oxideArgs = argTypes.map { it.type },
             jvmArgs = jvmArgs,
             jvmReturnType = Type.Nothing,
-            oxideReturnType = this.toType(),
+            oxideReturnType = forge.type,
             invocationType = Opcodes.INVOKESPECIAL,
             jvmOwner = SignatureString.fromDotNotation(clazz.name),
             name = "<init>",
+            jvmName = "<init>",
+            returnForge = forge,
             obfuscateName = false,
             requireDispatch = false
         )
@@ -362,29 +381,34 @@ data class JvmClassInfoRepresentation(
 
     override suspend fun lookupMethod(
         name: String,
-        type: Type,
+        type: InstanceForge,
         generics: Map<String, Type.Broad>,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
     ): FunctionCandidate? {
-        val method = getMethod(name, argTypes, lookup) ?: return null
+        val tps = argTypes.map { it.type  }
+        val method = getMethod(name, tps, lookup) ?: return null
         val oxideReturnType = with(lookup) {
             val tp = method.returnType.populate(generics.asLazyTypeMap())
-            evaluateReturnType(tp, argTypes, method)
+            evaluateReturnType(tp, tps, method)
         }
-        val errorType = getErrorTypesMethod(mutableSetOf(), name, argTypes, lookup, jvmLookup)
+        val errorType = getErrorTypesMethod(mutableSetOf(), name, tps, lookup, jvmLookup)
 
         val actualReturnType = errorType.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
 
+        val forge = InstanceForge.fromTypeAsJvm(actualReturnType)
+
         val candidate = SimpleFunctionCandidate(
-            listOf(instanceType) + argTypes,
+            listOf(instanceType) + tps,
             method.args.map { it.defaultVariant() },
             method.returnType.defaultVariant(),
             actualReturnType,
             Opcodes.INVOKEVIRTUAL,
             info.signature,
             name,
+            name,
+            returnForge = forge,
             obfuscateName = false,
             requireDispatch = false,
             requiresCatch = errorType
@@ -406,26 +430,30 @@ data class JvmClassInfoRepresentation(
 
     override suspend fun lookUpAssociatedFunction(
         name: String,
-        argTypes: List<Type>,
+        argTypes: List<InstanceForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup,
         generics: Map<String, Type.Broad>
     ): FunctionCandidate? {
-        val function = getAssociatedFunction(name, argTypes, lookup) ?: return null
+        val tps = argTypes.map { it.type  }
+        val function = getAssociatedFunction(name,tps, lookup) ?: return null
 
-        val oxideReturnType = evaluateReturnType(function.returnType.defaultVariant(), argTypes, function)
-        val errorType = getErrorTypesAssociatedFunction(mutableSetOf(), name, argTypes, lookup, jvmLookup)
+        val oxideReturnType = evaluateReturnType(function.returnType.defaultVariant(), tps, function)
+        val errorType = getErrorTypesAssociatedFunction(mutableSetOf(), name, tps, lookup, jvmLookup)
 
         val actualReturnType = errorType.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
+        val forge = InstanceForge.fromTypeAsJvm(actualReturnType)
 
         val candidate = SimpleFunctionCandidate(
-            argTypes,
+            tps,
             function.args.map { it.defaultVariant() },
             function.returnType.defaultVariant(),
             actualReturnType,
             Opcodes.INVOKESTATIC,
             info.signature,
             name,
+            name,
+            returnForge = forge,
             obfuscateName = false,
             requireDispatch = false,
             requiresCatch = errorType
@@ -456,6 +484,10 @@ data class JvmClassInfoRepresentation(
         return info.staticFields[name]
     }
 
+    override suspend fun lookupFieldForge(name: String): InstanceForge? {
+        return info.staticFields[name]?.let { InstanceForge.make(it) }
+    }
+
     override fun hasInterface(signatureString: SignatureString): Boolean {
         return signatureString in info.interfaces
     }
@@ -473,18 +505,22 @@ data class JvmClassInfoRepresentation(
     private val instanceType =
         Type.BasicJvmType(info.signature, info.generics.associate { it.name to Type.Broad.Unset })
 
-    override suspend fun lookupConstructor(argTypes: List<Type>, lookup: IRLookup): FunctionCandidate? {
+    override suspend fun lookupConstructor(argTypes: List<InstanceForge>, lookup: IRLookup): FunctionCandidate? {
+        val tps = argTypes.map { it.type  }
         val constructor =
-            info.constructors.find { it.args.matchesImpl(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
+            info.constructors.find { it.args.matchesImpl(tps, mutableMapOf(), emptyMap(), lookup) } ?: return null
+
 
         val candidate = SimpleFunctionCandidate(
-            argTypes,
+            tps,
             constructor.args.map { it.defaultVariant() },
             jvmReturnType = Type.Nothing,
             oxideReturnType = instanceType,
             Opcodes.INVOKESPECIAL,
             info.signature,
             "<init>",
+            "<init>",
+            returnForge = JvmInstanceForge(info.generics.associate { it.name to Type.Broad.Unset  }.toMutableMap(), info.signature),
             obfuscateName = false,
             requireDispatch = false
         )
@@ -628,3 +664,30 @@ fun <K, V> Map<K, V>.orderByKeys(keys: List<K>) = keys.map { it to this[it]!! }
 
 fun Map<String, Type.Broad>.asLazyTypeMap() =
     lazyTransform { key, it -> (it as? Type.Broad.Known)?.type ?: Type.Object }
+
+fun InstanceForge.Companion.fromTypeAsJvm(type: Type): InstanceForge {
+    if (type.isUnboxedPrimitive() || type.isBoxedPrimitive()) {
+        return make(type)
+    }
+
+    if (type is Type.BasicJvmType) {
+        return JvmInstanceForge(type.genericTypes.toMutableMap(), type.signature)
+    }
+
+    if (type is Type.Union) {
+        return type.entries.map { InstanceForge.fromTypeAsJvm(it) }.reduce { acc, forge -> acc.join(forge)  }
+    }
+
+    if (type is Type.Nothing) {
+        return ConstNothing
+    }
+
+    if (type is Type.Never) {
+        return ConstNever
+    }
+
+    if (type is Type.Null) {
+        return ConstNull
+    }
+    error("Unreachable")
+}

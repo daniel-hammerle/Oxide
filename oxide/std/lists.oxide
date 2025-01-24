@@ -5,11 +5,11 @@ impl<T> List<T> {
         list[for item in self closure(item)]
     }
 
-    func flatMap(self, closure) {
+    inline func flatMap(self, closure) {
         list[for item in self ...closure(item)]
     }
 
-    func sum(self, startingValue) {
+    inline func sum(self, startingValue) {
         sum = startingValue
         for item in self {
             sum = sum + item
@@ -17,7 +17,7 @@ impl<T> List<T> {
         sum
     }
 
-    func sumBy(self, startingValue, closure) {
+    inline func sumBy(self, startingValue, closure) {
         sum = startingValue
         for item in self {
             sum = sum + closure(item)
@@ -25,7 +25,7 @@ impl<T> List<T> {
         sum
     }
 
-    func fold(self, initialValue, closure) {
+    inline func fold(self, initialValue, closure) {
         acc = initialValue
         for item in self {
             acc = closure(acc, item)

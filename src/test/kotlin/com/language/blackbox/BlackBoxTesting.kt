@@ -87,7 +87,7 @@ fun runCode(code: String, input: String = ""): DebugOutput {
     val (stdOut, returnValue) = captureOut {
         customStdIn(input) {
             val clazz = loader.loadClass("main")
-            clazz.methods.first { it.name == "main_1" }!!.invoke(null)
+            clazz.methods.first { it.name == "main_0" }.invoke(null)
         }
 
     }

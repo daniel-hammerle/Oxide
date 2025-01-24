@@ -20,7 +20,7 @@ fun main() {
     val loader = loadExternalLibs(externalLibs)
     ExtensionClassLoader("out.jar", loader)
         .loadClass("main")
-        .methods.first { it.name == "main_1" }
+        .methods.first { it.name == "main_0" }
         .invoke(null)
 }
 
