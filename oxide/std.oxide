@@ -4,11 +4,9 @@ error struct ExhaustionError {
     message str
 }
 
-struct Box<T> {
-    value T
-}
+struct Box { value }
 
-impl<T> Box<T> {
+impl Box {
     func new(value) {
         Box(value)
     }
@@ -45,4 +43,11 @@ impl<T> T {
         self
     }
 
+    inline func takeIf(self, closure) {
+        if closure(self) self else null
+    }
+
+    inline func takeUnless(self, closure) {
+        if closure(self) null else self
+    }
 }

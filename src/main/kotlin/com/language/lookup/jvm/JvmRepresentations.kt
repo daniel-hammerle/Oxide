@@ -3,7 +3,10 @@ package com.language.lookup.jvm
 import com.language.codegen.Box
 import com.language.codegen.getOrThrow
 import com.language.compilation.*
+import com.language.compilation.tracking.BroadForge
 import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.JvmInstanceForge
+import com.language.compilation.tracking.toBroadType
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.rep.asLazyTypeMap
 import com.language.lookup.jvm.rep.fromTypeAsJvm
@@ -106,20 +109,20 @@ data class JvmMethodRepresentation(
         return result
     }
 
-    suspend fun lookupVariantUnknown(type: Type, generics: Map<String, Type.Broad>, argTypes: List<Type.Broad>, jvmLookup: JvmLookup, lookup: IRLookup): Type.Broad? {
-        val result = methods.filter { it.fitsArgTypes(argTypes).second }
+    suspend fun lookupVariantUnknown(type: Type, generics: Map<String, Type.Broad>, argTypes: List<BroadForge>, jvmLookup: JvmLookup, lookup: IRLookup): BroadForge? {
+        val result = methods.filter { it.fitsArgTypes(argTypes.map { it.toBroadType() }).second }
 
         if (result.isEmpty()) return null
 
-        if (argTypes.any { it !is Type.Broad.Known } && result.size > 1) return null
+        if (argTypes.any { it !is InstanceForge } && result.size > 1) return null
 
         val method = result.first()
-        val oxideReturnType = evaluateReturnType(argTypes.populate(method), generics, method, jvmLookup, lookup)
+        val oxideReturnType = evaluateReturnType(argTypes.map { it.toBroadType() }.populate(method), generics, method, jvmLookup, lookup)
         val errorTypes = getErrorTypes(method)
 
         val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
 
-       return Type.Broad.Known(actualReturnType)
+       return InstanceForge.fromTypeAsJvm(actualReturnType)
     }
 
 
@@ -137,6 +140,16 @@ data class JvmMethodRepresentation(
         val errorTypes = getErrorTypes(method)
 
         val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
+
+        //get generic changes if any part of the argument is generic any value passedi nto this is now part of the generic.
+        val genericAppends = genericAppends(method.genericParameterTypes.toList(), argTypes, lookup)
+
+        //safeguard since primitives are also jvm method clients but are not jvm instance forges
+        if (genericAppends.isNotEmpty()) {
+            type as JvmInstanceForge
+            type.applyChanges(genericAppends)
+        }
+
 
         val forge = InstanceForge.fromTypeAsJvm(actualReturnType)
 
@@ -179,6 +192,7 @@ data class JvmMethodRepresentation(
         return exceptions.toSet()
     }
 }
+
 
 suspend fun ReflectType.extract(type: Type, lookup: IRLookup): Map<String, Type.Broad> {
     return when(this) {

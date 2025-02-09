@@ -1,10 +1,18 @@
 package com.language.codegen
 
 import com.language.compilation.*
+import com.language.compilation.tracking.BroadForge
+import com.language.compilation.tracking.InstanceForge
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import java.util.*
 
 data class Box<T>(val item: T)
+
+fun List<BroadForge>.cloneAll(): List<BroadForge> {
+    val map = mutableMapOf<UUID, InstanceForge>()
+    return map { it.clone(map) }
+}
 
 fun boxOrIgnore(mv: MethodVisitor, type: Type): Boolean {
     when(type) {

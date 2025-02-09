@@ -5,7 +5,9 @@ import com.language.compilation.SignatureString
 import com.language.compilation.Type
 import com.language.compilation.Type.JvmType
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.tracking.BroadForge
 import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.JvmInstanceForge
 import com.language.compilation.tracking.StructInstanceForge
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.parsing.ClassParser
@@ -55,12 +57,12 @@ class CachedJvmLookup(
     }
 
     override suspend fun lookUpMethodUnknown(
-        instance: Type.JvmType,
+        instance: JvmInstanceForge,
         functionName: String,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup
-    ): Type.Broad? {
-        return getClass(instance.signature).lookupMethodUnknown(functionName, instance, instance.genericTypes, argTypes, lookup, this)
+    ): BroadForge? {
+        return getClass(instance.fullSignature).lookupMethodUnknown(functionName, instance.type, instance.genericTypes, argTypes, lookup, this)
     }
 
     override suspend fun lookUpAssociatedFunction(
@@ -74,10 +76,10 @@ class CachedJvmLookup(
     override suspend fun lookUpAssociatedFunctionUnknown(
         className: SignatureString,
         functionName: String,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup,
         generics: Map<String, Type.Broad>
-    ): Type.Broad? {
+    ): BroadForge? {
         return getClass(className).lookUpAssociatedFunctionUnknown(functionName, argTypes, lookup, this, generics)
     }
 
@@ -121,9 +123,9 @@ class CachedJvmLookup(
 
     override suspend fun lookupConstructorUnknown(
         className: SignatureString,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup
-    ): Type.Broad? {
+    ): BroadForge? {
         return getClass(className).lookupConstructorUnknown(argTypes, lookup)
     }
 

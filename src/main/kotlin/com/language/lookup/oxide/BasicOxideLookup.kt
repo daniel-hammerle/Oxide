@@ -6,6 +6,7 @@ import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.templatedType.matchesImpl
 import com.language.compilation.templatedType.matchesSubset
 import com.language.compilation.tracking.BasicInstanceForge
+import com.language.compilation.tracking.BroadForge
 import com.language.compilation.tracking.InstanceForge
 import com.language.compilation.tracking.StructInstanceForge
 import com.language.lookup.IRLookup
@@ -89,13 +90,13 @@ class BasicOxideLookup(
     override suspend fun lookupFunctionUnknown(
         module: SignatureString,
         funcName: String,
-        args: List<Type.Broad>,
+        args: List<BroadForge>,
         lookup: IRLookup,
         history: History
-    ): Type.Broad {
+    ): BroadForge {
         val mod = modules[module] ?: error("No Module found with name `$module`")
         val func = mod.functions[funcName] ?: error("No Function `$funcName` on module `$module`")
-        /*val returnType = runCatching {
+        val returnType = runCatching {
             (func as BasicIRFunction).inferUnknown(
                 args,
                 lookup,
@@ -105,9 +106,6 @@ class BasicOxideLookup(
         }.getOrElse { it.printStackTrace(); throw it }
 
         return returnType
-
-         */
-        TODO()
     }
 
 
@@ -159,16 +157,15 @@ class BasicOxideLookup(
 
 
     override suspend fun lookupExtensionMethodUnknown(
-        instance: Type,
+        instance: InstanceForge,
         funcName: String,
-        args: List<Type.Broad>,
+        args: List<BroadForge>,
         lookup: IRLookup,
         history: History
-    ): Type.Broad {
-        val (func, generics) = findExtensionMethod(instance, funcName, lookup)!!
+    ): BroadForge {
+        val (func, generics) = findExtensionMethod(instance.type, funcName, lookup)!!
 
-        //return (func as BasicIRFunction).inferUnknown(args, lookup, generics, history)
-        TODO()
+        return (func as BasicIRFunction).inferUnknown(listOf(instance) + args, lookup, generics, history)
     }
 
     override suspend fun lookupAssociatedExtensionFunction(
@@ -205,20 +202,19 @@ class BasicOxideLookup(
     override suspend fun lookupAssociatedExtensionFunctionUnknown(
         structName: SignatureString,
         funcName: String,
-        args: List<Type.Broad>,
+        args: List<BroadForge>,
         lookup: IRLookup,
         history: History
-    ): Type.Broad {
+    ): BroadForge {
         val impl = allowedImplBlocks
             .asSequence()
             .filter {(template, _) -> template !is TemplatedType.Complex || template.signatureString == structName }
             .firstNotNullOf { (_, blocks) -> blocks.find { funcName in it.associatedFunctions }  }
 
         val func = impl.associatedFunctions[funcName]!!
-        //val returnType = (func as BasicIRFunction).inferUnknown(args, lookup, emptyMap(), history)
+        val returnType = (func as BasicIRFunction).inferUnknown(args, lookup, emptyMap(), history)
 
-        //return returnType
-        TODO()
+        return returnType
     }
 
     override suspend fun lookupConstructor(
@@ -266,25 +262,34 @@ class BasicOxideLookup(
 
     override suspend fun lookupConstructorUnknown(
         structName: SignatureString,
-        args: List<Type.Broad>,
+        args: List<BroadForge>,
         lookup: IRLookup
-    ): Type.Broad {
-        val struct = getStruct(structName) ?: error("Cannot find struct `$structName`")
+    ): BroadForge {
+        val struct = getStruct(structName) ?: error("Struct not found")
         val fields = struct.getDefaultVariant(lookup)
         if (fields.size != args.size) error("Invalid arg count")
 
 
         val generics = mutableMapOf<String, Type>()
+        val argTypes = args.map { (it as? InstanceForge)?.type ?: return BroadForge.Empty }
 
-        val result = struct
-            .fields
-            .toList()
-            .zip(args)
-            .all { (field, tp) -> field.second.matchesImpl(tp, generics, struct.generics, lookup) }
+        val result = struct.fields
+            .zip(argTypes)
+            .all { (field, tp) -> field.second.matchesSubset(tp, generics, struct.generics, lookup) }
 
-        if (!result) error("Types did not match")
+        if (!result) {
+            error("Types did not match")
+        }
 
-        return Type.Broad.Known(Type.BasicJvmType(structName, generics.mapValues { Type.Broad.Known(it.value) }))
+        val members = struct.fields.zip(args).associate { (it, forge) -> it.first to forge as InstanceForge  }
+
+        val genericArgMap = struct.fields.associateNotNull { (name, type) ->
+            (type as? TemplatedType.Generic)?.let { name to it.name}
+        }
+
+        val forge = StructInstanceForge(members.toMutableMap(), genericArgMap, structName)
+
+        return forge
     }
 
     override suspend fun lookupMemberField(instance: Type, name: String, lookup: IRLookup): Type {

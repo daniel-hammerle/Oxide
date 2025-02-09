@@ -6,12 +6,17 @@ import com.language.compilation.join
 import java.util.UUID
 
 class JvmInstanceForge(
-    val generics: MutableMap<String, Type.Broad>,
+    val generics: MutableMap<String, BroadForge>,
     val fullSignature: SignatureString,
     override val id: UUID = UUID.randomUUID(),
 ) : InstanceForge {
     override val type: Type
-        get() = Type.BasicJvmType(fullSignature, generics.toMap())
+        get() = Type.BasicJvmType(fullSignature, genericTypes)
+
+    val genericTypes: Map<String, Type.Broad>
+        get() = generics.mapValues {
+            it.value.toBroadType()
+        }
 
     override fun clone(processes: MutableMap<UUID, InstanceForge>): InstanceForge {
         return processes[id] ?: JvmInstanceForge(generics.toMutableMap(), fullSignature, id)
@@ -31,7 +36,7 @@ class JvmInstanceForge(
     ): InstanceChange {
         if (id == other.id) {
             other as JvmInstanceForge
-            return InstanceChange.JvmChange(generics.toMap())
+            return InstanceChange.JvmChange(generics.mapValues { it.value.toTemplate(instanceLookup) })
         }
 
         if (other is JoinedInstanceForge && this in other.forges) {
@@ -44,7 +49,13 @@ class JvmInstanceForge(
     override fun toTemplate(instanceLookup: InstanceLookup): InstanceBuilder {
         instanceLookup.find(id)?.let { return it }
 
-        return InstanceBuilder.New(InstanceTemplate.Jvm(fullSignature, generics.toMap()))
+        return InstanceBuilder.New(InstanceTemplate.Jvm(fullSignature, generics.mapValues { it.value.toTemplate(instanceLookup) }))
+    }
+
+    fun applyChanges(changes: Map<String, InstanceForge>) {
+        changes.forEach { (name, forge) ->
+            generics[name] = generics[name]!!.join(forge)
+        }
     }
 
     override fun mergeMut(others: List<InstanceForge>): InstanceForge {

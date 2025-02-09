@@ -10,7 +10,7 @@ class StructInstanceForge(
     val generics: Map<String, String>,
     val fullSignature: SignatureString,
     override val id: UUID = UUID.randomUUID()
-) : InstanceForge {
+) : InstanceForge, GenericDestructableForge {
 
     override val type: Type.JvmType
         get() = buildType()
@@ -87,6 +87,11 @@ class StructInstanceForge(
         }
 
         members[name] = members[name]!!.join(forge)
+    }
+
+    override fun destructGeneric(name: String): InstanceForge {
+        val fieldName = generics.firstNotNullOf { (key, value) -> key.takeIf { value == name } }
+        return memberForge(fieldName)!!
     }
 
 }

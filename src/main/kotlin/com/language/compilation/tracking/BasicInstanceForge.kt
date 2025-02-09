@@ -3,7 +3,7 @@ package com.language.compilation.tracking
 import com.language.compilation.Type
 import java.util.UUID
 
-class BasicInstanceForge(override val type: Type, override val id: UUID = UUID.randomUUID()) : InstanceForge {
+data class BasicInstanceForge(override val type: Type, override val id: UUID = UUID.randomUUID()) : InstanceForge {
 
     override fun clone(processes: MutableMap<UUID, InstanceForge>): InstanceForge {
         return processes[id] ?: BasicInstanceForge(type, id).also { processes[id] = it }

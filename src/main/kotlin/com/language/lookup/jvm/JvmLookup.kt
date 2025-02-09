@@ -4,8 +4,10 @@ import com.language.compilation.FunctionCandidate
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.tracking.BroadForge
 import com.language.compilation.tracking.InstanceForge
 import com.language.compilation.tracking.InstanceLookup
+import com.language.compilation.tracking.JvmInstanceForge
 import com.language.compilation.tracking.StructInstanceForge
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.parsing.FunctionInfo
@@ -19,11 +21,11 @@ interface JvmLookup {
     ): FunctionCandidate?
 
     suspend fun lookUpMethodUnknown(
-        instance: Type.JvmType,
+        instance: JvmInstanceForge,
         functionName: String,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup
-    ): Type.Broad?
+    ): BroadForge?
 
     suspend fun lookUpAssociatedFunction(
         className: SignatureString,
@@ -36,10 +38,10 @@ interface JvmLookup {
     suspend fun lookUpAssociatedFunctionUnknown(
         className: SignatureString,
         functionName: String,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup,
         generics: Map<String, Type.Broad>
-    ): Type.Broad?
+    ): BroadForge?
 
     suspend fun lookUpField(instance: Type.JvmType, fieldName: String, lookup: IRLookup): Type?
 
@@ -66,9 +68,9 @@ interface JvmLookup {
 
     suspend fun lookupConstructorUnknown(
         className: SignatureString,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup
-    ): Type.Broad?
+    ): BroadForge?
 
     suspend fun lookUpGenericTypes(
         instance: Type.JvmType,

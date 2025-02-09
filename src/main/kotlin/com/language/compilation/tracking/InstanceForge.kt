@@ -9,7 +9,7 @@ fun InstanceForge.join(other: InstanceForge): InstanceForge {
         this.id == other.id -> this
         this is JoinedInstanceForge && other is JoinedInstanceForge -> JoinedInstanceForge(forges + other.forges)
         this is JoinedInstanceForge -> JoinedInstanceForge(forges + other)
-        other is BasicInstanceForge -> JoinedInstanceForge(listOf<InstanceForge>(this, other))
+        this is BasicInstanceForge && other is BasicInstanceForge && type == other.type -> this
         else -> JoinedInstanceForge(listOf(this, other))
     }
 }
@@ -20,12 +20,35 @@ fun InstanceForge.member(name: String): InstanceForge = when(this) {
     else -> error("unrachable")
 }
 
-sealed interface BroadForge {
-    data object Empty : BroadForge
-    data class Unionized(val forge: InstanceForge): BroadForge
+interface GenericDestructableForge {
+    fun destructGeneric(name: String): InstanceForge
 }
 
+sealed interface BroadForge {
+    data object Empty : BroadForge {
+        override fun clone(processes: MutableMap<UUID, InstanceForge>): BroadForge {
+            return Empty
+        }
+    }
+
+    data class Unionized(val forge: InstanceForge): BroadForge {
+        override fun clone(processes: MutableMap<UUID, InstanceForge>): BroadForge {
+            return Unionized(forge.clone(processes))
+        }
+    }
+
+    fun clone(processes: MutableMap<UUID, InstanceForge>): BroadForge
+
+}
+
+fun BroadForge.compare(other: BroadForge, instanceLookup: InstanceLookup): InstanceChange? = when {
+    this is InstanceForge && other is InstanceForge -> compare(other, instanceLookup)
+    else -> null
+}
+
+
 fun BroadForge.toBroadType(): Type.Broad = when(this) {
+
     BroadForge.Empty -> Type.Broad.Unset
     is BroadForge.Unionized -> Type.Broad.UnknownUnionized(forge.type)
     is InstanceForge -> Type.Broad.Known(type)
@@ -68,7 +91,7 @@ interface InstanceForge : BroadForge {
         fun make(type: Type): InstanceForge = BasicInstanceForge(type)
     }
 
-    fun clone(processes: MutableMap<UUID, InstanceForge>): InstanceForge
+    override fun clone(processes: MutableMap<UUID, InstanceForge>): InstanceForge
 
     fun referenceAll(references: MutableMap<UUID, List<InstanceAccessInstruction>>, prev: List<InstanceAccessInstruction>)
 

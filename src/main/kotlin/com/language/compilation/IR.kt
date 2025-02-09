@@ -4,23 +4,14 @@ import com.language.BooleanOp
 import com.language.CompareOp
 import com.language.MathOp
 import com.language.TemplatedType
-import com.language.codegen.asUnboxed
-import com.language.codegen.getOrDefault
-import com.language.codegen.getOrNull
+import com.language.codegen.*
 import com.language.compilation.Instruction.DynamicCall
+import com.language.compilation.Type.JvmType
 import com.language.compilation.metadata.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.templatedType.matchesSubset
-import com.language.compilation.tracking.BroadForge
-import com.language.compilation.tracking.InstanceForge
-import com.language.compilation.tracking.InstanceLookup
-import com.language.compilation.tracking.StructInstanceForge
-import com.language.compilation.tracking.asStruct
-import com.language.compilation.tracking.build
-import com.language.compilation.tracking.change
-import com.language.compilation.tracking.member
-import com.language.compilation.tracking.toBroadType
+import com.language.compilation.tracking.*
 import com.language.compilation.variables.*
 import com.language.eval.*
 import com.language.lexer.MetaInfo
@@ -49,7 +40,7 @@ data class CallVariant(val func: IRFunction, val args: List<Type>)
 
 class BasicHistory(
     private val histSet: MutableSet<CallVariant>,
-    private val substitutions: MutableMap<IRFunction, MutableMap<List<Type.Broad>, Type.Broad>>,
+    private val substitutions: MutableMap<IRFunction, MutableMap<List<Type.Broad>, CallSubstitution>>,
     private val recHistSet: MutableSet<Pair<IRFunction, List<Type.Broad>>>
 ) : History {
     constructor() : this(mutableSetOf(), mutableMapOf(), mutableSetOf())
@@ -66,30 +57,32 @@ class BasicHistory(
         return (function to variant) in recHistSet
     }
 
-    override fun isSubstituted(function: IRFunction, variant: List<Type.Broad>): Type.Broad? = substitutions[function]?.get(variant)
+    override fun isSubstituted(function: IRFunction, variant: List<Type.Broad>): CallSubstitution? = substitutions[function]?.get(variant)
 
     override fun appendRecCallStack(function: IRFunction, variant: List<Type.Broad>) {
         recHistSet.add(function to variant.toList())
     }
 
-    override fun substitute(function: IRFunction, variant: List<Type.Broad>, type: Type.Broad) {
-        substitutions[function] = (substitutions[function] ?: mutableMapOf()).apply { this[variant.toList()] = type }
+    override fun substitute(function: IRFunction, variant: List<Type.Broad>, substitution: CallSubstitution) {
+        substitutions[function] = (substitutions[function] ?: mutableMapOf()).apply { this[variant.toList()] = substitution }
     }
 
     override fun split(): History = BasicHistory(histSet.toMutableSet(), substitutions.toMutableMap(), recHistSet.toMutableSet())
 
 }
 
+class CallSubstitution(val change: List<InstanceChange>, val returnType: BroadInstanceBuilder)
+
 interface History {
     fun appendCallStack(variant: CallVariant)
 
     fun isPresent(variant: CallVariant): Boolean
-    fun isSubstituted(function: IRFunction, variant: List<Type.Broad>): Type.Broad?
+    fun isSubstituted(function: IRFunction, variant: List<Type.Broad>): CallSubstitution?
 
     fun appendRecCallStack(function: IRFunction, variant: List<Type.Broad>)
     fun isPresent(function: IRFunction, variant: List<Type.Broad>): Boolean
 
-    fun substitute(function: IRFunction, variant: List<Type.Broad>, type: Type.Broad)
+    fun substitute(function: IRFunction, variant: List<Type.Broad>, type: CallSubstitution)
     fun split(): History
 }
 
@@ -109,7 +102,7 @@ sealed class Instruction {
         lookup: IRLookup,
         handle: MetaDataTypeHandle,
         hist: History
-    ): Type.Broad
+    ): BroadForge
 
     data class DynamicCall(
         val parent: Instruction,
@@ -125,7 +118,7 @@ sealed class Instruction {
             hist: History
         ): TypedInstruction {
             val parent = parent.inferTypes(variables, lookup, handle, hist)
-
+            
             val result = inferCall(
                 args,
                 name,
@@ -153,12 +146,12 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             val argTypes = args.map { it.inferUnknown(variables, lookup, handle, hist) }
             return when (val parent = parent.inferUnknown(variables, lookup, handle, hist)) {
-                is Type.Broad.Unset -> parent
-                is Type.Broad.Known -> lookup.lookUpCandidateUnknown(parent.type, name, argTypes, hist)
-                is Type.Broad.UnknownUnionized -> Type.Broad.Unset //if the entire type is not known,
+                is BroadForge.Empty -> parent
+                is InstanceForge -> lookup.lookUpCandidateUnknown(parent, name, argTypes, hist)
+                is BroadForge.Unionized -> BroadForge.Empty //if the entire type is not known,
                 // there is no point in finding methods
             }
         }
@@ -191,7 +184,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             return value.inferUnknown(variables, lookup, handle, hist)
         }
 
@@ -220,7 +213,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
 
@@ -362,7 +355,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
 
@@ -384,8 +377,8 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
-            return Type.Broad.Known(Type.String)
+        ): BroadForge {
+            return InstanceForge.ConstString
         }
     }
 
@@ -404,8 +397,8 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
-            return Type.Broad.Known(Type.IntT)
+        ): BroadForge {
+            return InstanceForge.ConstInt
         }
     }
 
@@ -425,8 +418,8 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
-            return Type.Broad.Known(Type.DoubleT)
+        ): BroadForge {
+            return InstanceForge.ConstDouble
         }
     }
 
@@ -445,8 +438,8 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
-            return Type.Broad.Known(if (value) Type.BoolTrue else Type.BoolFalse)
+        ): BroadForge {
+            return if (value) InstanceForge.ConstBoolTrue else InstanceForge.ConstBoolFalse
         }
     }
 
@@ -501,21 +494,21 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             val cond = cond.inferUnknown(variables, lookup, handle, hist)
             val bodyVars = variables.branch()
             val body = body.inferUnknown(bodyVars, lookup, handle, hist.split())
             val elseBodyVars = variables.branch()
 
             val elseBody =
-                elseBody?.inferUnknown(elseBodyVars, lookup, handle, hist.split()) ?: Type.Broad.Known(Type.Nothing)
+                elseBody?.inferUnknown(elseBodyVars, lookup, handle, hist.split()) ?: InstanceForge.ConstNothing
 
             variables.merge(listOf(bodyVars, elseBodyVars))
 
-            if (cond is Type.Broad.Known) {
+            if (cond is InstanceForge) {
                 if (cond.type !is Type.BoolT) error("Condition must be of type boolean")
 
-                when (cond.type.boolValue) {
+                when ((cond.type as Type.BoolT).boolValue) {
                     true -> return body
                     false -> return elseBody
                     else -> {}
@@ -542,7 +535,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
     }
@@ -574,11 +567,11 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             cond.inferUnknown(variables, lookup, handle, hist)
             body.inferUnknown(variables, lookup, handle, hist)
             body.inferUnknown(variables, lookup, handle, hist)
-            return Type.Broad.Known(Type.Nothing)
+            return InstanceForge.ConstNothing
         }
     }
 
@@ -608,7 +601,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             return lookup.lookUpConstructorUnknown(className, args.map { it.inferUnknown(variables, lookup, handle, hist) })
         }
     }
@@ -663,7 +656,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
 
@@ -699,7 +692,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             val argTypes = args.map { it.inferUnknown(variables, lookup, handle, hist) }
             return lookup.lookUpCandidateUnknown(moduleName, name, argTypes, hist)
         }
@@ -730,17 +723,17 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             val first = ins.inferUnknown(variables, lookup, handle, hist)
-            if (first is Type.Broad.Known) {
-                first.type as Type.BoolT
+            if (first is InstanceForge) {
+                val tp = first.type as Type.BoolT
 
-                if (first.type.boolValue != null) {
-                    return Type.Broad.Known(Type.BoolT(!first.type.boolValue))
+                if (tp.boolValue != null) {
+                    return InstanceForge.make(Type.BoolT(!tp.boolValue))
                 }
             }
 
-            return Type.Broad.Known(Type.BoolUnknown)
+            return InstanceForge.ConstBool
         }
 
     }
@@ -783,14 +776,14 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             val first = first.inferUnknown(variables, lookup, handle, hist)
             if (first is Type.Broad.Typeful && first.type !is Type.BoolT) error("Expected $first to have type BoolT")
 
             val second = second.inferUnknown(variables, lookup, handle, hist)
             if (second is Type.Broad.Typeful && second.type !is Type.BoolT) error("Expected $first to have type BoolT")
 
-            return Type.Broad.Known(Type.BoolUnknown)
+            return InstanceForge.ConstBool
         }
 
     }
@@ -828,7 +821,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
     }
@@ -865,17 +858,17 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             val first = first.inferUnknown(variables, lookup, handle, hist)
             val second = second.inferUnknown(variables, lookup, handle, hist)
 
-            if (first !is Type.Broad.Known || second !is Type.Broad.Known) {
-                return Type.Broad.Unset
+            if (first !is InstanceForge || second !is InstanceForge) {
+                return BroadForge.Empty
             }
 
             val result = typeMath(op, first.type, second.type)
 
-            return Type.Broad.Known(result)
+            return InstanceForge.make(result)
         }
     }
 
@@ -911,9 +904,9 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
-            //variables.set(name, value.inferUnknown(variables, lookup, handle, hist))
-            return Type.Broad.Known(Type.Nothing)
+        ): BroadForge {
+            variables.set(name, value.inferUnknown(variables, lookup, handle, hist))
+            return InstanceForge.ConstNothing
         }
     }
 
@@ -934,9 +927,8 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
-            //return variables.get(name)
-            TODO()
+        ): BroadForge {
+            return variables.get(name)
         }
     }
 
@@ -963,7 +955,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad = instructions.map { it.inferUnknown(variables, lookup, handle, hist) }.last()
+        ): BroadForge = instructions.map { it.inferUnknown(variables, lookup, handle, hist) }.last()
 
     }
 
@@ -992,7 +984,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
     }
@@ -1028,7 +1020,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
 
@@ -1063,7 +1055,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
 
@@ -1126,7 +1118,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
 
@@ -1234,7 +1226,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
 
@@ -1264,7 +1256,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
 
@@ -1297,7 +1289,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
 
@@ -1324,8 +1316,8 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
-            return Type.Broad.Known(lookup.lookUpFieldType(parentName, name))
+        ): BroadForge {
+            return lookup.lookUpFieldForge(parentName, name)
         }
     }
 
@@ -1346,8 +1338,8 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
-            TODO("Not yet implemented")
+        ): BroadForge {
+            return InstanceForge.ConstNothing
         }
     }
 
@@ -1367,7 +1359,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
     }
@@ -1412,7 +1404,7 @@ sealed class Instruction {
             lookup: IRLookup,
             handle: MetaDataTypeHandle,
             hist: History
-        ): Type.Broad {
+        ): BroadForge {
             TODO("Not yet implemented")
         }
     }
@@ -1543,9 +1535,13 @@ sealed interface IRPattern {
             hist: History
         ): TypedIRPattern {
             val binding = ctx.nextBinding()
+
+
             if (name in handle.inheritedGenerics) {
+                val forge = (binding.forge as? JoinedInstanceForge)?.forges?.first { it.type == handle.inheritedGenerics[name]!! } ?: error("")
+
                 return TypedIRPattern.Destructuring(
-                    binding.forge,
+                    forge,
                     emptyList(),
                     variables.getExternal(binding),
                     ctx.isLast,
@@ -1577,19 +1573,21 @@ sealed interface IRPattern {
             }
 
 
-            val signature = (type.asBoxed() as Type.JvmType).signature
+            val signature = (type.asBoxed() as JvmType).signature
             val binding = ctx.nextBinding()
+
+            val forge = (binding.forge as? JoinedInstanceForge)?.forges?.first { (it.type.asBoxed() as JvmType).signature == signature } ?: error("")
 
             val orderedFields = lookup
                 .lookUpOrderedFields(signature)
                 .map { (name, it) -> name to with(lookup) { it.populate(handle.inheritedGenerics) } }
             val fieldBindings =
-                orderedFields.map { (name, tp) -> FieldBinding(binding.get(variables.parent), binding.forge, tp, name, tp) }
+                orderedFields.map { (name, tp) -> FieldBinding(binding.get(variables.parent), forge.member(name), tp, name, tp) }
 
             val context = PatternMatchingContextImpl(fieldBindings, false, binding.physicalId!!)
 
             return TypedIRPattern.Destructuring(
-                binding.forge,
+                forge,
                 patterns = patterns.map { it.inferTypes(context, lookup, variables, handle, hist) },
                 isLast = ctx.isLast,
                 castStoreId = binding.physicalId!!,
@@ -1962,6 +1960,8 @@ data class BasicIRFunction(
 
     private var count: Int = 0
 
+    private val recursivelyCachedVariants: MutableMap<List<Type>, Int> = mutableMapOf()
+
     private val checkedUnknownVariants: MutableMap<List<Type.Broad>, BroadForge> = mutableMapOf()
 
     override val keepBlocks: MutableMap<String, Type> = mutableMapOf()
@@ -1981,15 +1981,16 @@ data class BasicIRFunction(
         }
 
         //if it is already substituted by anything, we want to return the substituded call
-        if (check)
-        hist.isSubstituted(this, tps)?.let {
-            //return it
-            TODO()
+        if (check) hist.isSubstituted(this, tps)?.let { substitution ->
+            val args = argTypes.filterIsInstance<InstanceForge>()
+            args.zip(substitution.change).forEach { (tp, change) -> tp.change(change, args) }
+
+            return substitution.returnType.build(args)
         }
 
         //this means we have reached a seperate recursion loop within our own recusion
         if (check && hist.isPresent(this, tps)) {
-            return inferRecursive(argTypes, lookup, generics, hist)
+            return inferRecursive(argTypes, lookup, generics, hist).third
         }
 
         hist.appendRecCallStack(this, tps)
@@ -2000,33 +2001,59 @@ data class BasicIRFunction(
 
         val result = body.inferUnknown(vars, lookup, metaHandle, hist)
 
-        //return result
-        TODO()
+        return result
     }
 
-    private suspend fun inferRecursive(argTypes: List<BroadForge>, lookup: IRLookup, generics: Map<String, Type>, hist: History): InstanceForge {
+
+    private suspend fun inferRecursive(argTypes: List<BroadForge>, lookup: IRLookup, generics: Map<String, Type>, hist: History): Triple<List<InstanceChange>, InstanceBuilder,InstanceForge> {
         val tps = argTypes.map { it.toBroadType() }
-        hist.substitute(this, tps, Type.Broad.Unset)
-        val result = inferUnknown(argTypes, lookup, generics, hist, false)
-        
+        hist.substitute(this, tps, CallSubstitution(emptyList(), BroadInstanceBuilder.Unknown))
+
+        val instanceLookup = InstanceLookup.makeBroad(argTypes)
+
+        val preState = argTypes.cloneAll()
+
+        var used = argTypes.cloneAll()
+
+        val result = inferUnknown(used, lookup, generics, hist, false)
+
+        val change = preState.zip(used).map { (pre, now) -> pre.compare(now, instanceLookup) ?: InstanceChange.Nothing }
+
         //when the type is solely unknown, the function can only ever call itself to produce the return value in other words it has to be nothing
         if (result is BroadForge.Empty) {
-            return InstanceForge.ConstNothing
+            argTypes.zip(change).forEach { it.first.change(it.second, argTypes) }
+
+            return Triple(
+                change,
+                InstanceBuilder.New(InstanceTemplate.Const(InstanceForge.ConstNothing)),
+                InstanceForge.ConstNothing
+            )
         }
         
         //this means the return value did not depend on the recursive calls so we already know it for sure
         if (result is InstanceForge) {
-            return result
+            return Triple(
+                change,
+                result.toTemplate(instanceLookup),
+                result
+            )
         }
-        
+
+
         var prev = (result as BroadForge.Unionized).forge
+
+        hist.substitute(this, tps,  CallSubstitution(change, prev.toTemplate(instanceLookup)))
         while(true) {
-            val res = inferUnknown(argTypes, lookup, generics, hist, false)
+            used = preState.cloneAll()
+            val res = inferUnknown(used, lookup, generics, hist, false)
+            val change = preState.zip(used).map { (pre, now) -> pre.compare(now, instanceLookup) ?: InstanceChange.Nothing }
             res as InstanceForge
-            if (res.type == prev) {
-                return prev
+            val returnTemplate = prev.toTemplate(instanceLookup)
+            if (res == prev) {
+                argTypes.zip(change).forEach { it.first.change(it.second, argTypes) }
+                return Triple(change, returnTemplate, prev)
             }
-            hist.substitute(this, tps, res.toBroadType())
+            hist.substitute(this, tps,  CallSubstitution(change, result.toTemplate(instanceLookup)))
             prev = res
         }
     }
@@ -2053,12 +2080,14 @@ data class BasicIRFunction(
 
 
         if (hist.isPresent(variant)) {
-            val forge = inferRecursive(argTypes, lookup, generics, hist)
-            mutex.withLock {
-                checkedVariants[tps] = TypedInstruction.Noop(forge.type, forge) to FunctionMetaData(forge.type, TODO(), TODO(), -1, -1)
+            val (change, template, forge) = inferRecursive(argTypes, lookup, generics, hist)
+            val id = mutex.withLock {
+                checkedVariants[tps] = TypedInstruction.Noop(forge.type, forge) to FunctionMetaData(forge.type, template, change, -1, -1)
+                val newCount = count++
+                recursivelyCachedVariants[tps] = newCount
+                newCount
             }
-
-            TODO()
+            return forge to id
         }
 
         hist.appendCallStack(variant)
@@ -2096,7 +2125,7 @@ data class BasicIRFunction(
 
         if (this.returnType?.matchesSubset(returnForge.type, inferredGenerics, this.generics.toMap(), lookup) == false) error("Invalid type mismatch return type $returnType : ${this.returnType}")
         val id = mutex.withLock {
-            val id = count++
+            val id = recursivelyCachedVariants.remove(tps) ?: count++
             keepBlocks.putAll(metaDataHandle.keepBlocks)
             checkedVariants[tps] =
                 (result) to metaDataHandle.apply { varCount = variables.parent.varCount() }.toMetaData(returnTemplate, change, id)

@@ -1,26 +1,10 @@
-
 use std::{io, random}
-impl<T> T | null {
-    inline func map(self, closure) {
-        match self {
-            null -> self
-            T -> closure(self)
-        }
-    }
-}
+
+struct Person { name, age }
 
 func main {
-    result = example().map { |it| it.name }
-    io.println(result)
-}
-struct A {
-    name str
-}
+    l = list[]
 
-func example {
-    if random.bool() {
-        A("Hello")
-    } else {
-        null
-    }
+    l.add(Person("Tom", 19))
+    io.println(l.get(0).name)
 }

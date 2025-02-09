@@ -6,9 +6,12 @@ import com.language.compilation.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.tracking.BasicInstanceForge
+import com.language.compilation.tracking.BroadForge
 import com.language.compilation.tracking.InstanceForge
 import com.language.compilation.tracking.JoinedInstanceForge
+import com.language.compilation.tracking.JvmInstanceForge
 import com.language.compilation.tracking.StructInstanceForge
+import com.language.compilation.tracking.join
 import com.language.compilation.variables.VariableManager
 import com.language.eval.evalFunction
 import com.language.lookup.jvm.JvmLookup
@@ -67,22 +70,22 @@ class IRModuleLookup(
     }
 
     override suspend fun lookUpCandidateUnknown(
-        instance: Type,
+        instance: InstanceForge,
         funcName: String,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         history: History
-    ): Type.Broad {
+    ): BroadForge {
         val candidate = runCatching {
             oxideLookup.lookupExtensionMethodUnknown(instance, funcName, argTypes, this, history)
         }.getOrNull()
         if (candidate != null) return candidate //propagate early
         return when {
-            instance is Type.Union -> {
-                instance.entries.map { lookUpCandidateUnknown(it, funcName, argTypes, history) }
+            instance is JoinedInstanceForge -> {
+                instance.forges.map { lookUpCandidateUnknown(it, funcName, argTypes, history) }
                     .reduce { acc, broad -> acc.join(broad) }
             }
-            instance.isUnboxedPrimitive() -> lookUpCandidateUnknown(instance.asBoxed(), funcName, argTypes, history)
-            instance is Type.JvmType -> jvmLookup.lookUpMethodUnknown(instance, funcName, argTypes, this)
+            instance.type.isUnboxedPrimitive() -> lookUpCandidateUnknown(InstanceForge.make(instance.type.asBoxed()), funcName, argTypes, history)
+            instance is JvmInstanceForge -> jvmLookup.lookUpMethodUnknown(instance, funcName, argTypes, this)
                 ?: error("No Method found on $instance.$funcName($argTypes)")
 
             else -> error("No Method found on $instance.$funcName($argTypes)")
@@ -92,10 +95,10 @@ class IRModuleLookup(
     override suspend fun lookUpCandidateUnknown(
         modName: SignatureString,
         funcName: String,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         history: History,
         generics: Map<String, Type.Broad>,
-    ): Type.Broad {
+    ): BroadForge {
         runCatching {
             oxideLookup.lookupFunctionUnknown(modName, funcName, argTypes, this, history)
         }.map { return it }
@@ -207,8 +210,8 @@ class IRModuleLookup(
 
     override suspend fun lookUpConstructorUnknown(
         className: SignatureString,
-        argTypes: List<Type.Broad>
-    ): Type.Broad {
+        argTypes: List<BroadForge>
+    ): BroadForge {
         return runCatching { oxideLookup.lookupConstructorUnknown(className, argTypes, this) }.getOrNull()
             ?: jvmLookup.lookupConstructorUnknown(className, argTypes, this)
             ?: error("NO constructor found for $className($argTypes)")

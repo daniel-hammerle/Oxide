@@ -1,9 +1,12 @@
 package com.language.lookup.jvm
 
 import com.language.codegen.getOrNull
-import com.language.codegen.lazyMap
 import com.language.codegen.toJVMDescriptor
-import com.language.compilation.*
+import com.language.compilation.SignatureString
+import com.language.compilation.Type
+import com.language.compilation.isContainedOrEqualTo
+import com.language.compilation.join
+import com.language.compilation.tracking.*
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.contract.ContractItem
 import com.language.lookup.jvm.contract.matches
@@ -17,6 +20,9 @@ import java.lang.reflect.ParameterizedType
 import java.lang.reflect.TypeVariable
 
 fun Executable.fitsArgTypes(argTypes: Iterable<Type>): Pair<Pair<Int, Type>?, Boolean> = fitsArgTypes(argTypes.map { Type.Broad.Known(it) })
+
+
+
 
 
 fun Executable.fitsArgTypes(argTypes: List<Type.Broad>): Pair<Pair<Int, Type>?, Boolean> {
@@ -173,6 +179,39 @@ suspend fun evaluateReturnType(arguments: List<Type>, generics: Map<String, Type
         ContractItem.Ignore -> normalReturnType
         ContractItem.Fail -> Type.Never
         null -> normalReturnType
+    }
+}
+
+suspend fun genericAppends(arguments: List<ReflectType>, forges: List<InstanceForge>, lookup: IRLookup): Map<String, InstanceForge> {
+    val changes = mutableMapOf<String, InstanceForge>()
+
+    fun appendChange(name: String, change: InstanceForge) {
+        changes[name] = changes[name]?.join(change) ?: change
+    }
+
+    for ((arg, forge) in arguments.zip(forges)) {
+        inspectType(arg, forge, ::appendChange, lookup)
+    }
+
+    return changes
+}
+
+private suspend fun inspectType(type: ReflectType, forge: InstanceForge, change: (String, InstanceForge) -> Unit, lookup: IRLookup) {
+    when {
+        type is TypeVariable<*> -> change(type.name, forge)
+        type is ParameterizedType && forge is GenericDestructableForge -> {
+            val order = lookup.lookupOrderGenerics(SignatureString.fromDotNotation(type.typeName))
+
+            order.zip(type.actualTypeArguments).forEach { (genericName, arg) ->
+                inspectType(arg, forge.destructGeneric(genericName), change, lookup)
+            }
+        }
+        type is ParameterizedType && forge is JoinedInstanceForge -> {
+            forge.forges.forEach {  childForge ->
+                inspectType(type, childForge, change, lookup)
+            }
+        }
+        else -> {}
     }
 }
 

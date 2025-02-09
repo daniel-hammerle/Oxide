@@ -4,6 +4,7 @@ import com.language.TemplatedType
 import com.language.compilation.*
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.tracking.BroadForge
 import com.language.compilation.tracking.InstanceForge
 import com.language.compilation.variables.VariableManager
 
@@ -44,9 +45,9 @@ interface IRLookup {
      * # Note
      * If the type doesn't have a matching method, the function will throw
      */
-    suspend fun lookUpCandidateUnknown(instance: Type, funcName: String, argTypes: List<Type.Broad>, history: History): Type.Broad
+    suspend fun lookUpCandidateUnknown(instance: InstanceForge, funcName: String, argTypes: List<BroadForge>, history: History): BroadForge
 
-    suspend fun lookUpCandidateUnknown(modName: SignatureString, funcName: String, argTypes: List<Type.Broad>, history: History, generics: Map<String, Type.Broad> = emptyMap()): Type.Broad
+    suspend fun lookUpCandidateUnknown(modName: SignatureString, funcName: String, argTypes: List<BroadForge>, history: History, generics: Map<String, Type.Broad> = emptyMap()): BroadForge
 
 
     /**
@@ -90,7 +91,7 @@ interface IRLookup {
      * The function will throw if the class / struct doesn't exist or no matching constructor is found
      */
     suspend fun lookUpConstructor(className: SignatureString, argTypes: List<InstanceForge>): FunctionCandidate
-    suspend fun lookUpConstructorUnknown(className: SignatureString, argTypes: List<Type.Broad>): Type.Broad
+    suspend fun lookUpConstructorUnknown(className: SignatureString, argTypes: List<BroadForge>): BroadForge
 
     /**
      * Returns the type of the field or throw in case it doesn't exist

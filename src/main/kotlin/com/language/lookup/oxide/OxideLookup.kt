@@ -4,6 +4,7 @@ import com.language.TemplatedType
 import com.language.compilation.*
 import com.language.lookup.IRLookup
 import com.language.compilation.modifiers.Modifiers
+import com.language.compilation.tracking.BroadForge
 import com.language.compilation.tracking.InstanceForge
 
 interface OxideLookup {
@@ -26,10 +27,10 @@ interface OxideLookup {
     suspend fun lookupFunctionUnknown(
         module: SignatureString,
         funcName: String,
-        args: List<Type.Broad>,
+        args: List<BroadForge>,
         lookup: IRLookup,
         history: History
-    ): Type.Broad
+    ): BroadForge
 
     suspend fun lookupExtensionMethod(
         instance: InstanceForge,
@@ -40,12 +41,12 @@ interface OxideLookup {
     ): FunctionCandidate?
 
     suspend fun lookupExtensionMethodUnknown(
-        instance: Type,
+        instance: InstanceForge,
         funcName: String,
-        args: List<Type.Broad>,
+        args: List<BroadForge>,
         lookup: IRLookup,
         history: History
-    ): Type.Broad
+    ): BroadForge
 
     suspend fun lookupAssociatedExtensionFunction(
         structName: SignatureString,
@@ -58,10 +59,10 @@ interface OxideLookup {
     suspend fun lookupAssociatedExtensionFunctionUnknown(
         structName: SignatureString,
         funcName: String,
-        args: List<Type.Broad>,
+        args: List<BroadForge>,
         lookup: IRLookup,
         history: History
-    ): Type.Broad
+    ): BroadForge
 
     suspend fun lookupMemberField(instance: Type, name: String, lookup: IRLookup): Type
     suspend fun lookupPhysicalField(instance: Type, name: String, lookup: IRLookup): Type
@@ -75,7 +76,7 @@ interface OxideLookup {
     ): FunctionCandidate
 
     suspend fun lookupConstructor(structName: SignatureString, args: List<InstanceForge>, lookup: IRLookup): FunctionCandidate?
-    suspend fun lookupConstructorUnknown(structName: SignatureString, args: List<Type.Broad>, lookup: IRLookup): Type.Broad
+    suspend fun lookupConstructorUnknown(structName: SignatureString, args: List<BroadForge>, lookup: IRLookup): BroadForge
     suspend fun lookupModifiers(structName: Type): Modifiers
 
     fun lookupOrderedFields(structName: SignatureString): List<Pair<String, TemplatedType>>

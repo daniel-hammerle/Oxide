@@ -5,9 +5,7 @@ import com.language.CompareOp
 import com.language.MathOp
 import com.language.codegen.VarFrame
 import com.language.codegen.asUnboxedOrIgnore
-import com.language.compilation.tracking.BasicInstanceForge
-import com.language.compilation.tracking.InstanceForge
-import com.language.compilation.tracking.join
+import com.language.compilation.tracking.*
 import org.objectweb.asm.Label
 
 sealed interface TypedInstruction {
@@ -50,11 +48,10 @@ sealed interface TypedInstruction {
 
     data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type.Broad, val tempArrayVariable: Int?) : TypedInstruction {
         val isConstList = items.all { it is TypedConstructingArgument.Normal }
-        override val type: Type = Type.BasicJvmType(
-            SignatureString("java::util::ArrayList"),
-            linkedMapOf("E" to itemType)
+        override val forge: InstanceForge = JvmInstanceForge(
+            mutableMapOf("E" to BroadForge.Empty),
+            SignatureString("java::util::ArrayList")
         )
-        override val forge: InstanceForge = BasicInstanceForge(type)
     }
 
     data class LoadArray(val items: List<TypedConstructingArgument>, val arrayType: ArrayType, val itemType: Type.Broad, val tempIndexVarId: Int, val tempArrayVarId: Int) : TypedInstruction {

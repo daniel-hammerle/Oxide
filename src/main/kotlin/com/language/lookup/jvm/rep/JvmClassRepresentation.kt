@@ -6,9 +6,11 @@ import com.language.compilation.*
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
 import com.language.compilation.templatedType.matchesImpl
+import com.language.compilation.tracking.BroadForge
 import com.language.compilation.tracking.InstanceForge
 import com.language.compilation.tracking.JvmInstanceForge
 import com.language.compilation.tracking.join
+import com.language.compilation.tracking.toBroadType
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.*
 import com.language.lookup.jvm.parsing.ClassInfo
@@ -35,10 +37,10 @@ interface JvmClassRepresentation {
         name: String,
         type: Type,
         generics: Map<String, Type.Broad>,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
-    ): Type.Broad?
+    ): BroadForge?
 
     suspend fun lookUpAssociatedFunction(
         name: String,
@@ -50,11 +52,11 @@ interface JvmClassRepresentation {
 
     suspend fun lookUpAssociatedFunctionUnknown(
         name: String,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup,
         generics: Map<String, Type.Broad>
-    ): Type.Broad?
+    ): BroadForge?
 
     suspend fun lookUpField(name: String, generics: Map<String, Type.Broad>, lookup: IRLookup): Type?
 
@@ -67,7 +69,7 @@ interface JvmClassRepresentation {
     suspend fun lookupGenericTypes(name: String, argTypes: List<Type>, lookup: IRLookup): Map<String, Type>?
 
     suspend fun lookupConstructor(argTypes: List<InstanceForge>, lookup: IRLookup): FunctionCandidate?
-    suspend fun lookupConstructorUnknown(argTypes: List<Type.Broad>, lookup: IRLookup): Type.Broad?
+    suspend fun lookupConstructorUnknown(argTypes: List<BroadForge>, lookup: IRLookup): BroadForge?
 
     fun getGenericDefinitionOrder(): List<String>
 
@@ -178,10 +180,10 @@ data class BasicJvmClassRepresentation(
         name: String,
         type: Type,
         generics: Map<String, Type.Broad>,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
-    ): Type.Broad? {
+    ): BroadForge? {
         return getMethod(name).lookupVariantUnknown(type, generics, argTypes, jvmLookup, lookup)
     }
 
@@ -195,11 +197,11 @@ data class BasicJvmClassRepresentation(
 
     override suspend fun lookUpAssociatedFunctionUnknown(
         name: String,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup,
         generics: Map<String, Type.Broad>
-    ): Type.Broad? {
+    ): BroadForge? {
         TODO("Not yet implemented")
     }
 
@@ -263,7 +265,8 @@ data class BasicJvmClassRepresentation(
 
         val clazzGenerics = clazz.typeParameters.map { it.name }
 
-        val forge = JvmInstanceForge(clazzGenerics.associate { it to Type.Broad.Unset  }.toMutableMap(), clazzName)
+        val forge = JvmInstanceForge(clazzGenerics.associateWith { BroadForge.Empty }.toMutableMap(), clazzName)
+        //TODO note that this is complete bs and based on the constructor call we might be able to already infer some generics but its not there yet
 
         val candidate = SimpleFunctionCandidate(
             oxideArgs = argTypes.map { it.type },
@@ -282,9 +285,14 @@ data class BasicJvmClassRepresentation(
         return candidate
     }
 
-    override suspend fun lookupConstructorUnknown(argTypes: List<Type.Broad>, lookup: IRLookup): Type.Broad? {
-        clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes).second } ?: return null
-        return Type.Broad.Known(this.toType())
+    override suspend fun lookupConstructorUnknown(argTypes: List<BroadForge>, lookup: IRLookup): BroadForge? {
+        clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes.map { it.toBroadType()}).second } ?: return null
+
+        val clazzGenerics = clazz.typeParameters.map { it.name }
+
+        val forge = JvmInstanceForge(clazzGenerics.associateWith { BroadForge.Empty  }.toMutableMap(), clazzName)
+
+        return forge
     }
 
     override fun getGenericDefinitionOrder(): List<String> {
@@ -421,10 +429,10 @@ data class JvmClassInfoRepresentation(
         name: String,
         type: Type,
         generics: Map<String, Type.Broad>,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
-    ): Type.Broad? {
+    ): BroadForge? {
         TODO("Not yet implemented")
     }
 
@@ -464,11 +472,11 @@ data class JvmClassInfoRepresentation(
 
     override suspend fun lookUpAssociatedFunctionUnknown(
         name: String,
-        argTypes: List<Type.Broad>,
+        argTypes: List<BroadForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup,
         generics: Map<String, Type.Broad>
-    ): Type.Broad? {
+    ): BroadForge? {
         TODO("Not yet implemented")
     }
 
@@ -520,7 +528,7 @@ data class JvmClassInfoRepresentation(
             info.signature,
             "<init>",
             "<init>",
-            returnForge = JvmInstanceForge(info.generics.associate { it.name to Type.Broad.Unset  }.toMutableMap(), info.signature),
+            returnForge = JvmInstanceForge(info.generics.associate { it.name to BroadForge.Empty }.toMutableMap(), info.signature),
             obfuscateName = false,
             requireDispatch = false
         )
@@ -528,9 +536,9 @@ data class JvmClassInfoRepresentation(
         return candidate
     }
 
-    override suspend fun lookupConstructorUnknown(argTypes: List<Type.Broad>, lookup: IRLookup): Type.Broad? {
-        info.constructors.find { it.args.matchesImpl(argTypes, mutableMapOf(), emptyMap(), lookup) } ?: return null
-        return Type.Broad.Known(instanceType)
+    override suspend fun lookupConstructorUnknown(argTypes: List<BroadForge>, lookup: IRLookup): BroadForge? {
+        info.constructors.find { it.args.matchesImpl(argTypes.map { it.toBroadType() }, mutableMapOf(), emptyMap(), lookup) } ?: return null
+        return InstanceForge.fromTypeAsJvm(instanceType)
     }
 
     override fun getGenericDefinitionOrder(): List<String> {
@@ -663,7 +671,7 @@ suspend fun Type.JvmType.orderedGenerics(lookup: IRLookup) =
 fun <K, V> Map<K, V>.orderByKeys(keys: List<K>) = keys.map { it to this[it]!! }
 
 fun Map<String, Type.Broad>.asLazyTypeMap() =
-    lazyTransform { key, it -> (it as? Type.Broad.Known)?.type ?: Type.Object }
+    lazyTransform { _, it -> (it as? Type.Broad.Known)?.type ?: Type.Object }
 
 fun InstanceForge.Companion.fromTypeAsJvm(type: Type): InstanceForge {
     if (type.isUnboxedPrimitive() || type.isBoxedPrimitive()) {
@@ -671,7 +679,7 @@ fun InstanceForge.Companion.fromTypeAsJvm(type: Type): InstanceForge {
     }
 
     if (type is Type.BasicJvmType) {
-        return JvmInstanceForge(type.genericTypes.toMutableMap(), type.signature)
+        return JvmInstanceForge(TODO(), type.signature)
     }
 
     if (type is Type.Union) {
