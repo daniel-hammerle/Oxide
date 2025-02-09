@@ -1,17 +1,7 @@
 package com.language.compilation
 
-import com.language.Expression
-import com.language.Function
-import com.language.Module
-import com.language.ModuleChild
-import com.language.compilation.modifiers.Modifiers
-import com.language.compilation.modifiers.modifiers
-import com.language.lexer.MetaInfo
 import com.language.lookup.jvm.RawClassLoader
-import com.language.lookup.jvm.rep.toTemplatedType
-import com.language.lookup.jvm.toType
 import java.io.IOException
-import java.lang.reflect.Modifier
 import java.util.jar.JarEntry
 import java.util.jar.JarFile
 

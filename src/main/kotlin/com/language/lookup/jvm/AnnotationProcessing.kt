@@ -12,7 +12,6 @@ import com.language.lookup.jvm.contract.ContractItem
 import com.language.lookup.jvm.contract.matches
 import com.language.lookup.jvm.contract.parseContractString
 import com.language.lookup.jvm.parsing.FunctionInfo
-import com.language.lookup.jvm.rep.asLazyTypeMap
 import org.jetbrains.annotations.Contract
 import java.lang.reflect.Executable
 import java.lang.reflect.Method
@@ -41,7 +40,7 @@ fun Executable.fitsArgTypes(argTypes: List<Type.Broad>): Pair<Pair<Int, Type>?, 
         .all { (argument, type) -> type.getOrNull()?.let { argument.fitsType(it) } ?: true }
     if (!isVarArgs) return null to result
     if (result && isVarArgs) {
-        return (parameterCount - 1 to parameterTypes.last().componentType.toType()) to true
+        return (parameterCount - 1 to parameterTypes.last().componentType.toForge()) to true
     }
 
     val result2 =  parameterTypes.slice(0..parameterCount-2)
@@ -50,7 +49,7 @@ fun Executable.fitsArgTypes(argTypes: List<Type.Broad>): Pair<Pair<Int, Type>?, 
         .all { (argument, type) -> type.getOrNull()?.let { argument.fitsType(it) } ?: true  }
 
     if (result2) {
-        return (parameterCount - 1 to parameterTypes.last().componentType.toType()) to true
+        return (parameterCount - 1 to parameterTypes.last().componentType.toForge()) to true
     }
     return null to false
 }
@@ -63,7 +62,7 @@ fun Pair<Class<*>, Array<out Annotation>>.fitsType(type: Type): Boolean {
 
 
 
-fun Class<*>.toType(): Type {
+fun Class<*>.toForge(): Type {
     return when(name) {
         "void", "V" -> Type.Nothing
         "int", "I" -> Type.IntT
@@ -71,7 +70,7 @@ fun Class<*>.toType(): Type {
         "boolean", "Z" -> Type.BoolUnknown
         else -> {
             if (name.startsWith("[")) {
-                return Type.Array(Type.Broad.Known(Class.forName(name.removePrefix("[L").removeSuffix(";")).toType()))
+                return Type.Array(Type.Broad.Known(Class.forName(name.removePrefix("[L").removeSuffix(";")).toForge()))
             }
             val generics = linkedMapOf(*typeParameters.map { it.typeName to Type.Broad.Unset as Type.Broad }.toTypedArray())
             Type.BasicJvmType(SignatureString.fromDotNotation(name), generics)
@@ -108,36 +107,41 @@ fun Class<*>.canBe(type: Type, strict: Boolean = false, nullable: Boolean = fals
 
 fun Array<out Annotation>.isTypeNullable() = any { it.javaClass.simpleName == "Nullable" }
 
-suspend fun ReflectType.toType(jvmLookup: JvmLookup, generics: Map<String, Type>): Type {
+suspend fun ReflectType.toForge(jvmLookup: JvmLookup, generics: Map<String, BroadForge>): InstanceForge {
     return when(val tp = this) {
         is ParameterizedType -> {
-            if (tp.typeName in generics) return generics[tp.typeName]!!
+            if (tp.typeName in generics) return generics[tp.typeName]!! as InstanceForge
+
             if (tp.typeName.endsWith("[]")) {
-                return Type.Array(Type.Broad.Known(Type.BasicJvmType(SignatureString.fromDotNotation(tp.typeName.removeSuffix("[]")))))
+                val signature = SignatureString.fromDotNotation(tp.typeName.removeSuffix("[]"))
+                val genericNames = jvmLookup.lookUpGenericsDefinitionOrder(signature)
+                val genericValues = genericNames.zip(tp.actualTypeArguments).associate { (name, arg) -> name to arg.toForge(jvmLookup, generics) }
+                return ArrayInstanceForge(JvmInstanceForge(genericValues.toMutableMap(), signature))
             }
 
-            val instanceType = tp.rawType.toType(jvmLookup, generics) as Type.JvmType
+            val instanceType = tp.rawType.toForge(jvmLookup, generics) as Type.JvmType
             val genericNames = jvmLookup.lookUpGenericsDefinitionOrder(instanceType.signature)
-            val genericValues = genericNames.zip(tp.actualTypeArguments).associate { (name, arg) -> name to Type.Broad.Known(arg.toType(jvmLookup, generics)) }
-            Type.BasicJvmType(instanceType.signature, genericValues)
+            val genericValues = genericNames.zip(tp.actualTypeArguments).associate { (name, arg) -> name to arg.toForge(jvmLookup, generics) }
+            JvmInstanceForge(genericValues.toMutableMap(), instanceType.signature)
         }
         is TypeVariable<*> -> {
-            generics[tp.name] ?: error("No generic exists with name `${tp.name}` in $generics")
+            (generics[tp.name] ?: error("No generic exists with name `${tp.name}` in $generics")) as InstanceForge
         }
         else -> {
             when (tp.typeName) {
-                "void" -> Type.Nothing
-                "int" -> Type.IntT
-                "double" -> Type.DoubleT
-                "boolean" -> Type.BoolUnknown
-                in generics -> generics[tp.typeName]!!
-                "?" -> Type.Object
+                "void" -> InstanceForge.ConstNothing
+                "int" -> InstanceForge.ConstInt
+                "double" -> InstanceForge.ConstDouble
+                "boolean" -> InstanceForge.ConstBool
+                in generics -> generics[tp.typeName]!! as InstanceForge
+                "?" -> JvmInstanceForge(mutableMapOf(), SignatureString("java::lang::Object"))
                 else -> {
                     if (tp.typeName.endsWith("[]")) {
-                        return Type.Array(Type.Broad.Known(Type.BasicJvmType(SignatureString.fromDotNotation(tp.typeName.removeSuffix("[]")))))
+                        val signature = SignatureString.fromDotNotation(tp.typeName.removeSuffix("[]"))
+                        return ArrayInstanceForge(JvmInstanceForge(mutableMapOf(), signature))
                     }
                     val signature = SignatureString.fromDotNotation(tp.typeName)
-                    Type.BasicJvmType(signature)
+                    JvmInstanceForge(mutableMapOf(), signature)
                 }
             }
         }
@@ -145,44 +149,35 @@ suspend fun ReflectType.toType(jvmLookup: JvmLookup, generics: Map<String, Type>
 }
 
 fun List<Type.Broad>.populate(executable: Executable): List<Type> {
-    return executable.parameterTypes.zip(this).map { (reflectType, type) -> type.getOrNull() ?: reflectType.toType()}
+    return executable.parameterTypes.zip(this).map { (reflectType, type) -> type.getOrNull() ?: reflectType.toForge()}
 }
 
-suspend fun evaluateReturnType(arguments: List<Type>, generics: Map<String, Type.Broad>, method: Method, jvmLookup: JvmLookup, lookup: IRLookup): Type {
+suspend fun evaluateReturnType(arguments: List<InstanceForge>, generics: Map<String, BroadForge>, method: Method, jvmLookup: JvmLookup, lookup: IRLookup): InstanceForge {
     val annotations = method.annotations
     val contract = annotations.firstOrNull { it.javaClass == Contract::class.java } as? Contract
     val annotationPatterns = contract?.value?.let { parseContractString(it) }
 
-    val methodSpecificGenerics = method.typeParameters.map { it.name }
+    val normalReturnType: InstanceForge = method.genericReturnType.toForge(jvmLookup, generics)
 
-    val methodGenerics = method.genericParameterTypes
-        .zip(arguments)
-        .map { (reflectTp, tp) -> reflectTp.extract(tp, lookup) }
-        .reduceOrNull { acc, map -> acc + map }
-        ?.filter { it.key in methodSpecificGenerics }
-        ?: emptyMap()
-
-    val normalReturnType = method.genericReturnType.toType(jvmLookup, generics.asLazyTypeMap() + methodGenerics.asLazyTypeMap())
-
-    val pattern = annotationPatterns?.firstNotNullOfOrNull { it.matches(arguments) }
+    val pattern = annotationPatterns?.firstNotNullOfOrNull { it.matches(arguments.map { it.type }) }
     return when(pattern) {
         ContractItem.True -> {
-            assert(Type.BoolUnknown.isContainedOrEqualTo(normalReturnType) || Type.Bool.isContainedOrEqualTo(normalReturnType))
-            Type.BoolTrue
+            assert(Type.BoolUnknown.isContainedOrEqualTo(normalReturnType.type) || Type.Bool.isContainedOrEqualTo(normalReturnType.type))
+            InstanceForge.ConstBoolFalse
         }
         ContractItem.False -> {
-            assert(Type.BoolUnknown.isContainedOrEqualTo(normalReturnType) || Type.Bool.isContainedOrEqualTo(normalReturnType))
-            Type.BoolFalse
+            assert(Type.BoolUnknown.isContainedOrEqualTo(normalReturnType.type) || Type.Bool.isContainedOrEqualTo(normalReturnType.type))
+            InstanceForge.ConstBoolFalse
         }
-        ContractItem.Null -> normalReturnType.join(Type.Null)
+        ContractItem.Null -> InstanceForge.ConstNull
         ContractItem.NotNull -> normalReturnType
         ContractItem.Ignore -> normalReturnType
-        ContractItem.Fail -> Type.Never
+        ContractItem.Fail -> InstanceForge.ConstNever
         null -> normalReturnType
     }
 }
 
-suspend fun genericAppends(arguments: List<ReflectType>, forges: List<InstanceForge>, lookup: IRLookup): Map<String, InstanceForge> {
+suspend fun genericAppends(arguments: Iterable<ReflectType>, forges: Iterable<InstanceForge>, lookup: IRLookup): Map<String, InstanceForge> {
     val changes = mutableMapOf<String, InstanceForge>()
 
     fun appendChange(name: String, change: InstanceForge) {

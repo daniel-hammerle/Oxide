@@ -3,10 +3,7 @@ package com.language.lookup.jvm
 import com.language.codegen.Box
 import com.language.codegen.getOrThrow
 import com.language.compilation.*
-import com.language.compilation.tracking.BroadForge
-import com.language.compilation.tracking.InstanceForge
-import com.language.compilation.tracking.JvmInstanceForge
-import com.language.compilation.tracking.toBroadType
+import com.language.compilation.tracking.*
 import com.language.lookup.IRLookup
 import com.language.lookup.jvm.rep.asLazyTypeMap
 import com.language.lookup.jvm.rep.fromTypeAsJvm
@@ -21,9 +18,9 @@ import java.lang.reflect.TypeVariable
 typealias ReflectModifiers = java.lang.reflect.Modifier
 typealias ReflectType = java.lang.reflect.Type
 
-fun Field.toType(generics: Map<String, Type.Broad>) = genericType.toType(generics) ?: type.toType()
+fun Field.toForge(generics: Map<String, Type.Broad>) = genericType.toForge(generics) ?: type.toForge()
 
-fun ReflectType.toType(generics: Map<String, Type.Broad>) = when(val tp = generics[typeName]) {
+fun ReflectType.toForge(generics: Map<String, Type.Broad>) = when(val tp = generics[typeName]) {
     is Type.Broad.Known -> tp.type
     Type.Broad.Unset -> Type.Object
     null -> null
@@ -46,18 +43,23 @@ data class JvmStaticMethodRepresentation(
             Box(result.first).takeIf { result.second }?.let { a -> a to it }
         } ?: return null
 
-        val oxideReturnType = evaluateReturnType(tps, generics, method, jvmLookup, lookup)
+        //get generic changes if any part of the argument is generic any value passedi nto this is now part of the generic.
+        val genericAppends = genericAppends(method.genericParameterTypes.toList(), argTypes, lookup)
+
+        val oxideReturnType = evaluateReturnType(argTypes, genericAppends, method, jvmLookup, lookup)
+
         val errorTypes = getErrorTypes(method)
 
-        val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
-        val forge = InstanceForge.fromTypeAsJvm(actualReturnType)
+        val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(JvmInstanceForge(mutableMapOf(), it)) }
 
-        val jvmArgTypes = method.parameterTypes.map { it.toType() }
+
+
+        val jvmArgTypes = method.parameterTypes.map { it.toForge() }
         val candidate =  SimpleFunctionCandidate(
             tps,
             jvmArgTypes,
-            oxideReturnType,
-            actualReturnType,
+            oxideReturnType.type,
+            actualReturnType.type,
             Opcodes.INVOKESTATIC,
             ownerSignature,
             name,
@@ -66,7 +68,7 @@ data class JvmStaticMethodRepresentation(
             requireDispatch = false,
             isInterface = ownerIsInterface,
             varargInfo = vararg.item,
-            returnForge = forge,
+            returnForge = actualReturnType,
             requiresCatch = errorTypes
         )
 
@@ -117,15 +119,25 @@ data class JvmMethodRepresentation(
         if (argTypes.any { it !is InstanceForge } && result.size > 1) return null
 
         val method = result.first()
-        val oxideReturnType = evaluateReturnType(argTypes.map { it.toBroadType() }.populate(method), generics, method, jvmLookup, lookup)
+        //get generic changes if any part of the argument is generic any value passedi nto this is now part of the generic.
+        val genericAppends = genericAppends(method.genericParameterTypes.toList(), argTypes, lookup)
+
+        //safeguard since primitives are also jvm method clients but are not jvm instance forges
+        if (genericAppends.isNotEmpty()) {
+            type as JvmInstanceForge
+            type.applyChanges(genericAppends)
+        }
+        val oxideReturnType = evaluateReturnType(argTypes, genericAppends, method, jvmLookup, lookup)
+
         val errorTypes = getErrorTypes(method)
 
-        val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
+        val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(JvmInstanceForge(mutableMapOf(), it)) }
 
-       return InstanceForge.fromTypeAsJvm(actualReturnType)
+
+        return actualReturnType
     }
 
-
+        //Current
     suspend fun lookupVariant(type: InstanceForge, generics: Map<String, Type.Broad>, argTypes: List<InstanceForge>, jvmLookup: JvmLookup, lookup: IRLookup): FunctionCandidate? {
         val tps = argTypes.map { forge -> forge.type  }
         if (variants.contains(generics to tps)) return variants.get(generics to tps)
@@ -135,11 +147,7 @@ data class JvmMethodRepresentation(
             Box(result.first).takeIf { result.second }?.let { a -> a to it }
         } ?: return null
 
-        val oxideReturnType = evaluateReturnType(tps, generics, method, jvmLookup, lookup)
 
-        val errorTypes = getErrorTypes(method)
-
-        val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(Type.BasicJvmType(it)) }
 
         //get generic changes if any part of the argument is generic any value passedi nto this is now part of the generic.
         val genericAppends = genericAppends(method.genericParameterTypes.toList(), argTypes, lookup)
@@ -149,17 +157,19 @@ data class JvmMethodRepresentation(
             type as JvmInstanceForge
             type.applyChanges(genericAppends)
         }
+        val oxideReturnType = evaluateReturnType(argTypes, genericAppends, method, jvmLookup, lookup)
+
+        val errorTypes = getErrorTypes(method)
+
+        val actualReturnType = errorTypes.fold(oxideReturnType) { acc, it -> acc.join(JvmInstanceForge(mutableMapOf(), it)) }
 
 
-        val forge = InstanceForge.fromTypeAsJvm(actualReturnType)
-
-
-        val jvmArgTypes = method.parameterTypes.map { it.toType() }
+        val jvmArgTypes = method.parameterTypes.map { it.toForge() }
         val candidate =  SimpleFunctionCandidate(
             listOf(type.type) + tps,
             jvmArgTypes,
-            method.returnType.toType(),
-            actualReturnType,
+            method.returnType.toForge(),
+            actualReturnType.type,
             if (isOwnerInterface) Opcodes.INVOKEINTERFACE else Opcodes.INVOKEVIRTUAL,
             ownerSignature,
             name,
@@ -170,7 +180,7 @@ data class JvmMethodRepresentation(
             isInterface = ownerIsInterface,
             varargInfo = vararg.item,
             errorTypes,
-            returnForge = forge,
+            returnForge = actualReturnType,
         )
 
         variants.set(generics to tps, candidate)

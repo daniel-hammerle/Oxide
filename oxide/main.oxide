@@ -4,7 +4,6 @@ struct Person { name, age }
 
 func main {
     l = list[]
-
     l.add(Person("Tom", 19))
     io.println(l.get(0).name)
 }

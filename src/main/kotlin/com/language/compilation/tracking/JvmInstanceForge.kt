@@ -54,6 +54,7 @@ class JvmInstanceForge(
 
     fun applyChanges(changes: Map<String, InstanceForge>) {
         changes.forEach { (name, forge) ->
+            if (name !in generics) return@forEach
             generics[name] = generics[name]!!.join(forge)
         }
     }

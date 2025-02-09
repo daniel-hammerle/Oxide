@@ -111,7 +111,7 @@ data class BasicJvmClassRepresentation(
     override val modifiers: Modifiers = parseModifiers()
     private val clazzName= SignatureString.fromDotNotation(this.clazz.name)
     val staticFieldForges: Map<String, InstanceForge> =
-        clazz.fields.filter { Modifier.isStatic(it.modifiers) }.associate { it.name to InstanceForge.make(it.type.toType()) }
+        clazz.fields.filter { Modifier.isStatic(it.modifiers) }.associate { it.name to InstanceForge.make(it.type.toForge()) }
 
     private fun parseModifiers() = modifiers {
         if (hasSuperType(SignatureString("java::lang::Throwable"))) setError()
@@ -207,12 +207,12 @@ data class BasicJvmClassRepresentation(
 
     override suspend fun lookUpField(name: String, generics: Map<String, Type.Broad>, lookup: IRLookup): Type? {
         if (fields.contains(name)) {
-            return fields.get(name)!!.toType(generics)
+            return fields.get(name)!!.toForge(generics)
         }
         val field =
             clazz.fields.firstOrNull { it.name == name && !ReflectModifiers.isStatic(it.modifiers) } ?: return null
         fields.set(name, field)
-        return field.toType(generics)
+        return field.toForge(generics)
     }
 
     override suspend fun lookUpStaticField(name: String): Type? {
@@ -220,7 +220,7 @@ data class BasicJvmClassRepresentation(
         val field =
 
             clazz.fields.firstOrNull { ReflectModifiers.isStatic(it.modifiers) && it.name == name } ?: return null
-        val fieldType = field.type.toType()
+        val fieldType = field.type.toForge()
         associatedFields.set(name, fieldType)
         return fieldType
     }
@@ -261,7 +261,7 @@ data class BasicJvmClassRepresentation(
 
     override suspend fun lookupConstructor(argTypes: List<InstanceForge>, lookup: IRLookup): FunctionCandidate? {
         val constructor = clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes.map { it.type }).second } ?: return null
-        val jvmArgs = constructor.parameterTypes.map { it.toType() }
+        val jvmArgs = constructor.parameterTypes.map { it.toForge() }
 
         val clazzGenerics = clazz.typeParameters.map { it.name }
 
