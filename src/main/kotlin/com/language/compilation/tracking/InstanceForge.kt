@@ -10,6 +10,8 @@ fun InstanceForge.join(other: InstanceForge): InstanceForge {
         this is JoinedInstanceForge && other is JoinedInstanceForge -> JoinedInstanceForge(forges + other.forges)
         this is JoinedInstanceForge -> JoinedInstanceForge(forges + other)
         this is BasicInstanceForge && other is BasicInstanceForge && type == other.type -> this
+        this is BasicInstanceForge && this.type == Type.Never -> other
+        other is BasicInstanceForge && other.type == Type.Never -> this
         else -> JoinedInstanceForge(listOf(this, other))
     }
 }
@@ -87,6 +89,7 @@ interface InstanceForge : BroadForge {
         val ConstBoolTrue = BasicInstanceForge(Type.BoolTrue)
         val ConstBoolFalse = BasicInstanceForge(Type.BoolFalse)
         val ConstBool = BasicInstanceForge(Type.BoolUnknown)
+        val Uninit = BasicInstanceForge(Type.UninitializedGeneric)
 
         fun make(type: Type): InstanceForge = BasicInstanceForge(type)
     }

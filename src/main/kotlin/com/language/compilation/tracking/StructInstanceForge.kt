@@ -10,7 +10,7 @@ class StructInstanceForge(
     val generics: Map<String, String>,
     val fullSignature: SignatureString,
     override val id: UUID = UUID.randomUUID()
-) : InstanceForge, GenericDestructableForge {
+) : InstanceForge, GenericDestructableForge, MemberChangeable {
 
     override val type: Type.JvmType
         get() = buildType()
@@ -64,7 +64,7 @@ class StructInstanceForge(
 
     private fun buildType(): Type.JvmType {
         val genericTypes = members.associateNotNull { (name, forge) ->
-            generics[name]?.let { it to Type.Broad.Known(forge.type) }
+            generics[name]?.let { it to forge.type }
         }.toMap()
 
         return Type.BasicJvmType(fullSignature, genericTypes)
@@ -74,24 +74,25 @@ class StructInstanceForge(
         return members[name]
     }
 
-    fun changeMember(name: String, forge: InstanceForge) {
+
+    override fun destructGeneric(name: String): InstanceForge {
+        val fieldName = generics.firstNotNullOf { (key, value) -> key.takeIf { value == name } }
+        return memberForge(fieldName)!!
+    }
+
+    override fun definiteChange(name: String, forge: InstanceForge) {
         if (name !in members) {
             error("Struct does not have member $name")
         }
         members[name] = forge
     }
 
-    fun changePossibly(name: String, forge: InstanceForge) {
+    override fun possibleChange(name: String, forge: InstanceForge) {
         if (name !in members) {
             error("Struct does not have member $name")
         }
 
         members[name] = members[name]!!.join(forge)
-    }
-
-    override fun destructGeneric(name: String): InstanceForge {
-        val fieldName = generics.firstNotNullOf { (key, value) -> key.takeIf { value == name } }
-        return memberForge(fieldName)!!
     }
 
 }

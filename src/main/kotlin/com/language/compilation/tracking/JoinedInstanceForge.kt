@@ -1,11 +1,12 @@
 package com.language.compilation.tracking
 
+import com.language.codegen.cloneAll
 import com.language.codegen.enumerate
 import com.language.compilation.Type
 import com.language.compilation.join
 import java.util.UUID
 
-class JoinedInstanceForge(var forges: List<InstanceForge>, override val id: UUID = UUID.randomUUID()) : InstanceForge {
+class JoinedInstanceForge(var forges: List<InstanceForge>, override val id: UUID = UUID.randomUUID()) : InstanceForge, MemberChangeable {
     override val type: Type = forges.fold<InstanceForge, Type>(Type.Never) { acc, it -> acc.join(it.type) }
     override fun clone(processes: MutableMap<UUID, InstanceForge>): InstanceForge {
         return processes[id] ?: JoinedInstanceForge(forges.map { it.clone(processes) }, id).also { processes[id] = it }
@@ -46,7 +47,15 @@ class JoinedInstanceForge(var forges: List<InstanceForge>, override val id: UUID
         return others.filter { it.id != id }.fold(this as InstanceForge) { acc, it -> acc.join(it) }
     }
 
-    fun ofType(type: Type): InstanceForge? {
-        return forges.firstOrNull { it -> it.type == type }
+    override fun definiteChange(name: String, forge: InstanceForge) {
+        possibleChange(name, forge)
+
+        //locally insert a smart cast definite change
+        forges = forges.cloneAll().onEach { (it as MemberChangeable).definiteChange(name, forge) }
+
+    }
+
+    override fun possibleChange(name: String, forge: InstanceForge) {
+        forges.forEach { (it as MemberChangeable).possibleChange(name, forge) }
     }
 }

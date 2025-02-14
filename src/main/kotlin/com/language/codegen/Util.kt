@@ -9,10 +9,12 @@ import java.util.*
 
 data class Box<T>(val item: T)
 
-fun List<BroadForge>.cloneAll(): List<BroadForge> {
+fun<T : BroadForge> List<T>.cloneAll(): List<T> {
     val map = mutableMapOf<UUID, InstanceForge>()
-    return map { it.clone(map) }
+    return map { it.clone(map) as T }
 }
+
+
 
 fun boxOrIgnore(mv: MethodVisitor, type: Type): Boolean {
     when(type) {
@@ -115,6 +117,7 @@ fun Type.toJVMDescriptor(): String = when(this) {
     is Type.JvmType -> "L${signature.toJvmNotation()};"
     is Type.Lambda -> "L${signature.toJvmNotation()};"
     Type.Nothing, Type.Never -> "V"
+    Type.UninitializedGeneric -> "Ljava/lang/Object;"
     is Type.JvmArray -> "[${if (this.itemType.getOrDefault(Type.Object).isUnboxedPrimitive()) itemType.getOrDefault(Type.Object).toJVMDescriptor() else Type.Object.toJVMDescriptor()}"
     //null has to be of some type, so we'll just make it object
     Type.Null -> "Ljava/lang/Object;"

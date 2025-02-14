@@ -1042,10 +1042,10 @@ sealed class Instruction {
 
             val value = value.inferTypes(variables, lookup, handle, hist)
 
-            parent.forge as StructInstanceForge
+
             val fieldType = lookup.lookUpPhysicalFieldType(parent.type, name)
 
-            parent.forge.asStruct().changeMember(name, value.forge)
+            ( parent.forge as MemberChangeable).definiteChange(name, value.forge)
 
             return TypedInstruction.DynamicPropertyAssignment(parent, name, value, fieldType)
         }
@@ -1452,18 +1452,18 @@ data class ForLoop(
     ): TypedInstruction {
         val parent = parent.inferTypes(variables, lookup, handle, hist)
         return when {
-            runCatching { lookup.lookUpCandidate(parent.forge, "iterator", emptyList<InstanceForge>(), hist) }.isSuccess -> {
+            runCatching { lookup.lookUpCandidate(parent.forge, "iterator", emptyList(), hist) }.isSuccess -> {
                 val iterCall =
                     DynamicCall(this.parent, "iterator", emptyList(), info).inferTypes(variables, lookup, handle, hist)
 
-                val hasNext = lookup.lookUpCandidate(iterCall.forge, "hasNext", emptyList<InstanceForge>(), hist)
-                val next = lookup.lookUpCandidate(iterCall.forge, "next", emptyList<InstanceForge>(), hist)
+                val hasNext = lookup.lookUpCandidate(iterCall.forge, "hasNext", emptyList(), hist)
+                val next = lookup.lookUpCandidate(iterCall.forge, "next", emptyList(), hist)
 
                 compileForLoopBody(variables, next, hasNext, iterCall, lookup, handle, hist)
             }
-            runCatching { lookup.lookUpCandidate(parent.forge, "next", emptyList<InstanceForge>(), hist) }.isSuccess -> {
-                val hasNext = lookup.lookUpCandidate(parent.forge, "hasNext", emptyList<InstanceForge>(), hist)
-                val next = lookup.lookUpCandidate(parent.forge, "next", emptyList<InstanceForge>(), hist)
+            runCatching { lookup.lookUpCandidate(parent.forge, "next", emptyList(), hist) }.isSuccess -> {
+                val hasNext = lookup.lookUpCandidate(parent.forge, "hasNext", emptyList(), hist)
+                val next = lookup.lookUpCandidate(parent.forge, "next", emptyList(), hist)
 
                 compileForLoopBody(variables, next, hasNext, parent, lookup, handle, hist)
             }
@@ -1685,7 +1685,7 @@ sealed interface Type {
 
     sealed interface JvmType : Type {
         val signature: SignatureString
-        val genericTypes: Map<String, Broad>
+        val genericTypes: Map<String, Type>
     }
 
     sealed interface Broad {
@@ -1701,7 +1701,7 @@ sealed interface Type {
 
     data class BasicJvmType(
         override val signature: SignatureString,
-        override val genericTypes: Map<String, Broad> = mapOf()
+        override val genericTypes: Map<String, Type> = mapOf()
     ) : JvmType {
         override val size: Int = 1
 
@@ -1785,6 +1785,10 @@ sealed interface Type {
         override val size: Int = 0
     }
 
+    //Placeholder for uninitialized generics where no value exists.
+    data object UninitializedGeneric : Type {
+        override val size: Int = 0
+    }
 }
 
 fun Type.Broad.join(other: Type.Broad): Type.Broad = when {
@@ -1804,44 +1808,27 @@ fun Type.Union.flatMapEntries(closure: (item: Type) -> Type.Union): Type.Union {
     return Type.Union(entries.map(closure).flatMap { it.entries }.toSet())
 }
 
-fun Type.assertIsInstanceOf(other: Type) {
-    when {
-        this is Type.Union && other is Type.Union -> {
-            this.entries.forEach { if (it !in other.entries) error("Type error $this is not instance of $other") }
-        }
-
-        other is Type.Union -> {
-            if (other.entries.none { it == this }) {
-                error("Type error $this is not instance of $other")
-            }
-        }
-        //a union can never be an instance of a non-union
-        this is Type.Union -> error("Type error $this is not instance of $other")
-    }
-}
-
 fun Type.join(other: Type): Type {
     val result = when {
+        this == other -> this
+        other == Type.UninitializedGeneric -> this
+        this == Type.UninitializedGeneric -> other
         other == Type.Never -> this
         this == Type.Never -> other
         this == Type.Nothing && other == Type.Nothing -> Type.Nothing
         other == Type.Nothing && this != Type.Nothing -> error("Nothing cannot be in a union")
-        this is Type.JvmType && other is Type.JvmType && signature == other.signature -> {
+        this is JvmType && other is JvmType && signature == other.signature -> {
             //iterate over all generics and join their values
             val allGenerics = genericTypes.keys + other.genericTypes.keys
             val joinedGenerics = allGenerics.associateWith { name ->
-                val first = genericTypes[name]?.getOrNull()
-                val second = other.genericTypes[name]?.getOrNull()
+                val first = genericTypes[name]
+                val second = other.genericTypes[name]
 
                 when {
-                    first == null && second != null -> second.asBroadType()
-                    first != null && second == null -> first.asBroadType()
-                    else -> {
-                        val type = second?.let { first?.join(second) }
-                        val broadType = type?.let { Type.Broad.Known(it) } ?: Type.Broad.Unset
-
-                        broadType
-                    }
+                    first != null && second != null -> first.join(second)
+                    first == null && second == null -> Type.UninitializedGeneric
+                    first == null -> second!!
+                    else -> first
                 }
             }
 
@@ -2426,7 +2413,7 @@ suspend fun List<TypedConstructingArgument>.itemType(lookup: IRLookup) = map {
             is Type.Array -> (tp.itemType as? Type.Broad.Known)?.type
             is Type.BasicJvmType -> {
                 if (lookup.typeHasInterface(tp, SignatureString("java::util::Collection"))) {
-                    (tp.genericTypes["E"]!! as? Type.Broad.Known)?.type
+                    tp.genericTypes["E"]!!
                 } else {
                     error("")
                 }

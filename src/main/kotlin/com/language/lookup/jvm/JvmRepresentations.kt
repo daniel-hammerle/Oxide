@@ -43,10 +43,10 @@ data class JvmStaticMethodRepresentation(
             Box(result.first).takeIf { result.second }?.let { a -> a to it }
         } ?: return null
 
-        //get generic changes if any part of the argument is generic any value passedi nto this is now part of the generic.
+        //get generic changes if any part of the argument is generic any value passed into this is now part of the generic.
         val genericAppends = genericAppends(method.genericParameterTypes.toList(), argTypes, lookup)
 
-        val oxideReturnType = evaluateReturnType(argTypes, genericAppends, method, jvmLookup, lookup)
+        val oxideReturnType = evaluateReturnType(argTypes, genericAppends, method, jvmLookup, lookup) as InstanceForge
 
         val errorTypes = getErrorTypes(method)
 
@@ -138,7 +138,7 @@ data class JvmMethodRepresentation(
     }
 
         //Current
-    suspend fun lookupVariant(type: InstanceForge, generics: Map<String, Type.Broad>, argTypes: List<InstanceForge>, jvmLookup: JvmLookup, lookup: IRLookup): FunctionCandidate? {
+    suspend fun lookupVariant(type: InstanceForge, generics: Map<String, Type>, argTypes: List<InstanceForge>, jvmLookup: JvmLookup, lookup: IRLookup): FunctionCandidate? {
         val tps = argTypes.map { forge -> forge.type  }
         if (variants.contains(generics to tps)) return variants.get(generics to tps)
 
@@ -150,14 +150,17 @@ data class JvmMethodRepresentation(
 
 
         //get generic changes if any part of the argument is generic any value passedi nto this is now part of the generic.
-        val genericAppends = genericAppends(method.genericParameterTypes.toList(), argTypes, lookup)
-
+        val genericAppends = genericAppends(method.genericParameterTypes.toList(), argTypes, lookup).toMutableMap()
         //safeguard since primitives are also jvm method clients but are not jvm instance forges
         if (genericAppends.isNotEmpty()) {
             type as JvmInstanceForge
             type.applyChanges(genericAppends)
         }
-        val oxideReturnType = evaluateReturnType(argTypes, genericAppends, method, jvmLookup, lookup)
+
+        if (type is JvmInstanceForge) {
+            genericAppends +=type.generics.filter {it.value is InstanceForge  } as Map<String, InstanceForge>
+        }
+        val oxideReturnType = evaluateReturnType(argTypes,  genericAppends, method, jvmLookup, lookup)  as InstanceForge
 
         val errorTypes = getErrorTypes(method)
 

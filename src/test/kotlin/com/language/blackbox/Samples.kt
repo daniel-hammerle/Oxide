@@ -40,6 +40,25 @@ class Samples {
     }
 
     @Test
+    fun testInstanceTracking() {
+        val code = MinimalTestingLib + """
+
+            struct Person { name, age }
+
+            func main {
+                l = list[]
+                l.add(Person("Tom", 19))
+                l.get(0).name = 32
+                print(l.get(0).name * 3)
+            }
+
+        """.trimIndent()
+
+        runCode(code).out("96").returnValue(null)
+
+    }
+
+    @Test
     fun testForLoops() {
         val code = """
             use java::lang::{System, Integer, Boolean}         

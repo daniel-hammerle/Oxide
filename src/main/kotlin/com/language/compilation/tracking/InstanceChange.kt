@@ -46,7 +46,7 @@ fun InstanceForge.changeBroad(change: InstanceChange, args: List<BroadForge>): B
     }
     is InstanceChange.JvmChange -> {
         this as JvmInstanceForge
-        generics.putAll(change.generics.mapValues { it.value.buildBroad(args) })
+        generics.putAll(change.generics.mapValues { it.value.buildBroad(args) as InstanceForge })
         this
     }
     is InstanceChange.Unionization -> when(this) {
@@ -75,7 +75,7 @@ fun InstanceForge.change(change: InstanceChange, args: List<InstanceForge>): Ins
     }
     is InstanceChange.JvmChange -> {
         this as JvmInstanceForge
-        generics.putAll(change.generics.mapValues { it.value.build(args) })
+        generics.putAll(change.generics.mapValues { it.value.build(args) as InstanceForge })
         this
     }
     is InstanceChange.Unionization -> when(this) {
@@ -136,7 +136,7 @@ fun InstanceTemplate.build(args: List<InstanceForge>): InstanceForge = when(this
 fun InstanceTemplate.buildBroad(args: List<BroadForge>): BroadForge = when(this) {
     is InstanceTemplate.Const -> forge
     is InstanceTemplate.Joined -> JoinedInstanceForge(items.map { (it.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty })
-    is InstanceTemplate.Jvm -> JvmInstanceForge(generics.mapValuesToMutable { it.value.buildBroad(args) }, signatureString)
+    is InstanceTemplate.Jvm -> JvmInstanceForge(generics.mapValuesToMutable { it.value.buildBroad(args) as InstanceForge }, signatureString)
     is InstanceTemplate.Object -> StructInstanceForge(
         fields.mapValuesToMutable { (it.value.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty },
         generics,
@@ -146,7 +146,7 @@ fun InstanceTemplate.buildBroad(args: List<BroadForge>): BroadForge = when(this)
 
 sealed interface InstanceTemplate {
     data class Const(val forge: InstanceForge) : InstanceTemplate
-    data class Jvm(val signatureString: SignatureString, val generics: Map<String, BroadInstanceBuilder>) : InstanceTemplate
+    data class Jvm(val signatureString: SignatureString, val generics: Map<String, InstanceBuilder>) : InstanceTemplate
     data class Object(val signatureString: SignatureString, val fields: Map<String, InstanceBuilder>, val generics: Map<String, String>): InstanceTemplate
     data class Joined(val items: List<InstanceBuilder>): InstanceTemplate
 }

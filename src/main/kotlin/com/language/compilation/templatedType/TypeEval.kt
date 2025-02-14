@@ -57,16 +57,15 @@ suspend fun TemplatedType.matchesSubset(
             }
             type.genericTypes.entries.zip(this.generics).forEach { (entry, template) ->
                 when(val v = entry.value) {
-                    is Type.Broad.Unset -> {
+                    is Type.UninitializedGeneric -> {
                         println("Unset type ($type cannot match $this)")
                         println("Defaulting to true")
                     }
-                    is Type.Broad.Known -> when (template.matchesSubset(v.type, generics, modifiers, lookup)) {
+                    else -> when (template.matchesSubset(v, generics, modifiers, lookup)) {
                         false-> return false
                         else -> {}
                     }
 
-                    is Type.Broad.UnknownUnionized -> {} //assume unknown is true
                 }
             }
             true
@@ -124,16 +123,15 @@ suspend fun TemplatedType.matchesImpl(
             }
             (this.generics).zip(type.genericTypes.entries).forEach { (template, entry) ->
                 when(val v = entry.value) {
-                    is Type.Broad.Unset -> {
+                    is Type.UninitializedGeneric -> {
                         println("Unset type ($type cannot match $this)")
                         println("Defaulting to true")
                     }
-                    is Type.Broad.Known -> when (template.matchesImpl(v.type, generics, modifiers, lookup)) {
+                    else -> when (template.matchesImpl(v, generics, modifiers, lookup)) {
                         false-> return false
                         else -> {}
                     }
 
-                    is Type.Broad.UnknownUnionized -> {} //assume unknown is true
                 }
             }
             true

@@ -215,7 +215,7 @@ fun Type.toFrameSignature(): Any = when(this) {
     Type.DoubleT -> Opcodes.DOUBLE
     Type.IntT -> Opcodes.INTEGER
     is Type.Lambda -> signature.toJvmNotation()
-    Type.Never -> error("Never can't be on a stack")
+    Type.Never, Type.UninitializedGeneric -> error("Never can't be on a stack")
     is Type.BasicJvmType -> signature.toJvmNotation()
     Type.Nothing -> error("Nothing can't be on a stack")
     Type.Null -> "java/lang/Object"

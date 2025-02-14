@@ -6,17 +6,15 @@ import com.language.compilation.join
 import java.util.UUID
 
 class JvmInstanceForge(
-    val generics: MutableMap<String, BroadForge>,
+    val generics: MutableMap<String, InstanceForge>,
     val fullSignature: SignatureString,
     override val id: UUID = UUID.randomUUID(),
 ) : InstanceForge {
     override val type: Type
         get() = Type.BasicJvmType(fullSignature, genericTypes)
 
-    val genericTypes: Map<String, Type.Broad>
-        get() = generics.mapValues {
-            it.value.toBroadType()
-        }
+    val genericTypes: Map<String, Type>
+        get() = generics.mapValues { it.value.type }
 
     override fun clone(processes: MutableMap<UUID, InstanceForge>): InstanceForge {
         return processes[id] ?: JvmInstanceForge(generics.toMutableMap(), fullSignature, id)

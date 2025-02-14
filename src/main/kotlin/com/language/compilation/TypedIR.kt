@@ -49,7 +49,7 @@ sealed interface TypedInstruction {
     data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type.Broad, val tempArrayVariable: Int?) : TypedInstruction {
         val isConstList = items.all { it is TypedConstructingArgument.Normal }
         override val forge: InstanceForge = JvmInstanceForge(
-            mutableMapOf("E" to BroadForge.Empty),
+            mutableMapOf("E" to items.map { it.forge }.reduce { acc, broadForge -> acc.join(broadForge) }),
             SignatureString("java::util::ArrayList")
         )
     }
@@ -271,22 +271,28 @@ sealed interface TypedInstruction {
 sealed interface TypedConstructingArgument {
     val instruction: TypedInstruction
     val type: Type
+        get() = forge.type
+    val forge: InstanceForge
     @JvmInline
     value class Normal(override val instruction: TypedInstruction) : TypedConstructingArgument {
-        override val type: Type
-            get() = instruction.type
+        override val forge: InstanceForge
+            get() = instruction.forge
     }
 
     @JvmInline
     value class Collected(override val instruction: TypedInstruction) : TypedConstructingArgument {
-        override val type: Type
-            get() = instruction.type
+        override val forge: InstanceForge
+            get() = when(val f = instruction.forge) {
+                is GenericDestructableForge -> f.destructGeneric("E")
+                is ArrayInstanceForge -> f.itemForge
+                else -> error("Invalid")
+            }
     }
 
     @JvmInline
     value class Iteration(override val instruction: TypedInstruction.ForLoop): TypedConstructingArgument {
-        override val type: Type
-            get() = instruction.body.type
+        override val forge: InstanceForge
+            get() = instruction.forge
     }
 }
 

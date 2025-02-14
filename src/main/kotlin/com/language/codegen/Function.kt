@@ -83,4 +83,5 @@ fun Type.toFunctionNameNotation(): String = when(this) {
     Type.Null -> "n"
     is Type.JvmArray -> "${itemType.getOrDefault(Type.Object).toJVMDescriptor().removeSuffix(";").removePrefix("L")}]"
     is Type.Union -> "u(${entries.joinToString("") { it.toFunctionNameNotation() }})"
+    Type.UninitializedGeneric -> "v"
 }

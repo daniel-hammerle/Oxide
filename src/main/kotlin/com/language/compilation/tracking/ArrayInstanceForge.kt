@@ -4,7 +4,7 @@ import com.language.compilation.Type
 import java.util.*
 
 data class ArrayInstanceForge(
-    val itemForge: BroadForge,
+    val itemForge: InstanceForge,
     override val id: UUID = UUID.randomUUID()
 ) : InstanceForge {
     override val type: Type

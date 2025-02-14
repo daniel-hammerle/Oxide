@@ -1427,7 +1427,7 @@ fun storeInstruction(type: Type) = when(type) {
     Type.Nothing -> Opcodes.ASTORE
     Type.Null, is Type.JvmArray -> Opcodes.ASTORE
     is Type.Union ->Opcodes.ASTORE
-    Type.Never -> error("Cannot store variable of type never")
+    Type.Never, Type.UninitializedGeneric -> error("Cannot store variable of type never")
 }
 
 fun loadInstruction(type: Type) = when(type) {
@@ -1437,7 +1437,7 @@ fun loadInstruction(type: Type) = when(type) {
     Type.Nothing -> Opcodes.ALOAD
     Type.Null, is Type.JvmArray -> Opcodes.ALOAD
     is Type.Union ->Opcodes.ALOAD
-    Type.Never -> error("Cannot store variable of type never")
+    Type.Never, Type.UninitializedGeneric -> error("Cannot store variable of type never")
 }
 
 fun returnInstruction(type: Type) = when(type) {

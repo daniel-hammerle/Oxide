@@ -72,7 +72,7 @@ fun Class<*>.toForge(): Type {
             if (name.startsWith("[")) {
                 return Type.Array(Type.Broad.Known(Class.forName(name.removePrefix("[L").removeSuffix(";")).toForge()))
             }
-            val generics = linkedMapOf(*typeParameters.map { it.typeName to Type.Broad.Unset as Type.Broad }.toTypedArray())
+            val generics = linkedMapOf(*typeParameters.map { it.typeName to Type.UninitializedGeneric }.toTypedArray())
             Type.BasicJvmType(SignatureString.fromDotNotation(name), generics)
         }
     }
@@ -102,12 +102,13 @@ fun Class<*>.canBe(type: Type, strict: Boolean = false, nullable: Boolean = fals
         is Type.JvmArray -> name == type.toJVMDescriptor().replace("/", ".")
         Type.Never -> false
         is Type.Lambda ->SignatureString(this.name.replace(".", "::")) == type.signature || name == "java.lang.Object"
+        Type.UninitializedGeneric -> true
     }
 }
 
 fun Array<out Annotation>.isTypeNullable() = any { it.javaClass.simpleName == "Nullable" }
 
-suspend fun ReflectType.toForge(jvmLookup: JvmLookup, generics: Map<String, BroadForge>): InstanceForge {
+suspend fun ReflectType.toForge(jvmLookup: JvmLookup, generics: Map<String, InstanceForge>): InstanceForge {
     return when(val tp = this) {
         is ParameterizedType -> {
             if (tp.typeName in generics) return generics[tp.typeName]!! as InstanceForge
@@ -125,7 +126,7 @@ suspend fun ReflectType.toForge(jvmLookup: JvmLookup, generics: Map<String, Broa
             JvmInstanceForge(genericValues.toMutableMap(), instanceType.signature)
         }
         is TypeVariable<*> -> {
-            (generics[tp.name] ?: error("No generic exists with name `${tp.name}` in $generics")) as InstanceForge
+            generics[tp.name] ?: InstanceForge.Uninit
         }
         else -> {
             when (tp.typeName) {
@@ -133,7 +134,7 @@ suspend fun ReflectType.toForge(jvmLookup: JvmLookup, generics: Map<String, Broa
                 "int" -> InstanceForge.ConstInt
                 "double" -> InstanceForge.ConstDouble
                 "boolean" -> InstanceForge.ConstBool
-                in generics -> generics[tp.typeName]!! as InstanceForge
+                in generics -> generics[tp.typeName] ?: InstanceForge.Uninit
                 "?" -> JvmInstanceForge(mutableMapOf(), SignatureString("java::lang::Object"))
                 else -> {
                     if (tp.typeName.endsWith("[]")) {
@@ -152,14 +153,14 @@ fun List<Type.Broad>.populate(executable: Executable): List<Type> {
     return executable.parameterTypes.zip(this).map { (reflectType, type) -> type.getOrNull() ?: reflectType.toForge()}
 }
 
-suspend fun evaluateReturnType(arguments: List<InstanceForge>, generics: Map<String, BroadForge>, method: Method, jvmLookup: JvmLookup, lookup: IRLookup): InstanceForge {
+suspend fun evaluateReturnType(arguments: List<BroadForge>, generics: Map<String, InstanceForge>, method: Method, jvmLookup: JvmLookup, lookup: IRLookup): BroadForge {
     val annotations = method.annotations
     val contract = annotations.firstOrNull { it.javaClass == Contract::class.java } as? Contract
     val annotationPatterns = contract?.value?.let { parseContractString(it) }
 
-    val normalReturnType: InstanceForge = method.genericReturnType.toForge(jvmLookup, generics)
+    val normalReturnType = method.genericReturnType.toForge(jvmLookup, generics).let { it as? InstanceForge ?: return it }
 
-    val pattern = annotationPatterns?.firstNotNullOfOrNull { it.matches(arguments.map { it.type }) }
+    val pattern = annotationPatterns?.firstNotNullOfOrNull { it.matches(arguments.map { it.toBroadType().let { it as? Type.Broad.Known }?.type ?: return@firstNotNullOfOrNull null }) }
     return when(pattern) {
         ContractItem.True -> {
             assert(Type.BoolUnknown.isContainedOrEqualTo(normalReturnType.type) || Type.Bool.isContainedOrEqualTo(normalReturnType.type))
@@ -177,7 +178,7 @@ suspend fun evaluateReturnType(arguments: List<InstanceForge>, generics: Map<Str
     }
 }
 
-suspend fun genericAppends(arguments: Iterable<ReflectType>, forges: Iterable<InstanceForge>, lookup: IRLookup): Map<String, InstanceForge> {
+suspend fun genericAppends(arguments: Iterable<ReflectType>, forges: Iterable<BroadForge>, lookup: IRLookup): Map<String, InstanceForge> {
     val changes = mutableMapOf<String, InstanceForge>()
 
     fun appendChange(name: String, change: InstanceForge) {
@@ -185,6 +186,7 @@ suspend fun genericAppends(arguments: Iterable<ReflectType>, forges: Iterable<In
     }
 
     for ((arg, forge) in arguments.zip(forges)) {
+        if (forge !is InstanceForge) continue
         inspectType(arg, forge, ::appendChange, lookup)
     }
 

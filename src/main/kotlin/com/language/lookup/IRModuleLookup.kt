@@ -297,7 +297,7 @@ class IRModuleLookup(
         is TemplatedType.Complex -> {
             val availableGenerics = getStructGenericNames(signatureString)
             val entries = availableGenerics.toList().mapIndexed { index, s ->
-                s to (this.generics.getOrNull(index)?.populate(generics)?.let { Type.Broad.Known(it) } ?: Type.Broad.Unset)
+                s to (this.generics.getOrNull(index)?.populate(generics) ?: Type.UninitializedGeneric)
             }.toMap()
 
             Type.BasicJvmType(signatureString, entries)

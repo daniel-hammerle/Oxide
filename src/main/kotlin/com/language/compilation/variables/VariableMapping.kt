@@ -152,7 +152,7 @@ class VariableMappingImpl private constructor(
 
     override fun genericChangeRequest(id: Int, genericName: String, type: Type) {
         val (signature, generics) = (getType(id) as Type.JvmType).let { it.signature to it.genericTypes }
-        variables[id] = Type.BasicJvmType(signature, generics + mapOf(genericName to Type.Broad.Known(type)))
+        variables[id] = Type.BasicJvmType(signature, generics + mapOf(genericName to type))
     }
 
     override fun getType(id: Int): Type {
