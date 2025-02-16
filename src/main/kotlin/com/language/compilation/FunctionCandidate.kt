@@ -82,8 +82,12 @@ data class UnionFunctionCandidate(
     private val unifiedReturnType = candidates.values.map { it.oxideReturnType }.allEqual()
 
     override fun generateCall(mv: MethodVisitor, stackMap: StackMap) {
-        mv.dynamicDispatch(candidates.keys, oxideReturnType, stackMap) { type ->
-            candidates[type]!!.generateCall(mv, stackMap)
+        mv.dynamicDispatch(candidates.keys.map { it.asBoxed() }, oxideReturnType, stackMap) { type ->
+            val unboxed = type.asUnboxedOrIgnore()
+            val item = if (unboxed is Type.BoolT) {
+                candidates[unboxed] ?: candidates[Type.BoolFalse] ?: candidates[Type.BoolTrue]!!
+            } else candidates[unboxed]!!
+            item.generateCall(mv, stackMap)
             if (!unifiedReturnType) {
                 boxOrIgnore(mv, type)
             }
@@ -130,17 +134,21 @@ data class SimpleFunctionCandidate(
         if (jvmReturnType.isUnboxedPrimitive() && !oxideReturnType.isUnboxedPrimitive()) {
             boxOrIgnore(mv, jvmReturnType)
         }
+
         if (castReturnType) {
             //were boxing the return type because the only reason we cast the return type is when we have generics,
             // and then It's automatically always boxed
             mv.visitTypeInsn(Opcodes.CHECKCAST, oxideReturnType.asBoxed().toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+        }
+        if (oxideReturnType.isUnboxedPrimitive() && !jvmReturnType.isUnboxedPrimitive()) {
+            unboxOrIgnore(mv, oxideReturnType.asBoxed(), oxideReturnType)
         }
 
         if (wrapInCatch) {
             mv.visitLabel(tryEnd)
             mv.visitJumpInsn(Opcodes.GOTO, end)
             mv.visitLabel(catch)
-            stackMap.push(Type.BasicJvmType(SignatureString("java::lang::Throwable")))
+            stackMap.push(Type.BasicJvmType(SignatureString("java::lang::Exception")))
             stackMap.generateFrame(mv)
             mv.visitJumpInsn(Opcodes.GOTO, end)
 

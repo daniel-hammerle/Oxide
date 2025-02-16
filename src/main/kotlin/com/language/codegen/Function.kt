@@ -4,7 +4,7 @@ import com.language.compilation.*
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
-suspend fun compileCheckedFunction(
+fun compileCheckedFunction(
     cw: ClassWriter,
     name: String,
     body: TypedInstruction,
@@ -30,10 +30,11 @@ suspend fun compileCheckedFunction(
     }
 
     //compile body
-    compileInstruction(mv, body, stackMap, CleanupStack(mutableListOf()))
+    val outerCleanup = CleanUpFrame(metaData.returnType) {}
+    compileInstruction(mv, body, stackMap, CleanupStack(mutableListOf(outerCleanup)))
 
     when(body.type) {
-        Type.Nothing, Type.Never-> assert(stackMap.stackSize == 0) { "Expected 0 but was ${stackMap.stackSize} ${body.type} $name" }
+        Type.Nothing, Type.Never -> assert(stackMap.stackSize == 0) { "Expected 0 but was ${stackMap.stackSize} ${body.type} $name" }
         else -> assert(stackMap.stackSize == 1) { "Expected 1 but was ${stackMap.stackSize} ${body.type} $name" }
     }
 

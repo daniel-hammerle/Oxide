@@ -249,7 +249,7 @@ class BasicOxideLookup(
             oxideArgs = argTypes,
             jvmArgs = fields.values.toList(),
             jvmReturnType = Type.Nothing,
-            oxideReturnType = Type.BasicJvmType(structName, generics.mapValues { Type.Broad.Known(it.value) }),
+            oxideReturnType = Type.BasicJvmType(structName, generics.mapValues { it.value }),
             invocationType = Opcodes.INVOKESPECIAL,
             structName,
             "<init>",
@@ -296,7 +296,7 @@ class BasicOxideLookup(
         return when (instance) {
             is Type.JvmType -> {
                 val type = getStruct(instance.signature)?.fields?.find { it.first == name }?.second
-                val transformedGenerics = instance.genericTypes.asLazyTypeMap()
+                val transformedGenerics = instance.genericTypes
                 with(lookup) { type?.populate(transformedGenerics, true) } ?: error("No field $instance.$name")
             }
 

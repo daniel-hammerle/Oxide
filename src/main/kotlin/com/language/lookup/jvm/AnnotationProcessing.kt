@@ -120,10 +120,11 @@ suspend fun ReflectType.toForge(jvmLookup: JvmLookup, generics: Map<String, Inst
                 return ArrayInstanceForge(JvmInstanceForge(genericValues.toMutableMap(), signature))
             }
 
-            val instanceType = tp.rawType.toForge(jvmLookup, generics) as Type.JvmType
-            val genericNames = jvmLookup.lookUpGenericsDefinitionOrder(instanceType.signature)
+            val instanceType = tp.rawType.toForge(jvmLookup, generics)
+            val type = instanceType.type as Type.JvmType
+            val genericNames = jvmLookup.lookUpGenericsDefinitionOrder(type.signature)
             val genericValues = genericNames.zip(tp.actualTypeArguments).associate { (name, arg) -> name to arg.toForge(jvmLookup, generics) }
-            JvmInstanceForge(genericValues.toMutableMap(), instanceType.signature)
+            JvmInstanceForge(genericValues.toMutableMap(), type.signature)
         }
         is TypeVariable<*> -> {
             generics[tp.name] ?: InstanceForge.Uninit

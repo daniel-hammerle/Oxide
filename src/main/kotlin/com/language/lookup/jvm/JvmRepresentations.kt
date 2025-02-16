@@ -18,13 +18,13 @@ import java.lang.reflect.TypeVariable
 typealias ReflectModifiers = java.lang.reflect.Modifier
 typealias ReflectType = java.lang.reflect.Type
 
-fun Field.toForge(generics: Map<String, Type.Broad>) = genericType.toForge(generics) ?: type.toForge()
+fun Field.toForge(generics: Map<String, Type>) = genericType.toForge(generics) ?: type.toForge()
 
-fun ReflectType.toForge(generics: Map<String, Type.Broad>) = when(val tp = generics[typeName]) {
-    is Type.Broad.Known -> tp.type
-    Type.Broad.Unset -> Type.Object
-    null -> null
-    is Type.Broad.UnknownUnionized -> TODO()
+fun ReflectType.toForge(generics: Map<String, Type>) = when(val tp = generics[typeName]) {
+    Type.UninitializedGeneric -> Type.Object
+    null-> null
+    else -> tp
+
 }
 
 data class JvmStaticMethodRepresentation(
@@ -96,7 +96,7 @@ data class JvmMethodRepresentation(
     private val ownerIsInterface: Boolean,
     private val name: String,
     private val methods: Set<Method>,
-    private val variants: Cache<Pair<Map<String, Type.Broad>, List<Type>>, FunctionCandidate>,
+    private val variants: Cache<Pair<Map<String, Type>, List<Type>>, FunctionCandidate>,
     private val isOwnerInterface: Boolean,
 ) {
 
@@ -111,7 +111,7 @@ data class JvmMethodRepresentation(
         return result
     }
 
-    suspend fun lookupVariantUnknown(type: Type, generics: Map<String, Type.Broad>, argTypes: List<BroadForge>, jvmLookup: JvmLookup, lookup: IRLookup): BroadForge? {
+    suspend fun lookupVariantUnknown(type: Type, generics: Map<String, Type>, argTypes: List<BroadForge>, jvmLookup: JvmLookup, lookup: IRLookup): BroadForge? {
         val result = methods.filter { it.fitsArgTypes(argTypes.map { it.toBroadType() }).second }
 
         if (result.isEmpty()) return null
@@ -219,7 +219,7 @@ suspend fun ReflectType.extract(type: Type, lookup: IRLookup): Map<String, Type.
                 .zip(actualTypeArguments)
                 .map { (tp, reflectTp) ->
                     val (_, oxideTp) = tp
-                    reflectTp.extract(oxideTp.getOrThrow("Invalid type"), lookup)
+                    reflectTp.extract(oxideTp, lookup)
                 }
                 .reduce { acc, map -> acc + map }
         }

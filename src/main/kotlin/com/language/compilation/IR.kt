@@ -479,13 +479,19 @@ sealed class Instruction {
                 }
             }
 
+            val forge = body.forge.join(elseBody?.forge ?: when(body.type) {
+                Type.Nothing, Type.Never -> InstanceForge.ConstNothing
+                else -> InstanceForge.ConstNull
+            })
+
             return@coroutineScope TypedInstruction.If(
                 cond,
                 body,
                 elseBody,
                 bodyAdjust,
                 elseBodyAdjust,
-                variables.toVarFrame()
+                variables.toVarFrame(),
+                forge
             )
         }
 
@@ -1452,7 +1458,7 @@ data class ForLoop(
     ): TypedInstruction {
         val parent = parent.inferTypes(variables, lookup, handle, hist)
         return when {
-            runCatching { lookup.lookUpCandidate(parent.forge, "iterator", emptyList(), hist) }.isSuccess -> {
+            runCatching { lookup.lookUpCandidate(parent.forge, "iterator", emptyList(), hist) }.logError().isSuccess -> {
                 val iterCall =
                     DynamicCall(this.parent, "iterator", emptyList(), info).inferTypes(variables, lookup, handle, hist)
 
@@ -1461,7 +1467,7 @@ data class ForLoop(
 
                 compileForLoopBody(variables, next, hasNext, iterCall, lookup, handle, hist)
             }
-            runCatching { lookup.lookUpCandidate(parent.forge, "next", emptyList(), hist) }.isSuccess -> {
+            runCatching { lookup.lookUpCandidate(parent.forge, "next", emptyList(), hist) }.logError().isSuccess -> {
                 val hasNext = lookup.lookUpCandidate(parent.forge, "hasNext", emptyList(), hist)
                 val next = lookup.lookUpCandidate(parent.forge, "next", emptyList(), hist)
 
@@ -1513,6 +1519,10 @@ interface PatternMatchingContext {
     fun nextBinding(): VariableProvider
     val isLast: Boolean
     val castStoreId: Int
+}
+
+fun<T> Result<T>.logError(): Result<T> = this.apply {
+    this.exceptionOrNull()?.printStackTrace()
 }
 
 
@@ -2208,7 +2218,7 @@ fun Type.isNumType() = isInt() || isDouble()
 fun Type.isInt() = this == Type.Int || this == Type.IntT
 fun Type.isDouble() = this == Type.Double || this == Type.DoubleT
 fun Type.isBoolean() = this == Type.Bool || this is Type.BoolT
-fun Type.isBoxedPrimitive() = this == Type.Int || this == Type.Double || this == Type.Bool
+fun Type.isBoxedPrimitive() = this is Type.BasicJvmType && signature in listOf(SignatureString("java::lang::Integer"), SignatureString("java::lang::Double"), SignatureString("java::lang::Boolean"))
 fun Type.isUnboxedPrimitive() = this == Type.IntT || this is Type.BoolT || this == Type.DoubleT
 fun Type.asBoxed(): Type = when (this) {
     Type.IntT -> Type.Int

@@ -1,10 +1,18 @@
-use std::{io, random}
+use java::{util::List, lang::System}
 
-struct Person { name, age }
+impl<T> List<T> {
+    inline func first(self, closure) {
+        for item in self {
+            if closure(item) {
+                return item
+            }
+        }
+        null
+    }
+}
 
-func main {
-    l = list[]
-    l.add(Person("Tom", 19))
-    l.get(0).name = 32
-    io.println(l.get(0).name * 3)
+//some comment
+func main() { //some more comments
+    result = list[1, 2, 3].first { |it| it * 2 == 4 }
+    System.out.println(result)
 }

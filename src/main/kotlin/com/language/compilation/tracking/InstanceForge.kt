@@ -11,7 +11,9 @@ fun InstanceForge.join(other: InstanceForge): InstanceForge {
         this is JoinedInstanceForge -> JoinedInstanceForge(forges + other)
         this is BasicInstanceForge && other is BasicInstanceForge && type == other.type -> this
         this is BasicInstanceForge && this.type == Type.Never -> other
+        this is BasicInstanceForge && this.type == Type.UninitializedGeneric -> other
         other is BasicInstanceForge && other.type == Type.Never -> this
+        other is BasicInstanceForge && other.type == Type.UninitializedGeneric -> this
         else -> JoinedInstanceForge(listOf(this, other))
     }
 }

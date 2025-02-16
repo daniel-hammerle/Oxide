@@ -9,12 +9,14 @@ import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import java.util.Stack
 
-class CleanUpFrame(val cleanUp: (Boolean) -> Unit) //bool decides whether the escape operation has a value on the stack
+class CleanUpFrame(val expectedType: Type, val cleanUp: (Boolean) -> Unit) //bool decides whether the escape operation has a value on the stack
 
 class CleanupStack(private val tasks: MutableList<CleanUpFrame>) {
     fun useBreak(withValueOnStack: Boolean) {
         tasks.last().cleanUp(withValueOnStack)
     }
+
+    fun expectedType() = tasks.last().expectedType
 
     fun useReturn(withValueOnStack: Boolean) {
         tasks.forEach { it.cleanUp(withValueOnStack) }
@@ -40,7 +42,8 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             }
         }
         is TypedInstruction.InlineBody -> {
-            compileInstruction(mv, instruction.body, stackMap, CleanupStack(mutableListOf()))
+            val task = CleanUpFrame(instruction.type) {}
+            compileInstruction(mv, instruction.body, stackMap, CleanupStack(mutableListOf(task)))
             if (instruction.body.type != Type.Nothing) {
                 stackMap.pop()
             }
@@ -697,6 +700,11 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
 
         is TypedInstruction.Return -> {
             compileInstruction(mv, instruction.returnValue, stackMap, clean)
+
+            if (instruction.returnValue.type.isUnboxedPrimitive() && !clean.expectedType().isUnboxedPrimitive()) {
+                boxOrIgnore(mv, instruction.returnValue.type)
+            }
+
             if (instruction.returnValue.type != Type.Nothing && instruction.returnValue.type != Type.Never)
                 stackMap.pop()
             if (instruction.label == null) {
@@ -844,7 +852,7 @@ inline fun compileForLoop(
     }
 
     compileScopeAdjustment(mv, instruction.preLoopAdjustments, stackMap, clean)
-    clean.push(CleanUpFrame {
+    clean.push(CleanUpFrame(Type.Nothing) {
         if (it) {
             mv.visitInsn(Opcodes.SWAP)
         }
@@ -931,10 +939,13 @@ fun compileIf(
 
     mv.visitLabel(betweenBodyAndElseBody)
     //else body
+    val elseNothing = instruction.type == Type.Nothing && instruction.elseBody == null
     if (instruction.elseBody is TypedInstruction.If) {
         compileIf(mv, instruction.elseBody, stackMap, clean, nested = true)
     } else {
-        compileInstruction(mv, instruction.elseBody ?: TypedInstruction.Null, stackMap, clean)
+        instruction.elseBody?.let { compileInstruction(mv, it, stackMap, clean) } ?: if (instruction.type != Type.Nothing) {
+            compileInstruction(mv, TypedInstruction.Null, stackMap, clean)
+        } else {}
     }
     if (instruction.type != instruction.elseBody?.type) {
         boxOrIgnore(mv, instruction.elseBody?.type ?: Type.Null)
@@ -943,13 +954,13 @@ fun compileIf(
     //label after else body
     mv.visitLabel(afterElseBody)
 
-    if (instruction.elseBody?.type != Type.Nothing && instruction.elseBody?.type != Type.Never) {
+    if (instruction.elseBody != null && instruction.elseBody.type !in listOf(Type.Nothing, Type.Never)) {
         stackMap.pop()
     }
     stackMap.push(instruction.type)
 
     stackMap.adaptFrame(instruction.varFrame)
-    if (!nested)
+    if (!nested && !elseNothing)
     stackMap.generateFrame(mv)
 }
 

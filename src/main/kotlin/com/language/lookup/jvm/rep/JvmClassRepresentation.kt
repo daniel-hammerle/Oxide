@@ -27,7 +27,7 @@ interface JvmClassRepresentation {
     suspend fun lookupMethod(
         name: String,
         type: InstanceForge,
-        generics: Map<String, Type.Broad>,
+        generics: Map<String, Type>,
         argTypes: List<InstanceForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
@@ -36,7 +36,7 @@ interface JvmClassRepresentation {
     suspend fun lookupMethodUnknown(
         name: String,
         type: Type,
-        generics: Map<String, Type.Broad>,
+        generics: Map<String, Type>,
         argTypes: List<BroadForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
@@ -58,7 +58,7 @@ interface JvmClassRepresentation {
         generics: Map<String, Type.Broad>
     ): BroadForge?
 
-    suspend fun lookUpField(name: String, generics: Map<String, Type.Broad>, lookup: IRLookup): Type?
+    suspend fun lookUpField(name: String, generics: Map<String, Type>, lookup: IRLookup): Type?
 
     suspend fun lookUpStaticField(name: String): Type?
 
@@ -169,7 +169,7 @@ data class BasicJvmClassRepresentation(
 
     override suspend fun lookupMethod(
         name: String, type: InstanceForge,
-        generics: Map<String, Type.Broad>,
+        generics: Map<String, Type>,
         argTypes: List<InstanceForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
@@ -179,7 +179,7 @@ data class BasicJvmClassRepresentation(
     override suspend fun lookupMethodUnknown(
         name: String,
         type: Type,
-        generics: Map<String, Type.Broad>,
+        generics: Map<String, Type>,
         argTypes: List<BroadForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
@@ -205,7 +205,7 @@ data class BasicJvmClassRepresentation(
         TODO("Not yet implemented")
     }
 
-    override suspend fun lookUpField(name: String, generics: Map<String, Type.Broad>, lookup: IRLookup): Type? {
+    override suspend fun lookUpField(name: String, generics: Map<String, Type>, lookup: IRLookup): Type? {
         if (fields.contains(name)) {
             return fields.get(name)!!.toForge(generics)
         }
@@ -254,10 +254,6 @@ data class BasicJvmClassRepresentation(
         }
     }
 
-    private fun toType() = Type.BasicJvmType(
-        SignatureString.fromDotNotation(clazz.name),
-        clazz.typeParameters.associate { it.name to Type.Broad.Unset }
-    )
 
     override suspend fun lookupConstructor(argTypes: List<InstanceForge>, lookup: IRLookup): FunctionCandidate? {
         val constructor = clazz.constructors.firstOrNull { it.fitsArgTypes(argTypes.map { it.type }).second } ?: return null
@@ -265,7 +261,7 @@ data class BasicJvmClassRepresentation(
 
         val clazzGenerics = clazz.typeParameters.map { it.name }
 
-        val forge = JvmInstanceForge(clazzGenerics.associateWith { BroadForge.Empty }.toMutableMap(), clazzName)
+        val forge = JvmInstanceForge(clazzGenerics.associateWith { InstanceForge.Uninit }.toMutableMap(), clazzName)
         //TODO note that this is complete bs and based on the constructor call we might be able to already infer some generics but its not there yet
 
         val candidate = SimpleFunctionCandidate(
@@ -290,7 +286,7 @@ data class BasicJvmClassRepresentation(
 
         val clazzGenerics = clazz.typeParameters.map { it.name }
 
-        val forge = JvmInstanceForge(clazzGenerics.associateWith { BroadForge.Empty  }.toMutableMap(), clazzName)
+        val forge = JvmInstanceForge(clazzGenerics.associateWith {InstanceForge.Uninit  }.toMutableMap(), clazzName)
 
         return forge
     }
@@ -368,6 +364,7 @@ fun Type.toTemplatedType(): TemplatedType {
         Type.Nothing ->  TemplatedType.Nothing
         Type.Null -> TemplatedType.Null
         is Type.Union -> TODO()
+        Type.UninitializedGeneric -> TODO()
     }
 }
 
@@ -390,7 +387,7 @@ data class JvmClassInfoRepresentation(
     override suspend fun lookupMethod(
         name: String,
         type: InstanceForge,
-        generics: Map<String, Type.Broad>,
+        generics: Map<String, Type>,
         argTypes: List<InstanceForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
@@ -398,7 +395,7 @@ data class JvmClassInfoRepresentation(
         val tps = argTypes.map { it.type  }
         val method = getMethod(name, tps, lookup) ?: return null
         val oxideReturnType = with(lookup) {
-            val tp = method.returnType.populate(generics.asLazyTypeMap())
+            val tp = method.returnType.populate(generics)
             evaluateReturnType(tp, tps, method)
         }
         val errorType = getErrorTypesMethod(mutableSetOf(), name, tps, lookup, jvmLookup)
@@ -428,7 +425,7 @@ data class JvmClassInfoRepresentation(
     override suspend fun lookupMethodUnknown(
         name: String,
         type: Type,
-        generics: Map<String, Type.Broad>,
+        generics: Map<String, Type>,
         argTypes: List<BroadForge>,
         lookup: IRLookup,
         jvmLookup: JvmLookup
@@ -480,10 +477,10 @@ data class JvmClassInfoRepresentation(
         TODO("Not yet implemented")
     }
 
-    override suspend fun lookUpField(name: String, generics: Map<String, Type.Broad>, lookup: IRLookup): Type? {
+    override suspend fun lookUpField(name: String, generics: Map<String, Type>, lookup: IRLookup): Type? {
         val field = info.fields[name]
         val type = with(lookup) {
-            field?.populate(generics.asLazyTypeMap())
+            field?.populate(generics)
         }
         return type
     }
@@ -511,7 +508,7 @@ data class JvmClassInfoRepresentation(
     }
 
     private val instanceType =
-        Type.BasicJvmType(info.signature, info.generics.associate { it.name to Type.Broad.Unset })
+        Type.BasicJvmType(info.signature, info.generics.associate { it.name to Type.UninitializedGeneric })
 
     override suspend fun lookupConstructor(argTypes: List<InstanceForge>, lookup: IRLookup): FunctionCandidate? {
         val tps = argTypes.map { it.type  }
@@ -528,7 +525,7 @@ data class JvmClassInfoRepresentation(
             info.signature,
             "<init>",
             "<init>",
-            returnForge = JvmInstanceForge(info.generics.associate { it.name to BroadForge.Empty }.toMutableMap(), info.signature),
+            returnForge = JvmInstanceForge(info.generics.associate { it.name to InstanceForge.Uninit }.toMutableMap(), info.signature),
             obfuscateName = false,
             requireDispatch = false
         )

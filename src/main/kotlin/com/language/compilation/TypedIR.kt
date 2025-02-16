@@ -49,7 +49,7 @@ sealed interface TypedInstruction {
     data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type.Broad, val tempArrayVariable: Int?) : TypedInstruction {
         val isConstList = items.all { it is TypedConstructingArgument.Normal }
         override val forge: InstanceForge = JvmInstanceForge(
-            mutableMapOf("E" to items.map { it.forge }.reduce { acc, broadForge -> acc.join(broadForge) }),
+            mutableMapOf("E" to if (items.isEmpty()) InstanceForge.Uninit else items.map { it.forge }.reduce { acc, broadForge -> acc.join(broadForge) }),
             SignatureString("java::util::ArrayList")
         )
     }
@@ -183,18 +183,9 @@ sealed interface TypedInstruction {
         val elseBody: TypedInstruction?,
         val bodyAdjust: ScopeAdjustment,
         val elseBodyAdjust: ScopeAdjustment,
-        val varFrame: VarFrame
-    ) : TypedInstruction {
-        override val type: Type =when {
-            body.type == Type.Nothing && (elseBody?.type ?: Type.Nothing) == Type.Nothing -> Type.Nothing
-            body.type == elseBody?.type -> body.type
-            else -> body.type.asBoxed().join(elseBody?.type?.asBoxed() ?: Type.Null).asUnboxedOrIgnore()
-        }
-
+        val varFrame: VarFrame,
         override val forge: InstanceForge
-            get() = if (elseBody != null) body.forge.join(elseBody.forge) else body.forge
-
-    }
+    ) : TypedInstruction
 
     data class Not(
         val ins: TypedInstruction

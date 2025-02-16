@@ -83,7 +83,7 @@ class CachedJvmLookup(
         return getClass(className).lookUpAssociatedFunctionUnknown(functionName, argTypes, lookup, this, generics)
     }
 
-    override suspend fun lookUpField(instance: Type.JvmType, fieldName: String, lookup: IRLookup): Type? {
+    override suspend fun lookUpField(instance: JvmType, fieldName: String, lookup: IRLookup): Type? {
         return getClass(instance.signature).lookUpField(fieldName, instance.genericTypes, lookup)
     }
 
