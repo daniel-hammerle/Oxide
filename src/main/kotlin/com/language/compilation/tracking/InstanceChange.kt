@@ -10,12 +10,15 @@ sealed interface InstanceChange {
     data class PropertyChanges(val changes: Map<String, InstanceChange>): InstanceChange
     data class UnionChanges(val changes: List<InstanceChange>): InstanceChange
     data class JvmChange(val generics: Map<String, BroadInstanceBuilder>) : InstanceChange
+    data class ArrayChange(val itemChange: InstanceChange) : InstanceChange
+
     data object Nothing : InstanceChange
 }
 
 sealed interface InstanceAccessInstruction {
     data class Property(val name: String) : InstanceAccessInstruction
     data class UnionAccess(val type: Type) : InstanceAccessInstruction
+    data object ItemType : InstanceAccessInstruction
 }
 
 sealed interface InstanceBuilder : BroadInstanceBuilder {
@@ -29,32 +32,44 @@ fun BroadForge.change(change: InstanceChange, argTypes: List<BroadForge>): Broad
     else -> BroadForge.Empty
 }
 
-fun InstanceForge.changeBroad(change: InstanceChange, args: List<BroadForge>): BroadForge = when(change) {
-    is InstanceChange.New -> change.template.buildBroad(args)
-    InstanceChange.Nothing -> this
-    is InstanceChange.PropertyChanges -> {
-        this as StructInstanceForge
-        change.changes.forEach { (name, change) ->
-            members[name] = (members[name]!!.change(change, args) as? InstanceForge) ?: return BroadForge.Empty
-        }
-        this
-    }
-    is InstanceChange.UnionChanges -> {
-        this as JoinedInstanceForge
-        forges = forges.zip(change.changes).map { (it.first.change(it.second, args) as? InstanceForge) ?: return BroadForge.Empty }
-        this
-    }
-    is InstanceChange.JvmChange -> {
-        this as JvmInstanceForge
-        generics.putAll(change.generics.mapValues { it.value.buildBroad(args) as InstanceForge })
-        this
-    }
-    is InstanceChange.Unionization -> when(this) {
-        is JoinedInstanceForge -> {
-            this.forges += change.newInstances.map { (it.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty }
+fun InstanceForge.changeBroad(change: InstanceChange, args: List<BroadForge>): BroadForge {
+    return when(change) {
+        is InstanceChange.New -> change.template.buildBroad(args)
+        InstanceChange.Nothing -> this
+        is InstanceChange.PropertyChanges -> {
+            this as StructInstanceForge
+            change.changes.forEach { (name, change) ->
+                members[name] = (members[name]!!.change(change, args) as? InstanceForge) ?: return BroadForge.Empty
+            }
             this
         }
-        else -> JoinedInstanceForge(listOf(this) + change.newInstances.map { (it.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty })
+
+        is InstanceChange.UnionChanges -> {
+            this as JoinedInstanceForge
+            forges = forges.zip(change.changes).map { (it.first.change(it.second, args) as? InstanceForge) ?: return BroadForge.Empty }
+            this
+        }
+
+        is InstanceChange.JvmChange -> {
+            this as JvmInstanceForge
+            generics.putAll(change.generics.mapValues { it.value.buildBroad(args) as InstanceForge })
+            this
+        }
+
+        is InstanceChange.Unionization -> when(this) {
+            is JoinedInstanceForge -> {
+                this.forges += change.newInstances.map { (it.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty }
+                this
+            }
+
+            else -> JoinedInstanceForge(listOf(this) + change.newInstances.map { (it.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty })
+        }
+
+        is InstanceChange.ArrayChange -> {
+            this as ArrayInstanceForge
+            itemForge = itemForge.change(change.itemChange, args) as? InstanceForge ?: return BroadForge.Empty
+            this
+        }
     }
 }
 
@@ -84,6 +99,12 @@ fun InstanceForge.change(change: InstanceChange, args: List<InstanceForge>): Ins
             this
         }
         else -> JoinedInstanceForge(listOf(this) + change.newInstances.map { it.build(args) })
+    }
+
+    is InstanceChange.ArrayChange -> {
+        this as ArrayInstanceForge
+        itemForge = itemForge.change(change.itemChange, args)
+        this
     }
 }
 fun InstanceBuilder.buildBroad(args: List<BroadForge>): BroadForge = when(this) {
@@ -118,6 +139,11 @@ fun InstanceForge.trace(instructions: List<InstanceAccessInstruction>): Instance
             this as JoinedInstanceForge
             forges.first { it.type == ins.type }
         }
+
+        InstanceAccessInstruction.ItemType -> {
+            this as ArrayInstanceForge
+            itemForge
+        }
     }
     return forge.trace(instructions.subList(fromIndex = 1, instructions.lastIndex))
 }
@@ -131,21 +157,27 @@ fun InstanceTemplate.build(args: List<InstanceForge>): InstanceForge = when(this
         generics,
         signatureString
     )
+
+    is InstanceTemplate.Array -> ArrayInstanceForge(itemForge.build(args))
 }
 
-fun InstanceTemplate.buildBroad(args: List<BroadForge>): BroadForge = when(this) {
-    is InstanceTemplate.Const -> forge
-    is InstanceTemplate.Joined -> JoinedInstanceForge(items.map { (it.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty })
-    is InstanceTemplate.Jvm -> JvmInstanceForge(generics.mapValuesToMutable { it.value.buildBroad(args) as InstanceForge }, signatureString)
-    is InstanceTemplate.Object -> StructInstanceForge(
-        fields.mapValuesToMutable { (it.value.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty },
-        generics,
-        signatureString
-    )
+fun InstanceTemplate.buildBroad(args: List<BroadForge>): BroadForge {
+    return when(this) {
+        is InstanceTemplate.Const -> forge
+        is InstanceTemplate.Joined -> JoinedInstanceForge(items.map { (it.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty })
+        is InstanceTemplate.Jvm -> JvmInstanceForge(generics.mapValuesToMutable { it.value.buildBroad(args) as InstanceForge }, signatureString)
+        is InstanceTemplate.Object -> StructInstanceForge(
+            fields.mapValuesToMutable { (it.value.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty },
+            generics,
+            signatureString
+        )
+        is InstanceTemplate.Array -> ArrayInstanceForge(itemForge.buildBroad(args) as? InstanceForge ?: return BroadForge.Empty)
+    }
 }
 
 sealed interface InstanceTemplate {
     data class Const(val forge: InstanceForge) : InstanceTemplate
+    data class Array(val itemForge: InstanceBuilder) : InstanceTemplate
     data class Jvm(val signatureString: SignatureString, val generics: Map<String, InstanceBuilder>) : InstanceTemplate
     data class Object(val signatureString: SignatureString, val fields: Map<String, InstanceBuilder>, val generics: Map<String, String>): InstanceTemplate
     data class Joined(val items: List<InstanceBuilder>): InstanceTemplate

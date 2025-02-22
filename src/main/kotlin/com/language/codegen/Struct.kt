@@ -3,18 +3,27 @@ package com.language.codegen
 import com.language.compilation.IRStruct
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
+import com.language.compilation.modifiers.Modifier
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 
 fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct): ByteArray? {
     val cw = ClassWriter(0)
     val structJVMName = modName.toJvmNotation() + "/$structName"
+
+    val supperName = if (struct.modifiers.isModifier(Modifier.Error)) {
+        "java/lang/Exception"
+    } else {
+        "java/lang/Object"
+    }
+
+
     cw.visit(
-        49,
+        62,
         Opcodes.ACC_PUBLIC + Opcodes.ACC_SUPER + Opcodes.ACC_FINAL,
         structJVMName,
         null,
-        "java/lang/Object",
+        supperName,
         null
     )
     //return null if the struct is unused, meaning no variant was generated
@@ -32,13 +41,13 @@ fun compileStruct(modName: SignatureString, structName: String, struct: IRStruct
         )
     }
     //create default constructor
-    generateConstructor(cw, struct.defaultVariant!!, modName+SignatureString(structName))
+    generateConstructor(cw, struct.defaultVariant!!, modName+SignatureString(structName), if (struct.modifiers.isModifier(Modifier.Error)) "java/lang/Exception" else "java/lang/Object")
     return cw.toByteArray()
 
 
 }
 
-fun generateConstructor(cw: ClassWriter, fields: Map<String, Type>, signatureString: SignatureString) {
+fun generateConstructor(cw: ClassWriter, fields: Map<String, Type>, signatureString: SignatureString, superName: String = "java/lang/Object") {
     val mv = cw.visitMethod(
         Opcodes.ACC_PUBLIC,
         "<init>",
@@ -47,9 +56,10 @@ fun generateConstructor(cw: ClassWriter, fields: Map<String, Type>, signatureStr
         null
 
     )
+
     mv.visitMaxs(3, 1+fields.map { it.value.size }.sum())
     mv.visitVarInsn(Opcodes.ALOAD, 0); // Load "this" onto the stack
-    mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false); // Invoke super constructor
+    mv.visitMethodInsn(Opcodes.INVOKESPECIAL, superName, "<init>", "()V", false); // Invoke super constructor
 
     var i = 0
     for ((name, type) in fields) {

@@ -104,6 +104,8 @@ sealed class Instruction {
         hist: History
     ): BroadForge
 
+    abstract class Intrinsic() : Instruction()
+
     data class DynamicCall(
         val parent: Instruction,
         val name: String,
@@ -225,11 +227,8 @@ sealed class Instruction {
         ): TypedInstruction.LoadConstArray {
             val typedItems =
                 items.map { (it as ConstructingArgument.Normal).item.inferTypes(variables, lookup, handle, hist) }
-            val itemType = typedItems.map { it.type }.reduceOrNull { acc, type -> acc.join(type) }
-            val broadType = itemType
-                ?.let { Type.Broad.Known(it) }
-                ?: Type.Broad.Unset
-            return TypedInstruction.LoadConstArray(typedItems, arrayType, broadType)
+            val itemType = typedItems.map { it.type }.fold<Type, Type>(Type.UninitializedGeneric) { acc, type -> acc.join(type) }
+            return TypedInstruction.LoadConstArray(typedItems, arrayType, itemType)
         }
 
         private suspend fun notConstArray(
@@ -241,22 +240,22 @@ sealed class Instruction {
             //temp variable for index storage
             variables.getTempVar(Type.IntT).use { indexStorage ->
                 //temp variable for the array during construction
-                variables.getTempVar(Type.Array(Type.Broad.Unset)).use { arrayStorage ->
+                variables.getTempVar(Type.Array(Type.UninitializedGeneric)).use { arrayStorage ->
                     val typedItems = items.map { it.inferTypes(variables, lookup, handle, hist) }
 
                     //get the common type of all items
                     val itemType = typedItems.itemType(lookup)
 
                     when (arrayType) {
-                        ArrayType.Int -> if (!itemType.getOrDefault(Type.IntT)
+                        ArrayType.Int -> if (!itemType.join(Type.IntT)
                                 .isContainedOrEqualTo(Type.IntT)
                         ) error("Type Error Primitive Int array can only hold IntT")
 
-                        ArrayType.Double -> if (!itemType.getOrDefault(Type.DoubleT)
+                        ArrayType.Double -> if (!itemType.join(Type.DoubleT)
                                 .isContainedOrEqualTo(Type.DoubleT)
                         ) error("Type Error Primitive Int array can only hold DoubleT")
 
-                        ArrayType.Bool -> if (!itemType.getOrDefault(Type.BoolUnknown)
+                        ArrayType.Bool -> if (!itemType.join(Type.BoolUnknown)
                                 .isContainedOrEqualTo(Type.BoolUnknown)
                         ) error("Type Error Primitive Int array can only hold BoolT")
 
@@ -267,6 +266,7 @@ sealed class Instruction {
             }
         }
     }
+
 
     sealed interface ConstructingArgument {
 
@@ -334,7 +334,7 @@ sealed class Instruction {
             hist: History
         ): TypedInstruction {
             return when {
-                items.isEmpty() -> TypedInstruction.LoadList(emptyList(), Type.Broad.Unset, null)
+                items.isEmpty() -> TypedInstruction.LoadList(emptyList(), Type.UninitializedGeneric, null)
                 items.any { it is ConstructingArgument.Iteration } -> variables.getTempVar(Type.Object)
                     .use { variable ->
                         val typedItems = items.map { it.inferTypes(variables, lookup, handle, hist) }
@@ -380,6 +380,29 @@ sealed class Instruction {
         ): BroadForge {
             return InstanceForge.ConstString
         }
+    }
+
+    data class GenericMention(val name: String, override val info: MetaData): Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle,
+            hist: History
+        ): TypedInstruction {
+            val type = handle.inheritedGenerics[name] ?: error("This should not be reachable")
+            return createTypeObject(type, lookup)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): BroadForge {
+            val type = handle.inheritedGenerics[name] ?: error("This should not be reachable")
+            return createTypeObject(type, lookup).forge
+        }
+
     }
 
     data class LoadConstInt(val value: Int, override val info: MetaData) : Instruction() {
@@ -845,8 +868,8 @@ sealed class Instruction {
             val first = first.inferTypes(variables, lookup, handle, hist)
             val second = second.inferTypes(variables, lookup, handle, hist)
 
-            if (first is TypedInstruction.Const && second is TypedInstruction.Const) {
-                return evalMath(first, second, op)
+            if (first.isEffectivelyConst() && second.isEffectivelyConst()) {
+                return evalMath(first.effectiveConstValue()!!, second.effectiveConstValue()!!, op)
             }
 
             val resultType = typeMath(op, first.type, second.type)
@@ -975,6 +998,17 @@ sealed class Instruction {
             hist: History
         ): TypedInstruction {
             val parent = parent.inferTypes(variables, lookup, handle, hist)
+            if (parent is TypedInstruction.ConstObject) {
+                return parent.fields.first { it.first == name}.second
+            }
+
+            if (parent.type is Type.Array && name == "length") {
+                if (parent is TypedInstruction.LoadConstConstArray) {
+                    return TypedInstruction.LoadConstInt(parent.items.size)
+                }
+                return TypedInstruction.ArrayLength(parent)
+            }
+
             val returnForge = parent.forge.member(name)
 
             return TypedInstruction.DynamicPropertyAccess(
@@ -1081,6 +1115,11 @@ sealed class Instruction {
         ): TypedInstruction = coroutineScope {
             val parent = parent.inferTypes(variables, lookup, handle, hist)
 
+
+            if (parent is TypedInstruction.Const) {
+                tryEvalMatchConstant(parent, variables, lookup, handle, hist)?.let { return@coroutineScope it }
+            }
+
             val (typedPatterns, id) = withCastStoreId(
                 this@Match.parent,
                 parent.type,
@@ -1088,6 +1127,7 @@ sealed class Instruction {
             ) { prov: VariableProvider ->
                 //iterate over every pattern
                 patterns.mapIndexed { i, (pattern, body) ->
+                    val bodyScope = variables.clone()
 
                     val ctx = PatternMatchingContextImpl(
                         types = listOf(prov),
@@ -1095,10 +1135,9 @@ sealed class Instruction {
                         castStoreId = prov.physicalId!!
                     )
                     //check patterns
-                    val typedPattern = pattern.inferTypes(ctx, lookup, variables, handle, hist)
+                    val typedPattern = pattern.inferTypes(ctx, lookup, bodyScope, handle, hist)
 
                     //asynchronously infer types of body
-                    val bodyScope = variables.clone()
                     async {
                         val parentName = if (this@Match.parent is LoadVar) this@Match.parent.name else null
                         compileBodyBranch(body, typedPattern, bodyScope, parentName, parent.forge, lookup, handle, hist)
@@ -1117,6 +1156,27 @@ sealed class Instruction {
                 }
             val instance = TypedInstruction.Match(parent, compiledBranches, temporaryId = id)
             return@coroutineScope instance
+        }
+
+        private suspend fun tryEvalMatchConstant(
+            parent: TypedInstruction.Const,
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle,
+            hist: History
+        ): TypedInstruction? {
+            try {
+                val (body, scope) = patterns.firstNotNullOf {
+                    val bodyScope = variables.clone()
+                    if (matches(it.first, parent, bodyScope, lookup, handle, hist)) it.second to bodyScope else null
+                }
+
+                return body.inferTypes(scope, lookup, handle, hist)
+            } catch (_: NotConstMatchableException) {
+                //If it's not matchable in at compile time (the conditions require state)
+                // then just carry on with normal match behavior
+                return null
+            }
         }
 
         override suspend fun inferUnknown(
@@ -1327,27 +1387,6 @@ sealed class Instruction {
         }
     }
 
-    data class Pop(override val info: MetaData) : Instruction() {
-
-
-        override suspend fun inferTypes(
-            variables: VariableManager,
-            lookup: IRLookup,
-            handle: MetaDataHandle,
-            hist: History
-        ): TypedInstruction {
-            return TypedInstruction.Pop
-        }
-
-        override suspend fun inferUnknown(
-            variables: TypeVariableManager,
-            lookup: IRLookup,
-            handle: MetaDataTypeHandle,
-            hist: History
-        ): BroadForge {
-            return InstanceForge.ConstNothing
-        }
-    }
 
     data class Null(override val info: MetaData) : Instruction() {
 
@@ -1386,8 +1425,8 @@ sealed class Instruction {
             val first = first.inferTypes(variables, lookup, handle, hist)
             val second = second.inferTypes(variables, lookup, handle, hist)
 
-            if (first is TypedInstruction.Const && second is TypedInstruction.Const) {
-                return evalComparison(first, second, op)
+            if (first.isEffectivelyConst() && second.isEffectivelyConst()) {
+                return evalComparison(first.effectiveConstValue()!!, second.effectiveConstValue()!!, op)
             }
 
             when (op) {
@@ -1437,10 +1476,19 @@ data class PatternMatchingContextImpl(
     override fun nextBinding(): VariableProvider = types[ptr++]
 }
 
+fun TypedInstruction.isEffectivelyConst(): Boolean = this is TypedInstruction.Const || (this is TypedInstruction.InlineBody && this.body.isEffectivelyConst())
+
+fun TypedInstruction.effectiveConstValue(): TypedInstruction.Const? = when(this) {
+    is TypedInstruction.Const -> this
+    is TypedInstruction.InlineBody -> this.body.effectiveConstValue()
+    else -> null
+}
+
 fun TypedInstruction.isConst() = this is TypedInstruction.Const
-fun TypedInstruction.pushesStackFrame(): Boolean = when(this) {
-    is TypedInstruction.Match, is TypedInstruction.While, is TypedInstruction.InlineBody -> true
-    is TypedInstruction.MultiInstructions -> instructions.lastOrNull()?.pushesStackFrame() == true
+fun TypedInstruction.pushesStackFrame(): Boolean = when {
+    this is TypedInstruction.Match || this is TypedInstruction.While || this is TypedInstruction.InlineBody -> true
+    this is TypedInstruction.MultiInstructions -> instructions.lastOrNull()?.pushesStackFrame() == true
+    this is TypedInstruction.DynamicCall && this.candidate.requiresCatch.isNotEmpty() -> true
     else -> false
 }
 fun TypedConstructingArgument.isConst() = instruction.isConst()
@@ -1457,6 +1505,68 @@ data class ForLoop(
         hist: History
     ): TypedInstruction {
         val parent = parent.inferTypes(variables, lookup, handle, hist)
+
+        if (parent is TypedInstruction.LoadConstConstArray) {
+            val scope = variables.clone()
+            val bodyScopePre = scope.clone()
+            parent.items.forEachIndexed { index, item ->
+                scope.putVar(name, SemiConstBinding(item, item.forge))
+                if (indexName != null) {
+                    scope.putVar(indexName, SemiConstBinding(TypedInstruction.LoadConstInt(index), InstanceForge.ConstInt))
+                }
+                body.inferTypes(scope, lookup, handle, hist)
+            }
+            val adjustments = bodyScopePre.loopMerge(scope, variables)
+            val body = parent.items.mapIndexed { index, item ->
+                scope.putVar(name, SemiConstBinding(item, item.forge))
+                if (indexName != null) {
+                    scope.putVar(indexName, SemiConstBinding(TypedInstruction.LoadConstInt(index), InstanceForge.ConstInt))
+                }
+                body.inferTypes(scope, lookup, handle, hist)
+            }
+            val postLoopAdjustments = variables.merge(listOf(bodyScopePre))[0]
+            return TypedInstruction.UnrolledForLoop(body, adjustments, postLoopAdjustments)
+        }
+
+        if (parent is TypedInstruction.LoadConstArray) {
+            val scope = variables.clone()
+            val bodyScopePre = scope.clone()
+            parent.items.forEach { item ->
+                scope.changeVar(name, item)
+                body.inferTypes(scope, lookup, handle, hist)
+            }
+            val adjustments = bodyScopePre.loopMerge(scope, variables)
+            val body = parent.items.map { item ->
+                scope.changeVar(name, item)
+                body.inferTypes(scope, lookup, handle, hist)
+            }
+            val postLoopAdjustments = variables.merge(listOf(bodyScopePre))[0]
+            return TypedInstruction.UnrolledForLoop(body, adjustments, postLoopAdjustments)
+        }
+
+        if (parent.forge is ArrayInstanceForge) {
+            //array specific for loop
+            val bodyScope = variables.clone()
+            val (arr, needsStoreArray) = if (parent is TypedInstruction.LoadVar) {
+                parent.id to false
+            } else {
+                bodyScope.change("__array__", parent.forge) to true
+            }
+
+
+            val indexId = bodyScope.change(indexName ?: "__idx__", InstanceForge.ConstInt)
+
+            bodyScope.putVar(name, ArrayItemBinding(TypedInstruction.LoadVar(arr, parent.forge), TypedInstruction.LoadVar(indexId, InstanceForge.ConstInt)))
+
+            val bodyScopePre = bodyScope.clone()
+            //infer it twice for non constants to unfold
+            body.inferTypes(bodyScope, lookup, handle, hist)
+            val adjustments = bodyScopePre.loopMerge(bodyScope, variables)
+            val body = body.inferTypes(bodyScopePre, lookup, handle, hist)
+            val postLoopAdjustments = variables.merge(listOf(bodyScopePre))[0]
+            return TypedInstruction.ArrayForLoop(parent, indexId, arr, body, adjustments, postLoopAdjustments, bodyScope.toVarFrame(), needsStoreArray)
+        }
+
         return when {
             runCatching { lookup.lookUpCandidate(parent.forge, "iterator", emptyList(), hist) }.logError().isSuccess -> {
                 val iterCall =
@@ -1722,25 +1832,25 @@ sealed interface Type {
 
 
     sealed interface JvmArray : Type {
-        val itemType: Broad
+        val itemType: Type
     }
 
-    data class Array(override val itemType: Broad) : JvmArray {
+    data class Array(override val itemType: Type) : JvmArray {
         override val size: Int = 1
     }
 
     data object IntArray : JvmArray {
-        override val itemType: Broad = Broad.Known(IntT)
+        override val itemType: Type = IntT
         override val size: Int = 1
     }
 
     data object DoubleArray : JvmArray {
-        override val itemType: Broad = Broad.Known(DoubleT)
+        override val itemType: Type = DoubleT
         override val size: Int = 1
     }
 
     data object BoolArray : JvmArray {
-        override val itemType: Broad = Broad.Known(BoolUnknown)
+        override val itemType: Type = BoolUnknown
         override val size: Int = 1
     }
 
@@ -1914,6 +2024,7 @@ fun typeMath(op: MathOp, first: Type, second: Type): Type {
 
 fun Type.toActualJvmType() = when (this) {
     is Type.Union -> Type.Object
+    is Type.Array -> Type.Array(Type.Object)
     else -> this
 }
 
@@ -2148,10 +2259,18 @@ data class BasicIRFunction(
         val scope = variables.clone()
         val actualArgInstruction = mutableListOf<TypedInstruction>()
         if (instance != null) {
-            if (instance is TypedInstruction.LoadVar) {
-                scope.putVar("self", VariableBinding(instance.id, instance.forge))
-            } else {
-                actualArgInstruction += scope.changeVar("self", instance)
+            when (instance) {
+                is TypedInstruction.Const -> {
+                    scope.putVar("self", SemiConstBinding(instance, instance.forge))
+                }
+
+                is TypedInstruction.LoadVar -> {
+                    scope.putVar("self", VariableBinding(instance.id, instance.forge))
+                }
+
+                else -> {
+                    actualArgInstruction += scope.changeVar("self", instance)
+                }
             }
         }
 
@@ -2190,7 +2309,8 @@ data class BasicIRFunction(
 
         variables.mapping().minVarCount(scope.mapping().varCount())
 
-        return TypedInstruction.MultiInstructions(
+
+        return if (actualArgInstruction.isEmpty()) bodyInstruction else TypedInstruction.MultiInstructions(
             actualArgInstruction + listOf(bodyInstruction),
             variables.toVarFrame()
         )
@@ -2417,10 +2537,10 @@ suspend inline fun inferCall(
 
 fun Type?.asBroadType() = this?.let { Type.Broad.Known(it) } ?: Type.Broad.Unset
 
-suspend fun List<TypedConstructingArgument>.itemType(lookup: IRLookup) = map {
+suspend fun List<TypedConstructingArgument>.itemType(lookup: IRLookup): Type = map {
     when (it) {
         is TypedConstructingArgument.Collected -> when (val tp = it.type) {
-            is Type.Array -> (tp.itemType as? Type.Broad.Known)?.type
+            is Type.Array -> tp.itemType
             is Type.BasicJvmType -> {
                 if (lookup.typeHasInterface(tp, SignatureString("java::util::Collection"))) {
                     tp.genericTypes["E"]!!
@@ -2435,5 +2555,4 @@ suspend fun List<TypedConstructingArgument>.itemType(lookup: IRLookup) = map {
         else -> it.type.asBoxed()
     }
 }
-    .reduceOrNull { acc, type -> type?.let { acc?.join(type) } ?: acc }
-    .let { if (it == null) Type.Broad.Unset else Type.Broad.Known(it) }
+    .reduceOrNull { acc, type -> acc.join(type) } ?: Type.UninitializedGeneric

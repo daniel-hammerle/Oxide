@@ -21,7 +21,7 @@ fun InstanceForge.join(other: InstanceForge): InstanceForge {
 fun InstanceForge.member(name: String): InstanceForge = when(this) {
     is StructInstanceForge -> memberForge(name)!!
     is JoinedInstanceForge -> forges.map { it.member(name) }.reduce { acc, it -> acc.join(it) }
-    else -> error("unrachable")
+    else -> error("unrachable $this")
 }
 
 interface GenericDestructableForge {

@@ -241,9 +241,6 @@ class VariableManagerImpl(
 
     override fun putVar(name: String, provider: VariableProvider) {
         //if a bound variable with that name already exists, we simply delete it
-        if (name in variables) {
-            variables.remove(name)?.delete(parent)
-        }
         variables[name] = provider
     }
 

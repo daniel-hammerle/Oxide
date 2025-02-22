@@ -118,6 +118,7 @@ class BasicOxideLookup(
     ): FunctionCandidate? {
         val (func, generics, impl) = findExtensionMethod(instance.type, funcName, lookup) ?: return null
 
+
         val fullArgs =listOf(instance) + args
         val (returnType, id) = func.inferTypes(
             fullArgs,

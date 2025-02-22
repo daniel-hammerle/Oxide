@@ -226,7 +226,7 @@ suspend fun ReflectType.extract(type: Type, lookup: IRLookup): Map<String, Type.
         is GenericArrayType -> {
             type as Type.Array
             val name = this.typeName.removeSuffix("[]")
-            mapOf(name to type.itemType)
+            mapOf(name to Type.Broad.Known(type.itemType))
         }
         else -> emptyMap()
     }

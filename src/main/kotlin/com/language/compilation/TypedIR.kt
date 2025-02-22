@@ -4,7 +4,6 @@ import com.language.BooleanOp
 import com.language.CompareOp
 import com.language.MathOp
 import com.language.codegen.VarFrame
-import com.language.codegen.asUnboxedOrIgnore
 import com.language.compilation.tracking.*
 import org.objectweb.asm.Label
 
@@ -40,13 +39,20 @@ sealed interface TypedInstruction {
         override val forge: InstanceForge = parent.forge
     }
 
+    data class ArrayLength(val array: TypedInstruction): TypedInstruction {
+        override val forge: InstanceForge = InstanceForge.ConstInt
+    }
+
+    data class ArrayItemAccess(val array: TypedInstruction, val idx: TypedInstruction,
+                               override val forge: InstanceForge
+    ): TypedInstruction
 
     data class Return(val returnValue: TypedInstruction, val label: Label?): TypedInstruction {
         override val forge: InstanceForge
             get() = InstanceForge.ConstNever
     }
 
-    data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type.Broad, val tempArrayVariable: Int?) : TypedInstruction {
+    data class LoadList(val items: List<TypedConstructingArgument>, val itemType: Type, val tempArrayVariable: Int?) : TypedInstruction {
         val isConstList = items.all { it is TypedConstructingArgument.Normal }
         override val forge: InstanceForge = JvmInstanceForge(
             mutableMapOf("E" to if (items.isEmpty()) InstanceForge.Uninit else items.map { it.forge }.reduce { acc, broadForge -> acc.join(broadForge) }),
@@ -54,14 +60,15 @@ sealed interface TypedInstruction {
         )
     }
 
-    data class LoadArray(val items: List<TypedConstructingArgument>, val arrayType: ArrayType, val itemType: Type.Broad, val tempIndexVarId: Int, val tempArrayVarId: Int) : TypedInstruction {
+    data class LoadArray(val items: List<TypedConstructingArgument>, val arrayType: ArrayType, val itemType: Type, val tempIndexVarId: Int, val tempArrayVarId: Int) : TypedInstruction {
         override val type: Type = when(arrayType) {
-            ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
+            ArrayType.Object -> Type.Array(itemType.asBoxed())
             ArrayType.Int -> Type.IntArray
             ArrayType.Double -> Type.DoubleArray
             ArrayType.Bool -> Type.BoolArray
         }
-        override val forge: InstanceForge = BasicInstanceForge(type)
+        override val forge: InstanceForge = ArrayInstanceForge(items.fold<TypedConstructingArgument, InstanceForge>(InstanceForge.Uninit) { acc, const -> acc.join(const.forge)  })
+
     }
 
 
@@ -79,6 +86,33 @@ sealed interface TypedInstruction {
         override val forge: InstanceForge = InstanceForge.ConstNothing
     }
 
+    data class ArrayForLoop(
+        val parent: TypedInstruction,
+        val indexId: Int,
+        val arrayId: Int,
+        val body: TypedConstructingArgument,
+        val preLoopAdjustments: ScopeAdjustment,
+        val postLoopAdjustments: ScopeAdjustment,
+        val bodyFrame: VarFrame,
+        val needsArrayStore: Boolean
+    ) : TypedInstruction{
+        override val forge: InstanceForge = InstanceForge.ConstNothing
+    }
+
+    data class UnrolledForLoop(
+        val body: List<TypedConstructingArgument>,
+        val preLoopAdjustments: ScopeAdjustment,
+        val postLoopAdjustments: ScopeAdjustment
+    ) : TypedInstruction {
+        override val forge: InstanceForge = InstanceForge.ConstNothing
+    }
+
+    data class ConstObject(
+        override val forge: StructInstanceForge,
+        val constructorCall: FunctionCandidate,
+        val fields: List<Pair<String, Const>>
+    ) : Const
+
     data class Keep(
         val value: TypedInstruction,
         val fieldName: String,
@@ -90,24 +124,24 @@ sealed interface TypedInstruction {
             get() = value.forge
     }
 
-    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type.Broad) : TypedInstruction {
+    data class LoadConstArray(val items: List<TypedInstruction>, val arrayType: ArrayType, val itemType: Type) : TypedInstruction {
         override val type: Type = when(arrayType) {
-            ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
+            ArrayType.Object -> Type.Array(itemType.asBoxed())
             ArrayType.Int -> Type.IntArray
             ArrayType.Double -> Type.DoubleArray
             ArrayType.Bool -> Type.BoolArray
         }
-        override val forge: InstanceForge = BasicInstanceForge(type)
+        override val forge: InstanceForge = ArrayInstanceForge(items.fold<TypedInstruction, InstanceForge>(InstanceForge.Uninit) { acc, const -> acc.join(const.forge)  })
     }
 
-    data class LoadConstConstArray(val items: List<Const>, val arrayType: ArrayType, val itemType: Type.Broad): Const {
+    data class LoadConstConstArray(val items: List<Const>, val arrayType: ArrayType, val itemType: Type): Const {
         override val type: Type = when(arrayType) {
-            ArrayType.Object -> Type.Array(itemType.mapKnown { it.asBoxed() })
+            ArrayType.Object -> Type.Array(itemType.asBoxed())
             ArrayType.Int -> Type.IntArray
             ArrayType.Double -> Type.DoubleArray
             ArrayType.Bool -> Type.BoolArray
         }
-        override val forge: InstanceForge = BasicInstanceForge(type)
+        override val forge: InstanceForge = ArrayInstanceForge(items.fold<Const, InstanceForge>(InstanceForge.Uninit) { acc, const -> acc.join(const.forge)  })
     }
 
     data class DynamicCall(

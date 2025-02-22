@@ -36,7 +36,7 @@ class VariableMappingTest {
     @Test
     fun testLoopMerging() {
         val vars = variables()
-        vars.changeVar("items", TypedInstruction.LoadConstArray(listOf(TypedInstruction.LoadConstInt(234)), ArrayType.Object, Type.Broad.Known(Type.Int)))
+        vars.changeVar("items", TypedInstruction.LoadConstArray(listOf(TypedInstruction.LoadConstInt(234)), ArrayType.Object, Type.Int))
         val scope = vars.clone()
         val scopePostFirst = scope.clone()
         val loopAdjustments = vars.loopMerge(scopePostFirst, vars)

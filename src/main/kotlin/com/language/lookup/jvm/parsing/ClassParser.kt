@@ -26,7 +26,7 @@ private fun AsmType.toOxideType(): Type {
         AsmType.FLOAT -> error("Doesn't exist yet")
         AsmType.LONG -> error("Doesn't exist yet")
         AsmType.DOUBLE -> Type.DoubleT
-        AsmType.ARRAY -> Type.Array(Type.Broad.Known(elementType.toOxideType()))
+        AsmType.ARRAY -> Type.Array(elementType.toOxideType())
         AsmType.OBJECT -> Type.BasicJvmType(SignatureString.fromDotNotation(className), emptyMap())
         else -> throw IllegalArgumentException("Unsupported type: ${this.descriptor}")
     }
@@ -328,7 +328,7 @@ private class ArrayTypeVisitor(val callback: (TemplatedType) -> Unit) : Signatur
     }
 
     override fun visitClassType(name: String) {
-        callback(TemplatedType.Array(TemplatedType.Complex(SignatureString(name.replace('/', '.')), emptyList())))
+        callback(TemplatedType.Array(TemplatedType.Complex(SignatureString(name.replace("/", "::")), emptyList())))
     }
 
 }

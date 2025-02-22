@@ -21,6 +21,8 @@ sealed interface Expression {
     }
 
 
+    data class Intrinsic(val name: String, override val info: MetaInfo) : Expression
+
     data class ConstArray(
         override val arrayType: ArrayType,
         val items: List<ConstructingArgument>,

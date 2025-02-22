@@ -354,7 +354,7 @@ fun Type.toTemplatedType(): TemplatedType {
         is Type.BoolT -> TemplatedType.BoolT
         Type.DoubleT -> TemplatedType.DoubleT
         Type.IntT -> TemplatedType.IntT
-        is Type.Array -> TemplatedType.Array(itemType.getOrThrow("").toTemplatedType())
+        is Type.Array -> TemplatedType.Array(itemType.toTemplatedType())
         Type.BoolArray -> TemplatedType.Array(TemplatedType.BoolT)
         Type.DoubleArray ->  TemplatedType.Array(TemplatedType.DoubleT)
         Type.IntArray ->  TemplatedType.Array(TemplatedType.IntT)
@@ -609,7 +609,7 @@ data class JvmClassInfoRepresentation(
 }
 
 fun TemplatedType.defaultVariant(): Type = when (this) {
-    is TemplatedType.Array -> Type.Array(Type.Broad.Known(itemType.defaultVariant()))
+    is TemplatedType.Array -> Type.Array(itemType.defaultVariant())
     TemplatedType.BoolT -> Type.BoolUnknown
     is TemplatedType.Complex -> Type.BasicJvmType(signatureString, emptyMap())
     TemplatedType.DoubleT -> Type.DoubleT

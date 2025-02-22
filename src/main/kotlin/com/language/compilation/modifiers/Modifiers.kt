@@ -11,8 +11,8 @@ value class Modifiers(private val modifiers: Int) {
 
     companion object {
         val Empty = Modifiers(0)
-        val FunctionModifiers = modifiers { setPublic(); setTyped(); setModifier(Modifier.Inline) }
-        val StructModifiers = modifiers { setPublic(); setError(); setStatic() }
+        val FunctionModifiers = modifiers { setPublic(); setTyped(); setModifier(Modifier.Inline); setModifier(Modifier.Intrinsic) }
+        val StructModifiers = modifiers { setPublic(); setError(); setStatic(); setModifier(Modifier.Extern) }
         val ImplBlockModifiers = modifiers { setPublic(); setTyped() }
     }
 

@@ -1,5 +1,7 @@
 package com.example;
 
+import java.util.Arrays;
+
 public class Foo implements Baz  {
     public static Foo instance = new Foo();
 

@@ -14,6 +14,7 @@ import com.language.lookup.jvm.contract.parseContractString
 import com.language.lookup.jvm.parsing.FunctionInfo
 import org.jetbrains.annotations.Contract
 import java.lang.reflect.Executable
+import java.lang.reflect.GenericArrayType
 import java.lang.reflect.Method
 import java.lang.reflect.ParameterizedType
 import java.lang.reflect.TypeVariable
@@ -70,7 +71,7 @@ fun Class<*>.toForge(): Type {
         "boolean", "Z" -> Type.BoolUnknown
         else -> {
             if (name.startsWith("[")) {
-                return Type.Array(Type.Broad.Known(Class.forName(name.removePrefix("[L").removeSuffix(";")).toForge()))
+                return Type.Array(Class.forName(name.removePrefix("[L").removeSuffix(";")).toForge())
             }
             val generics = linkedMapOf(*typeParameters.map { it.typeName to Type.UninitializedGeneric }.toTypedArray())
             Type.BasicJvmType(SignatureString.fromDotNotation(name), generics)
@@ -197,6 +198,10 @@ suspend fun genericAppends(arguments: Iterable<ReflectType>, forges: Iterable<Br
 private suspend fun inspectType(type: ReflectType, forge: InstanceForge, change: (String, InstanceForge) -> Unit, lookup: IRLookup) {
     when {
         type is TypeVariable<*> -> change(type.name, forge)
+        type is GenericArrayType -> {
+            forge as ArrayInstanceForge
+            inspectType(type.genericComponentType, forge, change, lookup)
+        }
         type is ParameterizedType && forge is GenericDestructableForge -> {
             val order = lookup.lookupOrderGenerics(SignatureString.fromDotNotation(type.typeName))
 

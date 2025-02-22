@@ -33,6 +33,17 @@ impl<T> List<T> {
         acc
     }
 
+    inline func joinToString(self, separator) {
+        sum = ""
+        for item, i in self {
+            sum = sum + item
+            if i + 1 != self.len() {
+                sum = sum + separator
+            }
+        }
+        sum
+    }
+
     inline func first(self, closure) {
         for item in self {
             if closure(item) {

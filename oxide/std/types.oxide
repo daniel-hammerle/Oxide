@@ -1,0 +1,64 @@
+use std::{lists, arrays}
+
+//Types
+struct Primitive { signature }
+
+struct NothingType
+struct NeverType
+
+struct ArrayType { itemType }
+
+struct ForeignType { signature }
+
+struct StructType {
+    signature,
+    fields,
+    modifiers
+}
+
+struct Field { name, tp }
+
+//Modifiers
+struct InlineModifier
+struct ErrorModifier
+struct PublicModifier
+
+impl Primitive {
+    func toDescriptorString(self) {
+        self.signature
+    }
+}
+
+impl ArrayType {
+    func toDescriptorString(self) {
+        "[" + self.itemType.toDescriptorString() + "]"
+    }
+}
+
+impl ForeignType {
+    func toDescriptorString(self) {
+        "Foreign<"+self.signature+">"
+    }
+}
+
+impl StructType {
+    func toDescriptorString(self) {
+        self.signature + "<" + self.fields.map { |field| field.toDescriptorString() }.sum("") + ">"
+    }
+}
+
+impl Field {
+    func toDescriptorString(self) {
+        self.name + ": " + self.tp
+    }
+}
+
+impl Field {
+    //Returns the given field of the object provided
+    //## Example usage:
+    //```oxide
+    //p = Person("Tom", 18)
+    //Person.fields.map { |it| it.get(p) } //results in ["Tom", 18]
+    //```
+    intrinsic inline func get(self, object)
+}

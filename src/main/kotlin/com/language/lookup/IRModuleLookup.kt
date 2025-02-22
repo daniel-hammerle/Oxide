@@ -64,7 +64,7 @@ class IRModuleLookup(
 
             instance.type.isUnboxedPrimitive() -> lookUpCandidate(BasicInstanceForge(instanceType.asBoxed()), funcName, argTypes, history)
             else -> jvmLookup.lookUpMethod(instance, funcName, argTypes, this)
-                ?: error("No Method found on ${instance.type}.$funcName($argTypes)")
+                ?: error("No Method found: ${instance.type}.$funcName(${argTypes.joinToString(", ")})")
 
         }
     }
@@ -293,7 +293,7 @@ class IRModuleLookup(
     }
 
     override suspend fun TemplatedType.populate(generics: Map<String, Type>, box: Boolean): Type = when (this) {
-        is TemplatedType.Array -> Type.Array(Type.Broad.Known(itemType.populate(generics)))
+        is TemplatedType.Array -> Type.Array(itemType.populate(generics))
         is TemplatedType.Complex -> {
             val availableGenerics = getStructGenericNames(signatureString)
             val entries = availableGenerics.toList().mapIndexed { index, s ->

@@ -8,11 +8,13 @@ import com.language.compilation.metadata.LambdaAppenderImpl
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.controlflow.MessageKind
+import com.language.core.IntrinsicMemberFunctions
 import com.language.lexer.MetaInfo
 import org.apache.commons.codec.binary.Base32
 import java.lang.RuntimeException
 import java.nio.ByteBuffer
 import java.util.*
+import kotlin.math.exp
 
 class CompilationException(
     val meta: MetaData,
@@ -29,7 +31,7 @@ fun compile(module: ModuleLookup): IRModule {
 
     module.localSymbols.forEach { (name, entry) ->
         when (entry) {
-            is Function -> functions[name] = compileFunction(function = entry, module, appender)
+            is Function -> functions[name] = compileFunction(function = entry, module, appender, emptySet())
             is Struct -> structs[name] = compileStruct(struct = entry, module)
             is Impl -> {
                 val type =
@@ -85,10 +87,15 @@ fun compileStruct(struct: Struct, module: ModuleLookup): IRStruct {
 }
 
 fun compileImplBlock(implBlock: Impl, module: ModuleLookup, lambdaAppender: LambdaAppender): IRImpl {
-    if (!implBlock.type.exists(module)) {
+    val populatedType = if (implBlock.type is TemplatedType.Complex && module.hasLocalStruct(implBlock.type.signatureString)) {
+        TemplatedType.Complex(module.localName + implBlock.type.signatureString, implBlock.type.generics)
+    } else {
+        implBlock.type.populate(module)
+    }
+    if (!populatedType.exists(module)) {
         throw CompilationException(
             implBlock.info.join(module.localName),
-            "Invalid type ${implBlock.type}",
+            "Invalid type $populatedType",
             MessageKind.Logic
         )
     }
@@ -96,12 +103,25 @@ fun compileImplBlock(implBlock: Impl, module: ModuleLookup, lambdaAppender: Lamb
     val implBlockLookup = module.withNewContainer(fullImplSignature)
 
     val methods =
-        implBlock.methods.mapValues { (_, function) -> compileFunction(function, implBlockLookup, lambdaAppender) }
+        implBlock.methods.mapValues { (name, function) ->
+            compileFunction(
+                function,
+                implBlockLookup,
+                lambdaAppender,
+                implBlock.generics.keys,
+                if (function.modifiers.isModifier(Modifier.Intrinsic)) {
+                    IntrinsicMemberFunctions[Triple(module.localName, populatedType, name)]!!
+                } else {
+                    null
+                }
+            )
+        }
     val associatedFunctions = implBlock.associatedFunctions.mapValues { (_, function) ->
+
         compileFunction(
             function,
             implBlockLookup,
-            lambdaAppender
+            lambdaAppender, implBlock.generics.keys,
         )
     }
 
@@ -118,10 +138,7 @@ fun UUID.encodeUUID(): ByteArray = ByteBuffer.allocate(16).apply {
 }.array()
 
 fun TemplatedType.exists(module: ModuleLookup): Boolean = when (this) {
-    is TemplatedType.Complex -> module.hasStruct(populateSignature(signatureString, module)) || module.hasModule(
-        populateSignature(signatureString, module)
-    )
-
+    is TemplatedType.Complex -> module.hasStruct(signatureString) || module.hasModule(signatureString)
     TemplatedType.IntT, TemplatedType.DoubleT, TemplatedType.BoolT -> true
     is TemplatedType.Generic -> true
     is TemplatedType.Nothing -> true
@@ -131,9 +148,8 @@ fun TemplatedType.exists(module: ModuleLookup): Boolean = when (this) {
     TemplatedType.Never -> true
 }
 
-fun compileFunction(function: Function, module: ModuleLookup, lambdaAppender: LambdaAppender): IRFunction {
-
-    val body = compileExpression(function.body, module, true)
+fun compileFunction(function: Function, module: ModuleLookup, lambdaAppender: LambdaAppender, generics: Set<String>, externalBody: Instruction? = null): IRFunction {
+    val body = externalBody ?: compileExpression(function.body, module, true, generics)
 
     return BasicIRFunction(
             function.args,
@@ -147,24 +163,24 @@ fun compileFunction(function: Function, module: ModuleLookup, lambdaAppender: La
 
 }
 
-fun compileStatements(statements: List<Statement>, module: ModuleLookup, uctl: Boolean): List<Instruction> {
-    return statements.map { compileStatement(it, module, uctl) }
+fun compileStatements(statements: List<Statement>, module: ModuleLookup, uctl: Boolean, generics: Set<String>): List<Instruction> {
+    return statements.map { compileStatement(it, module, uctl, generics) }
 }
 
-fun compileForLoopConstruct(construct: ForLoopConstruct, module: ModuleLookup, uctl: Boolean): ForLoop {
+fun compileForLoopConstruct(construct: ForLoopConstruct, module: ModuleLookup, uctl: Boolean, generics: Set<String>): ForLoop {
     return ForLoop(
-        compileExpression(construct.parent, module, uctl),
+        compileExpression(construct.parent, module, uctl, generics),
         construct.name,
         construct.indexName,
-        compileConstructingArg(construct.body, module),
+        compileConstructingArg(construct.body, module, generics),
         construct.info.join(module.localName)
     )
 }
 
-fun compileStatement(statement: Statement, module: ModuleLookup, uctl: Boolean): Instruction {
+fun compileStatement(statement: Statement, module: ModuleLookup, uctl: Boolean, generics: Set<String>): Instruction {
     return when (statement) {
         is Statement.Assign -> {
-            val value = compileExpression(statement.value, module, uctl)
+            val value = compileExpression(statement.value, module, uctl, generics)
 
             Instruction.StoreVar(
                 statement.name,
@@ -175,23 +191,23 @@ fun compileStatement(statement: Statement, module: ModuleLookup, uctl: Boolean):
 
         is Statement.For -> {
             Instruction.For(
-                forLoop = compileForLoopConstruct(statement.forLoopConstruct, module, uctl),
+                forLoop = compileForLoopConstruct(statement.forLoopConstruct, module, uctl, generics),
                 statement.info.join(module.localName)
             )
         }
 
-        is Statement.Expr -> compileExpression(expression = statement.expression, module, uctl)
+        is Statement.Expr -> compileExpression(expression = statement.expression, module, uctl, generics)
         is Statement.While -> Instruction.While(
-            cond = compileExpression(statement.condition, module, uctl),
-            body = compileExpression(statement.body, module, false),
+            cond = compileExpression(statement.condition, module, uctl, generics),
+            body = compileExpression(statement.body, module, false, generics),
             statement.info.join(module.localName)
         )
 
         is Statement.AssignProperty -> {
             Instruction.DynamicPropertyAssignment(
-                parent = compileExpression(statement.parent, module, uctl),
+                parent = compileExpression(statement.parent, module, uctl, generics),
                 name = statement.name,
-                value = compileExpression(statement.value, module, uctl),
+                value = compileExpression(statement.value, module, uctl, generics),
                 statement.info.join(module.localName)
             )
         }
@@ -199,20 +215,20 @@ fun compileStatement(statement: Statement, module: ModuleLookup, uctl: Boolean):
         is Statement.Return -> Instruction.Return(
             compileExpression(
                 statement.value ?: Expression.ReturningScope(emptyList(), MetaInfo(0)),
-                module, uctl
+                module, uctl, generics
             ),
             statement.info.join(module.localName)
         )
     }
 }
 
-fun compileConstructingArg(arg: ConstructingArgument, module: ModuleLookup): Instruction.ConstructingArgument {
+fun compileConstructingArg(arg: ConstructingArgument, module: ModuleLookup, generics: Set<String>): Instruction.ConstructingArgument {
     return when (arg) {
         is ConstructingArgument.Collect -> Instruction.ConstructingArgument.Collected(
             compileExpression(
                 arg.expression,
                 module,
-                false
+                false, generics
             )
         )
 
@@ -220,7 +236,7 @@ fun compileConstructingArg(arg: ConstructingArgument, module: ModuleLookup): Ins
             compileExpression(
                 arg.expression,
                 module,
-                false
+                false, generics
             )
         )
 
@@ -228,13 +244,13 @@ fun compileConstructingArg(arg: ConstructingArgument, module: ModuleLookup): Ins
             compileForLoopConstruct(
                 arg.forLoopConstruct,
                 module,
-                false
+                false, generics
             ),
         )
     }
 }
 
-fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolean): Instruction {
+fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolean, generics: Set<String>): Instruction {
     return when (expression) {
         is Expression.ConstBool -> Instruction.LoadConstBool(expression.bool, expression.info.join(module.localName))
         is Expression.ConstNum -> if (expression.num == expression.num.toInt().toDouble())
@@ -244,15 +260,15 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
 
         is Expression.ConstStr -> Instruction.LoadConstString(expression.str, expression.info.join(module.localName))
         is Expression.IfElse -> Instruction.If(
-            cond = compileExpression(expression.condition, module, uctl),
-            body = compileExpression(expression.body, module, false),
-            elseBody = expression.elseBody?.let { compileExpression(it, module, false) },
+            cond = compileExpression(expression.condition, module, uctl, generics),
+            body = compileExpression(expression.body, module, false, generics),
+            elseBody = expression.elseBody?.let { compileExpression(it, module, false, generics) },
             expression.info.join(module.localName)
         )
 
         is Expression.ConstNull -> Instruction.Null(expression.info.join(module.localName))
         is Expression.ConstArray -> {
-            val items = expression.items.map { compileConstructingArg(it, module) }
+            val items = expression.items.map { compileConstructingArg(it, module, generics) }
             when (expression.arrayType) {
                 ArrayType.Implicit -> Instruction.ConstArray(
                     com.language.compilation.ArrayType.Object,
@@ -282,34 +298,41 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
             }
         }
 
-        is Expression.Invoke -> compileInvoke(expression, module, uctl)
+        is Expression.Invoke -> compileInvoke(expression, module, uctl, generics)
         is Expression.Math -> Instruction.Math(
             op = expression.op,
-            first = compileExpression(expression.first, module, uctl),
-            second = compileExpression(expression.second, module, uctl),
+            first = compileExpression(expression.first, module, uctl, generics),
+            second = compileExpression(expression.second, module, uctl, generics),
             expression.info.join(module.localName)
         )
 
         is Expression.Match -> {
-            val parent = compileExpression(expression.matchable, module, uctl)
+            val parent = compileExpression(expression.matchable, module, uctl, generics)
             val branches = expression.branches.map { (pattern, body) ->
-                compilePattern(pattern, module) to compileExpression(body, module, false)
+                compilePattern(pattern, module, generics) to compileExpression(body, module, false, generics)
             }
 
             Instruction.Match(parent, branches, expression.info.join(module.localName))
         }
 
-        is Expression.UnknownSymbol -> throw CompilationException(
-            expression.info.join(module.localName),
-            "Unknown symbol `${expression.name}`"
-        )
+
+        is Expression.UnknownSymbol -> {
+            //check if we have a generic in scope with the given name
+            if (expression.name in generics) {
+                return Instruction.GenericMention(expression.name, expression.info.join(module.localName))
+            }
+            throw CompilationException(
+                expression.info.join(module.localName),
+                "Unknown symbol `${expression.name}`"
+            )
+        }
 
         is Expression.VariableSymbol -> Instruction.LoadVar(expression.name, expression.info.join(module.localName))
         is Expression.ReturningScope -> Instruction.MultiInstructions(
             compileStatements(
                 expression.expressions,
                 module,
-                uctl
+                uctl, generics
             ), expression.info.join(module.localName)
         )
 
@@ -317,6 +340,9 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
             when (val parent = expression.parent) {
                 //static property access
                 is Expression.UnknownSymbol -> {
+                    if(parent.sigName in generics) {
+                        return Instruction.DynamicPropertyAccess(Instruction.GenericMention(parent.sigName, parent.info.join(module.localName)), expression.name, expression.info.join(module.localName))
+                    }
                     val signature = populateSignature(SignatureString(parent.sigName), module)
                     if (!module.hasModule(signature)) {
                         println("[Warning] Unknown Module ${parent.name}")
@@ -327,7 +353,7 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
                 //dynamic property access
                 else -> {
                     Instruction.DynamicPropertyAccess(
-                        compileExpression(expression.parent, module, uctl),
+                        compileExpression(expression.parent, module, uctl, generics),
                         expression.name,
                         expression.info.join(module.localName)
                     )
@@ -336,19 +362,19 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
         }
 
         is Expression.Comparing -> Instruction.Comparing(
-            first = compileExpression(expression.first, module, uctl),
-            second = compileExpression(expression.second, module, uctl),
+            first = compileExpression(expression.first, module, uctl, generics),
+            second = compileExpression(expression.second, module, uctl, generics),
             op = expression.op,
             expression.info.join(module.localName)
         )
 
         is Expression.Try -> Instruction.Try(
-            compileExpression(expression.expression, module, uctl),
+            compileExpression(expression.expression, module, uctl, generics),
             expression.info.join(module.localName)
         )
 
         is Expression.Catch -> Instruction.Catch(
-            compileExpression(expression.expression, module, uctl),
+            compileExpression(expression.expression, module, uctl, generics),
             expression.type?.populate(module),
             expression.info.join(module.localName)
         )
@@ -362,7 +388,7 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
             //uctl is false
             // because keep is indeed conditional,
             // since it only runs the first time
-            val value = compileExpression(expression.value, module, uctl = false)
+            val value = compileExpression(expression.value, module, uctl = false, generics)
 
             Instruction.Keep(
                 value,
@@ -375,7 +401,7 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
         is Expression.Lambda -> {
             Instruction.Lambda(
                 argNames = expression.args,
-                body = compileExpression(expression.body, module, uctl = false),
+                body = compileExpression(expression.body, module, uctl = false, generics),
                 capturedVariables = expression.capturedVariables.toList(),
                 imports = module.localImports.values.toSet() + module.localName,
                 expression.info.join(module.localName)
@@ -391,37 +417,39 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
         is Range.UntilUpper -> TODO()
 
         is Expression.BooleanOperation -> Instruction.LogicalOperation(
-            compileExpression(expression.first, module, uctl),
+            compileExpression(expression.first, module, uctl, generics),
             compileExpression(
                 expression.second,
                 module,
-                uctl = false
+                uctl = false, generics
             ), //unconditional top level is false because of possible short-circuiting
             expression.op,
             expression.info.join(module.localName)
         )
 
         is Expression.Not -> Instruction.Not(
-            compileExpression(expression.expr, module, uctl),
+            compileExpression(expression.expr, module, uctl, generics),
             expression.info.join(module.localName)
         )
+
+        is Expression.Intrinsic -> error("This shouldnt be reached")
     }
 }
 
 
-fun compilePattern(pattern: Pattern, module: ModuleLookup): IRPattern {
+fun compilePattern(pattern: Pattern, module: ModuleLookup, generics: Set<String>): IRPattern {
     return when (pattern) {
         is Pattern.Binding -> IRPattern.Binding(pattern.name)
         is Pattern.Conditional -> IRPattern.Condition(
-            parent = compilePattern(pattern.parent, module),
-            condition = compileExpression(pattern.condition, module, false)
+            parent = compilePattern(pattern.parent, module, generics),
+            condition = compileExpression(pattern.condition, module, false, generics)
         )
 
         is Pattern.Const -> IRPattern.Condition(
             parent = IRPattern.Binding("_"),
             condition = Instruction.Comparing(
                 Instruction.LoadVar("_", pattern.info.join(module.localName)),
-                compileExpression(pattern.value, module, false),
+                compileExpression(pattern.value, module, false, generics),
                 CompareOp.Eq,
                 pattern.info.join(module.localName)
             )
@@ -429,21 +457,21 @@ fun compilePattern(pattern: Pattern, module: ModuleLookup): IRPattern {
 
         is Pattern.Destructuring -> {
             when {
-                pattern.type is TemplatedType.Complex && !module.hasStruct(pattern.type.signatureString) -> IRPattern.Binding(
+                pattern.type is TemplatedType.Complex && !module.hasStruct(populateSignature(pattern.type.signatureString, module)) -> IRPattern.Binding(
                     pattern.type.signatureString.oxideNotation
                 )
 
                 module.hasLocalStruct((pattern.type as TemplatedType.Complex).signatureString) -> {
                     IRPattern.Destructuring(
                         type = pattern.type.copy(signatureString = module.localName + pattern.type.signatureString),
-                        patterns = pattern.patterns.map { compilePattern(it, module) }
+                        patterns = pattern.patterns.map { compilePattern(it, module, generics) }
                     )
                 }
 
                 else -> {
                     IRPattern.Destructuring(
                         type = pattern.type.populate(module),
-                        patterns = pattern.patterns.map { compilePattern(it, module) }
+                        patterns = pattern.patterns.map { compilePattern(it, module, generics) }
                     )
                 }
             }
@@ -452,14 +480,21 @@ fun compilePattern(pattern: Pattern, module: ModuleLookup): IRPattern {
     }
 }
 
-fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup, uctl: Boolean): Instruction {
-    val args = invoke.args.values.map { compileExpression(it, module, uctl) }
+fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup, uctl: Boolean, generics: Set<String>): Instruction {
+    val args = invoke.args.values.map { compileExpression(it, module, uctl, generics) }
     return when (val parent = invoke.parent) {
         //dot call or module call
         is Expression.AccessProperty -> {
             when (val modName = parent.parent) {
                 is Expression.UnknownSymbol -> {
                     //module call (for example, io.print("Hello World"))
+                    if(modName.sigName in generics) {
+                        return Instruction.DynamicCall(
+                            Instruction.GenericMention(modName.sigName, parent.info.join(module.localName)),
+                            parent.name,
+                            args,
+                            invoke.info.join(module.localName))
+                    }
                     val signature = populateSignature(SignatureString(modName.sigName), module)
                     if (!module.hasModule(signature) && !module.hasStruct(signature)) {
                         throw CompilationException(
@@ -498,7 +533,7 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup, uctl: Boolean
 
                 else -> {
                     //dot call
-                    val instance = compileExpression(parent.parent, module, uctl)
+                    val instance = compileExpression(parent.parent, module, uctl, generics)
                     Instruction.DynamicCall(
                         parent = instance,
                         name = parent.name,
@@ -551,7 +586,7 @@ fun compileInvoke(invoke: Expression.Invoke, module: ModuleLookup, uctl: Boolean
         //meaning a value that has an invoke function like lambdas
         else -> {
             Instruction.InvokeLambda(
-                compileExpression(parent, module, uctl),
+                compileExpression(parent, module, uctl, generics),
                 args,
                 invoke.info.join(module.localName)
             )

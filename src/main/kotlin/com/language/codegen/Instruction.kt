@@ -7,7 +7,6 @@ import com.language.compilation.*
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
-import java.util.Stack
 
 class CleanUpFrame(val expectedType: Type, val cleanUp: (Boolean) -> Unit) //bool decides whether the escape operation has a value on the stack
 
@@ -50,7 +49,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             stackMap.push(instruction.type)
             mv.visitLabel(instruction.endLabel)
             if (!instruction.body.pushesStackFrame())
-                stackMap.generateFrame(mv)
+                runCatching { stackMap.generateFrame(mv) }
         }
         is TypedInstruction.DynamicPropertyAccess -> {
             //load instance onto the stack
@@ -325,6 +324,17 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             instruction.candidate.generateCall(mv, stackMap)
             stackMap.pop(instruction.args.size)
             stackMap.push(instruction.candidate.oxideReturnType)
+        }
+
+        is TypedInstruction.ConstObject -> {
+            mv.visitTypeInsn(Opcodes.NEW, instruction.forge.fullSignature.toJvmNotation())
+            mv.visitInsn(Opcodes.DUP)
+
+            mv.loadAndBox(instruction.constructorCall, instruction.fields.map { it.second }, stackMap, clean)
+            //call constructor
+            instruction.constructorCall.generateCall(mv, stackMap)
+            stackMap.pop(instruction.fields.size)
+            stackMap.push(instruction.constructorCall.oxideReturnType)
         }
         is TypedInstruction.Match -> compileMatch(mv, instruction, stackMap, clean)
         is TypedInstruction.LoadList -> {
@@ -684,6 +694,30 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 }
             }
         }
+        is TypedInstruction.ArrayForLoop -> {
+            compileArrayForLoop(mv, instruction, stackMap, clean) {
+                when (instruction.body.type) {
+                    Type.Nothing -> {}
+                    Type.Never -> {}
+                    else -> {
+                        stackMap.pop()
+                        mv.visitInsn(Opcodes.POP)
+                    }
+                }
+            }
+        }
+        is TypedInstruction.UnrolledForLoop -> {
+            compileScopeAdjustment(mv, instruction.preLoopAdjustments, stackMap, clean)
+            for (item in instruction.body) {
+                compileInstruction(mv, item.instruction, stackMap, clean)
+                if (item.instruction.type !in listOf(Type.Never, Type.Nothing)) {
+                    stackMap.pop()
+                    mv.visitInsn(Opcodes.POP)
+                }
+            }
+            compileScopeAdjustment(mv, instruction.postLoopAdjustments, stackMap, clean)
+        }
+
         is TypedInstruction.Try -> {
             compileInstruction(mv, instruction.parent, stackMap, clean)
             for (signature in instruction.errorTypes) {
@@ -829,7 +863,86 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             stackMap.generateFrame(mv)
 
         }
+
+        is TypedInstruction.ArrayItemAccess -> {
+            compileInstruction(mv, instruction.array, stackMap, clean)
+            compileInstruction(mv, instruction.idx, stackMap, clean)
+            stackMap.pop(2)
+            mv.visitInsn(Opcodes.AALOAD)
+            mv.visitTypeInsn(Opcodes.CHECKCAST, instruction.type.asBoxed().toJvmName())
+
+            if (instruction.type.isUnboxedPrimitive()) {
+                unboxOrIgnore(mv, instruction.type.asBoxed(), instruction.type)
+            }
+            stackMap.push(instruction.type)
+        }
+
+        is TypedInstruction.ArrayLength -> {
+            compileInstruction(mv, instruction.array, stackMap, clean)
+            stackMap.pop()
+            mv.visitInsn(Opcodes.ARRAYLENGTH)
+            stackMap.push(Type.IntT)
+        }
     }
+}
+
+inline fun compileArrayForLoop(
+    mv: MethodVisitor,
+    instruction: TypedInstruction.ArrayForLoop,
+    stackMap: StackMap,
+    clean: CleanupStack,
+    endOfBodyTask: () -> Unit
+) {
+    if (instruction.needsArrayStore) {
+        compileInstruction(mv, instruction.parent, stackMap, clean)
+        stackMap.pop()
+        stackMap.changeVar(instruction.arrayId, instruction.parent.type)
+        mv.visitVarInsn(Opcodes.ASTORE, instruction.arrayId)
+    }
+
+    val start = Label()
+    val end = Label()
+    //create a new var frame so that the variables like the index are gone after the loop's execution
+    stackMap.pushVarFrame(instruction.bodyFrame, cloning = false)
+
+    mv.visitInsn(Opcodes.ICONST_0)
+    stackMap.changeVar(instruction.indexId, Type.IntT)
+    mv.visitVarInsn(Opcodes.ISTORE, instruction.indexId)
+
+
+    compileScopeAdjustment(mv, instruction.preLoopAdjustments, stackMap, clean)
+    clean.push(CleanUpFrame(Type.Nothing) {
+        if (it) {
+            mv.visitInsn(Opcodes.SWAP)
+        }
+        mv.visitInsn(Opcodes.POP)
+    })
+
+    stackMap.generateFrame(mv)
+    mv.visitLabel(start)
+    mv.visitVarInsn(Opcodes.ALOAD, instruction.arrayId)
+    mv.visitInsn(Opcodes.ARRAYLENGTH)
+
+    mv.visitVarInsn(Opcodes.ILOAD, instruction.indexId)
+
+    mv.visitJumpInsn(Opcodes.IF_ICMPLE, end)
+    compileInstruction(mv, instruction.body.instruction, stackMap, clean)
+    endOfBodyTask()
+
+    mv.visitIincInsn(instruction.indexId, 1)
+
+    mv.visitJumpInsn(Opcodes.GOTO, start)
+    mv.visitLabel(end)
+    clean.pop()
+
+    //pop the previously pushed var frame so that all the for-loop-stuff is gone
+    stackMap.generateFrame(mv)
+
+    stackMap.popVarFrame()
+
+
+    //cleanup (pop the array from the stack)
+    compileScopeAdjustment(mv, instruction.postLoopAdjustments, stackMap, clean)
 }
 
 inline fun compileForLoop(
@@ -943,8 +1056,10 @@ fun compileIf(
     if (instruction.elseBody is TypedInstruction.If) {
         compileIf(mv, instruction.elseBody, stackMap, clean, nested = true)
     } else {
-        instruction.elseBody?.let { compileInstruction(mv, it, stackMap, clean) } ?: if (instruction.type != Type.Nothing) {
+
+        instruction.elseBody?.let { compileInstruction(mv, it, stackMap, clean);  stackMap.pop()} ?: if (instruction.type != Type.Nothing) {
             compileInstruction(mv, TypedInstruction.Null, stackMap, clean)
+            stackMap.pop()
         } else {}
     }
     if (instruction.type != instruction.elseBody?.type) {
@@ -954,9 +1069,7 @@ fun compileIf(
     //label after else body
     mv.visitLabel(afterElseBody)
 
-    if (instruction.elseBody != null && instruction.elseBody.type !in listOf(Type.Nothing, Type.Never)) {
-        stackMap.pop()
-    }
+
     stackMap.push(instruction.type)
 
     stackMap.adaptFrame(instruction.varFrame)
@@ -1448,7 +1561,8 @@ fun loadInstruction(type: Type) = when(type) {
     Type.Nothing -> Opcodes.ALOAD
     Type.Null, is Type.JvmArray -> Opcodes.ALOAD
     is Type.Union ->Opcodes.ALOAD
-    Type.Never, Type.UninitializedGeneric -> error("Cannot store variable of type never")
+    Type.Never -> error("Cannot store variable of type never")
+    Type.UninitializedGeneric -> error("Uninit type in codegen")
 }
 
 fun returnInstruction(type: Type) = when(type) {

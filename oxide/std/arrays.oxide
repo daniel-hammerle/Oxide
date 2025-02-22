@@ -1,5 +1,5 @@
 use std::lists
-
+use java::lang::StringBuilder
 impl<T> [T] {
     inline func map(self, closure) {
         [for item in self closure(item)]
@@ -47,6 +47,28 @@ impl<T> [T] {
         value
     }
 
+    inline func joinToString(self, separator) {
+        value = ""
+        for item, i in self {
+            value = value + item
+            if i + 1 < self.length {
+                value = value + separator
+            }
+        }
+        value
+    }
+
+    inline func joinToStringOf(self, separator, closure) {
+        value = StringBuilder()
+        for item, i in self {
+            value.append(closure(item))
+            if i + 1 < self.len() {
+                value.append(separator)
+            }
+        }
+        value.toString()
+    }
+
     inline func sumOf(self, initialValue, closure) {
         value = initialValue
         for item in self {
@@ -84,7 +106,7 @@ impl<T> [T] {
 }
 
 
-use java::util::Arrays
+use java::util::{Arrays, ArrayList}
 impl<T> [T] {
     func get(self, index) {
         Arrays.asList(self).get(index)
@@ -98,8 +120,8 @@ impl<T> [T] {
         Arrays.asList(self).iterator()
     }
 
-    func size(self) {
-        Arrays.asList(self).size()
+    inline func len(self) {
+        self.length
     }
 
     inline func clone(self) {

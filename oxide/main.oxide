@@ -1,5 +1,5 @@
 use java::{util::List, lang::System}
-
+use std::{io, arrays, types, types::{Primitive, StructType}}
 impl<T> List<T> {
     inline func first(self, closure) {
         for item in self {
@@ -11,8 +11,27 @@ impl<T> List<T> {
     }
 }
 
+
+struct Dog { name }
+struct Person { name, age }
+
 //some comment
 func main() { //some more comments
-    result = list[1, 2, 3].first { |it| it * 2 == 4 }
-    System.out.println(result)
+    io.println(Person("Tom", 19).toJson())
+}
+
+impl<T> T {
+    func toJson(self) {
+        a = self
+        match T {
+            StructType(_, fields, _) -> {
+                "{" + fields.joinToStringOf(", ") { |it| "\"" + it.name + "\": "  + it.get(a).toJson() } + "}"
+            }
+            Primitive("str") -> "\"" + self + "\""
+            Primitive(_) -> self.toString()
+        }
+    }
+
+    func fromJson(json) {
+    }
 }

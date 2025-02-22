@@ -2,6 +2,7 @@ package com.language.compilation
 
 import com.language.codegen.*
 import com.language.compilation.tracking.InstanceForge
+import com.language.compilation.tracking.InstanceTemplate
 import com.language.compilation.tracking.join
 import com.language.compilation.variables.allEqual
 import org.objectweb.asm.Label
@@ -138,7 +139,7 @@ data class SimpleFunctionCandidate(
         if (castReturnType) {
             //were boxing the return type because the only reason we cast the return type is when we have generics,
             // and then It's automatically always boxed
-            mv.visitTypeInsn(Opcodes.CHECKCAST, oxideReturnType.asBoxed().toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+            mv.visitTypeInsn(Opcodes.CHECKCAST, oxideReturnType.asBoxed().toActualJvmType().toJvmName())
         }
         if (oxideReturnType.isUnboxedPrimitive() && !jvmReturnType.isUnboxedPrimitive()) {
             unboxOrIgnore(mv, oxideReturnType.asBoxed(), oxideReturnType)
@@ -165,7 +166,10 @@ data class SimpleFunctionCandidate(
     }
 
 }
-
+fun Type.toJvmName(): String = when(this) {
+    is Type.Array -> this.toJVMDescriptor()
+    else -> this.toJVMDescriptor().removePrefix("L").removeSuffix(";")
+}
 
 fun FunctionCandidate.toJvmDescriptor() = generateJVMFunctionSignature(jvmArgs, jvmReturnType, varargInfo)
 

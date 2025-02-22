@@ -4,6 +4,7 @@ import com.language.*
 import com.language.Function
 import com.language.compilation.GenericType
 import com.language.compilation.SignatureString
+import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.compilation.modifiers.modifiers
 import com.language.controlflow.MessageKind
@@ -116,8 +117,15 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             val returnType = if (tokens.visitNext() == Token.Arrow) {
                 tokens.expect<Token.Arrow>()
                 parseType(tokens)
-            } else {null }
-            val body = parseExpression(tokens, BasicVariables.withEntries(args.map { it.first }.toSet()))
+            } else {
+                null
+            }
+            val body = if (modifiers.isModifier(Modifier.Intrinsic)) {
+                Expression.Intrinsic(name, info.finish())
+            } else {
+                parseExpression(tokens, BasicVariables.withEntries(args.map { it.first }.toSet()))
+            }
+
             name to Function(args, returnType, generics, body, modifiers, info.finish())
         }
         Token.Type -> {
@@ -738,8 +746,7 @@ private fun parsePattern(tokens: Tokens, variables: Variables): Pattern {
 private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
     val info = tokens.info()
     val tk = tokens.visitNext()
-    val tok = tk
-    if (tok !is Token.Identifier) {
+    if (tk !is Token.Identifier) {
         return Pattern.Const(parseConst(tokens), info.finish())
     }
 
@@ -749,12 +756,12 @@ private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
         val expr = parseExpression(tokens, variables)
         return Pattern.Conditional(
             condition= Expression.Comparing(
-                first =Expression.VariableSymbol(tok.name, info.finish()),
+                first =Expression.VariableSymbol(tk.name, info.finish()),
                 second =expr,
                 op = op.toCompareOp(),
                 info.finish()
             ),
-            parent = Pattern.Binding(tok.name, info.finish()),
+            parent = Pattern.Binding(tk.name, info.finish()),
             info.finish()
         )
     }
@@ -771,7 +778,7 @@ private fun parsePatternBase(tokens: Tokens, variables: Variables): Pattern {
             }
         },
         onFailure = {
-            Pattern.Binding(tok.name, info.finish())
+            Pattern.Binding(tk.name, info.finish())
         }
     )
 

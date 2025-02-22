@@ -49,6 +49,7 @@ fun TypedInstruction.Const.value(): Any = when(this) {
     is TypedInstruction.LoadConstDouble -> value
     is TypedInstruction.LoadConstInt -> value
     is TypedInstruction.LoadConstString -> value
+    is TypedInstruction.ConstObject -> TODO()
 }
 
 fun TypedInstruction.Const.toNumericalValue() = when(this) {

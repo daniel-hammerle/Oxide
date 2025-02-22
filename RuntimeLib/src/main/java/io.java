@@ -24,16 +24,5 @@ public class io {
     public static void print(boolean any) {
         System.out.println(any);
     }
-    public static void print(double any) {
-        System.out.println(any);
-    }
-    public static void print(long any) {
-        System.out.println(any);
-    }
-    public static void print(byte any) {
-        System.out.println(any);
-    }
-    public static void print(short any) {
-        System.out.println(any);
-    }
+
 }

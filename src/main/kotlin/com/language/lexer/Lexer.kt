@@ -43,6 +43,12 @@ sealed interface Token {
         override val name: String = "inline"
         override val modifier: Modifier = Modifier.Inline
     }
+    data object Extern : KeyWord, ModifierToken {
+        override val modifier: Modifier = Modifier.Extern
+    }
+    data object Intrinsic : KeyWord, ModifierToken {
+        override val modifier: Modifier = Modifier.Intrinsic
+    }
     data object Self : KeyWord, Identifier {
         override val name: String = "self"
     }
@@ -138,6 +144,8 @@ private fun tryFindKeyWord(string: String): Token? {
         "pub" -> Token.Public
         "null" -> Token.Null
         "inline" -> Token.Inline
+        "extern" -> Token.Extern
+        "intrinsic" -> Token.Intrinsic
         "return" -> Token.Return
         "_or" -> Token.Or
         "_and" -> Token.And
@@ -205,14 +213,16 @@ private fun singleCharMatches(iter: CharIter): Token? {
         '>' -> Token.Gt
         '"' -> {
             val stringContents = StringBuilder()
+            var prev = 'a'
             while (true) {
                 val char = iter.nextChar()
-                if (char == '"') {
+                if (char == '"' && prev != '\\') {
                     break
                 }
+                prev = char
                 stringContents.append(char)
             }
-            Token.ConstStr(stringContents.toString())
+            Token.ConstStr(stringContents.toString().replace("\\\"", "\"").replace("\\n", "\n").replace("\\r", "\r"))
         }
         else -> null
     }
