@@ -77,9 +77,9 @@ fun InstanceForge.change(change: InstanceChange, args: List<InstanceForge>): Ins
     is InstanceChange.New -> change.template.build(args)
     InstanceChange.Nothing -> this
     is InstanceChange.PropertyChanges -> {
-        this as StructInstanceForge
+        this as MemberChangeable
         change.changes.forEach { (name, change) ->
-            members[name] = members[name]!!.change(change, args)
+            this.definiteChange(name, member(name).change(change, args))
         }
         this
     }

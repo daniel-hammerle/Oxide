@@ -68,12 +68,12 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                 else -> {
                     mv.visitFieldInsn(
                         Opcodes.GETFIELD,
-                        instruction.parent.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"),
+                        instruction.parent.type.toJvmName(),
                         instruction.name,
                         instruction.physicalType.toJVMDescriptor()
                     )
                     if (instruction.physicalType != instruction.type) {
-                        mv.visitTypeInsn(Opcodes.CHECKCAST, instruction.type.asBoxed().toJVMDescriptor().removePrefix("L").removeSuffix(";"))
+                        mv.visitTypeInsn(Opcodes.CHECKCAST, instruction.type.asBoxed().toActualJvmType().toJvmName())
                         unboxOrIgnore(mv, instruction.type.asBoxed(), instruction.type)
                     }
                 }
@@ -82,8 +82,6 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             if (instruction.type != instruction.physicalType) {
                 if (instruction.type.isUnboxedPrimitive()) {
                     unboxOrIgnore(mv, instruction.physicalType, instruction.type)
-                } else {
-                    mv.visitTypeInsn(Opcodes.CHECKCAST, instruction.type.toJVMDescriptor().removePrefix("L").removeSuffix(";"))
                 }
             }
             stackMap.push(instruction.type)
@@ -1271,10 +1269,13 @@ fun MethodVisitor.loadAndBox(candidate: FunctionCandidate, args: List<TypedInstr
             unboxOrIgnore(this, ins.type, type)
         }
         val insType = ins.type
-        
+
+
         if (insType is Type.Union && type is Type.JvmType && Type.Null in insType.entries && type in insType.entries) {
             visitTypeInsn(Opcodes.CHECKCAST, type.signature.toJvmNotation())
         }
+
+
 
         if (idx != null && i >= idx) {
             visitInsn(Opcodes.AASTORE)

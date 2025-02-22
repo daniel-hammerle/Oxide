@@ -29,7 +29,7 @@ val IntrinsicMemberFunctions: Map<Triple<SignatureString, TemplatedType, String>
             val name = obj.fields.first { it.first == "name" }.second.value() as String
             val forge = variables.getForge("object") as StructInstanceForge
             if (name !in forge.members) {
-                error("Object does not support field")
+                error("${forge.members} does not support field $name")
             }
             val childForge = forge.memberForge(name)!!
             val tp = lookup.lookUpPhysicalFieldType(forge.type, name)

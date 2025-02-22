@@ -35,10 +35,10 @@ class CachedJvmLookup(
     }
 
     private suspend fun getClass(signatureString: SignatureString) =
-        classCache.get(signatureString) ?: createRep(signatureString).also {
+        classCache.get(signatureString) ?: try { createRep(signatureString).also {
             classCache.set(signatureString, it)
         }
-
+        } catch (_: ClassNotFoundException) { null }
     override suspend fun lookUpMethod(
         instance: InstanceForge,
         functionName: String,
@@ -46,7 +46,7 @@ class CachedJvmLookup(
         lookup: IRLookup
     ): FunctionCandidate? {
         val tp = (instance.type as JvmType)
-        return getClass(tp.signature).lookupMethod(
+        return getClass(tp.signature)?.lookupMethod(
             functionName,
             instance,
             tp.genericTypes,
@@ -62,7 +62,7 @@ class CachedJvmLookup(
         argTypes: List<BroadForge>,
         lookup: IRLookup
     ): BroadForge? {
-        return getClass(instance.fullSignature).lookupMethodUnknown(functionName, instance.type, instance.genericTypes, argTypes, lookup, this)
+        return getClass(instance.fullSignature)?.lookupMethodUnknown(functionName, instance.type, instance.genericTypes, argTypes, lookup, this)
     }
 
     override suspend fun lookUpAssociatedFunction(
@@ -71,7 +71,7 @@ class CachedJvmLookup(
         argTypes: List<InstanceForge>,
         lookup: IRLookup,
         generics: Map<String, Type.Broad>
-    ): FunctionCandidate? = getClass(className).lookUpAssociatedFunction(functionName, argTypes, lookup, this, generics)
+    ): FunctionCandidate? = getClass(className)?.lookUpAssociatedFunction(functionName, argTypes, lookup, this, generics)
 
     override suspend fun lookUpAssociatedFunctionUnknown(
         className: SignatureString,
@@ -80,22 +80,22 @@ class CachedJvmLookup(
         lookup: IRLookup,
         generics: Map<String, Type.Broad>
     ): BroadForge? {
-        return getClass(className).lookUpAssociatedFunctionUnknown(functionName, argTypes, lookup, this, generics)
+        return getClass(className)?.lookUpAssociatedFunctionUnknown(functionName, argTypes, lookup, this, generics)
     }
 
     override suspend fun lookUpField(instance: JvmType, fieldName: String, lookup: IRLookup): Type? {
-        return getClass(instance.signature).lookUpField(fieldName, instance.genericTypes, lookup)
+        return getClass(instance.signature)?.lookUpField(fieldName, instance.genericTypes, lookup)
     }
 
     override suspend fun lookUpAssociatedField(className: SignatureString, fieldName: String): Type? {
-        return getClass(className).lookUpStaticField(fieldName)
+        return getClass(className)?.lookUpStaticField(fieldName)
     }
 
     override suspend fun lookupFieldForge(
         className: SignatureString,
         fieldName: String
     ): InstanceForge? {
-        return getClass(className).lookupFieldForge(fieldName)
+        return getClass(className)?.lookupFieldForge(fieldName)
     }
 
     override suspend fun hasGenericReturnType(
@@ -103,14 +103,14 @@ class CachedJvmLookup(
         functionName: String,
         argTypes: List<Type>,
         lookup: IRLookup
-    ): Boolean = getClass(instance.signature).methodHasGenericReturnType(functionName, argTypes, lookup)
+    ): Boolean = getClass(instance.signature)?.methodHasGenericReturnType(functionName, argTypes, lookup) ?: false
 
     override suspend fun typeHasInterface(type: Type.JvmType, interfaceType: SignatureString): Boolean {
         return runCatching { getClass(type.signature) }.getOrNull()?.hasInterface(interfaceType) == true
     }
 
     override suspend fun getModifiers(className: SignatureString): Modifiers {
-        return getClass(className).modifiers
+        return getClass(className)?.modifiers!!
     }
 
     override suspend fun lookupConstructor(
@@ -118,7 +118,7 @@ class CachedJvmLookup(
         argTypes: List<InstanceForge>,
         lookup: IRLookup
     ): FunctionCandidate? {
-        return getClass(className).lookupConstructor(argTypes, lookup)
+        return getClass(className)?.lookupConstructor(argTypes, lookup)
     }
 
     override suspend fun lookupConstructorUnknown(
@@ -126,7 +126,7 @@ class CachedJvmLookup(
         argTypes: List<BroadForge>,
         lookup: IRLookup
     ): BroadForge? {
-        return getClass(className).lookupConstructorUnknown(argTypes, lookup)
+        return getClass(className)?.lookupConstructorUnknown(argTypes, lookup)
     }
 
     override suspend fun lookUpGenericTypes(
@@ -135,11 +135,11 @@ class CachedJvmLookup(
         argTypes: List<Type>,
         lookup: IRLookup
     ): Map<String, Type>? {
-        return getClass(instance.signature).lookupGenericTypes(funcName, argTypes, lookup)
+        return getClass(instance.signature)?.lookupGenericTypes(funcName, argTypes, lookup)
     }
 
     override suspend fun lookUpGenericsDefinitionOrder(className: SignatureString): List<String> {
-        return getClass(className).getGenericDefinitionOrder()
+        return getClass(className)?.getGenericDefinitionOrder()!!
     }
 
     override suspend fun lookupErrorTypes(
@@ -153,8 +153,8 @@ class CachedJvmLookup(
         if (funcName == "<init>") {
             //handle constructor
         }
-        return runCatching { clazz.getErrorTypesAssociatedFunction(visited, funcName, argTypes, lookup, this) }.getOrNull()
-            ?: clazz.getErrorTypesMethod(visited, funcName, argTypes, lookup, this)
+        return runCatching { clazz!!.getErrorTypesAssociatedFunction(visited, funcName, argTypes, lookup, this) }.getOrNull()
+            ?: clazz!!.getErrorTypesMethod(visited, funcName, argTypes, lookup, this)
     }
 
 

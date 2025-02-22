@@ -1,23 +1,16 @@
-use java::{util::List, lang::System}
-use std::{io, arrays, types, types::{Primitive, StructType}}
-impl<T> List<T> {
-    inline func first(self, closure) {
-        for item in self {
-            if closure(item) {
-                return item
-            }
-        }
-        null
-    }
-}
+use std::{io, arrays, types, types::{Primitive, StructType, ArrayType}}
+use java::lang::StringBuilder
 
-
-struct Dog { name }
 struct Person { name, age }
+struct Company { name, employees }
 
-//some comment
-func main() { //some more comments
-    io.println(Person("Tom", 19).toJson())
+func main() {
+    tom = Person("Tom", 18)
+
+    company = Company("Example co", [tom, Person("Peter", 54)])
+
+    io.println(tom.toJsonFancy())
+    io.println(company.toJsonFancy())
 }
 
 impl<T> T {
@@ -27,11 +20,51 @@ impl<T> T {
             StructType(_, fields, _) -> {
                 "{" + fields.joinToStringOf(", ") { |it| "\"" + it.name + "\": "  + it.get(a).toJson() } + "}"
             }
+            ArrayType(_) -> "["+ self.joinToStringOf(", ") { |it| it.toJson() } + "]"
             Primitive("str") -> "\"" + self + "\""
             Primitive(_) -> self.toString()
+
         }
     }
 
-    func fromJson(json) {
+    func toJsonFancy(self) {
+        builder = StringBuilder()
+        self.toJsonInternal(builder)
+        builder.toString()
+    }
+
+    func toJsonInternal(self, builder) {
+        a = self
+        match T {
+            StructType(_, fields, _) -> {
+                builder.append("{")
+                for field, i in fields {
+                    builder.append("\"" + field.name + "\": ")
+                    field.get(a).toJsonInternal(builder)
+                    if i + 1 < fields.len() {
+                        builder.append(", ")
+                    }
+                }
+                _ = builder.append("}")
+            }
+            ArrayType(_) -> {
+                builder.append("[")
+                for item, i in self {
+                    item.toJsonInternal(builder)
+                    if i + 1 < self.len() {
+                        builder.append(", ")
+                    }
+                }
+                _ = builder.append("]")
+            }
+            Primitive("str") -> {
+                builder.append("\"")
+                builder.append(self)
+                _ = builder.append("\"")
+            }
+            Primitive(_) -> {
+                _ = builder.append(self.toString())
+            }
+        }
     }
 }
