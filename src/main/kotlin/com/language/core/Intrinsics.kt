@@ -1,3 +1,15 @@
+// Copyright 2025 Daniel Hammerle
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package com.language.core
 
 import com.language.TemplatedType
@@ -27,7 +39,7 @@ val IntrinsicMemberFunctions: Map<Triple<SignatureString, TemplatedType, String>
                 error("Can only use the get intrinsic function on constant objects but got $obj")
             }
             val name = obj.fields.first { it.first == "name" }.second.value() as String
-            val forge = variables.getForge("object") as StructInstanceForge
+            val forge = variables.getForge("object") as? StructInstanceForge ?: error(variables.getForge("object"))
             if (name !in forge.members) {
                 error("${forge.members} does not support field $name")
             }

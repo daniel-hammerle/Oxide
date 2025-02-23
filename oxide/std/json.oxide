@@ -1,0 +1,46 @@
+use std::{arrays, types, types::{Primitive, StructType, ArrayType}}
+use java::lang::StringBuilder
+
+
+impl<T> T {
+    inline func toJson(self) {
+        builder = StringBuilder()
+        self.toJsonInternal(builder)
+        builder.toString()
+    }
+
+    func toJsonInternal(self, builder) {
+        a = self
+        match T {
+            StructType(_, fields, _) -> {
+                builder.append("{")
+                for field, i in fields {
+                    builder.append("\"" + field.name + "\": ")
+                    field.get(a).toJsonInternal(builder)
+                    if i + 1 < fields.len() {
+                        builder.append(", ")
+                    }
+                }
+                _ = builder.append("}")
+            }
+            ArrayType(_) -> {
+                builder.append("[")
+                for item, i in self {
+                    item.toJsonInternal(builder)
+                    if i + 1 < self.len() {
+                        builder.append(", ")
+                    }
+                }
+                _ = builder.append("]")
+            }
+            Primitive("str") -> {
+                builder.append("\"")
+                builder.append(self)
+                _ = builder.append("\"")
+            }
+            Primitive(_) -> {
+                _ = builder.append(self.toString())
+            }
+        }
+    }
+}

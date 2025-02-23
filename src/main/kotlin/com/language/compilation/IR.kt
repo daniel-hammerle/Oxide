@@ -1,3 +1,15 @@
+// Copyright 2025 Daniel Hammerle
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package com.language.compilation
 
 import com.language.BooleanOp
@@ -648,7 +660,7 @@ sealed class Instruction {
 
             //when lambda inlined
             if (parent is TypedInstruction.Lambda && parent in handle.inlinableLambdas) {
-                val scope = variables.clone()
+                val scope = variables.reconstructInlineLambdaFrame(parent.signatureString)
                 val loadInstructions = mutableListOf<TypedInstruction>()
                 for ((value, typedArg) in parent.args.zip(this.args).zip(args)) {
                     val (name, arg) = value
@@ -2256,7 +2268,7 @@ data class BasicIRFunction(
             error("Function expected ${this.args.size} arguments but got ${args.size}")
         }
 
-        val scope = variables.clone()
+        val scope = variables.preserverPrevious()
         val actualArgInstruction = mutableListOf<TypedInstruction>()
         if (instance != null) {
             when (instance) {
@@ -2284,7 +2296,7 @@ data class BasicIRFunction(
             if (name.second?.matchesSubset(it.first.type, inferredGenerics, this.generics.toMap(), lookup) == false) error("Type error mismatch ${it.first.type} : ${name.second}")
             val (typed, untyped) = it
             if (untyped is Instruction.LoadVar) {
-                scope.reference(newName = name.first, oldName = untyped.name)
+                scope.putVar(name.first, variables.variables[untyped.name]!!)
                 return@forEach
             }
             when (typed) {
@@ -2295,6 +2307,7 @@ data class BasicIRFunction(
                 is TypedInstruction.Lambda -> {
                     scope.putVar(name.first, SemiConstBinding(typed, typed.forge))
                     inlinableLambdas.add(typed)
+                    scope.addInlineLambdaFrame(variables, typed.signatureString, typed.captures.keys)
                 }
 
                 is TypedInstruction.Const -> scope.putVar(name.first, SemiConstBinding(typed, typed.forge))

@@ -1,3 +1,16 @@
+// Copyright 2025 Daniel Hammerle
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package com.language.compilation.variables
 
 import com.language.codegen.VarFrame
@@ -6,13 +19,16 @@ import com.language.compilation.tracking.InstanceForge
 import com.language.compilation.tracking.join
 import com.language.compilation.tracking.mapValuesToMutable
 import com.language.eval.NoopVariableMapping
+import java.util.IdentityHashMap
 import java.util.UUID
 
 
 class VariableManagerImpl(
     override val parent: VariableMapping,
-    override val variables: MutableMap<String, VariableProvider> = mutableMapOf()
+    override val variables: MutableMap<String, VariableProvider> = mutableMapOf(),
+    private val inlineClosureFrames: MutableMap<SignatureString, Map<String, VariableProvider>> = mutableMapOf()
 ) : VariableManager {
+
 
     companion object {
         fun fromForges(items: List<Pair<String, InstanceForge>>): VariableManager {
@@ -236,7 +252,13 @@ class VariableManagerImpl(
 
     override fun clone(): VariableManagerImpl {
         val map = mutableMapOf<UUID, InstanceForge>()
-        return VariableManagerImpl(parent.clone(), variables.mapValuesToMutable { (_, value) -> value.clone(map) })
+        val providerChanges = IdentityHashMap<VariableProvider, VariableProvider>()
+
+        return VariableManagerImpl(
+            parent.clone(),
+            variables.mapValuesToMutable { (_, value) -> value.clone(map, providerChanges) },
+            inlineClosureFrames.mapValuesToMutable { (_, value) -> value.mapValues { (_, prov) -> prov.clone(map, providerChanges) } }
+        )
     }
 
     override fun putVar(name: String, provider: VariableProvider) {
@@ -255,6 +277,19 @@ class VariableManagerImpl(
             variables[name] = VariableBinding(id, forge)
             id
         }
+    }
+
+
+    override fun addInlineLambdaFrame(container: VariableManager, id: SignatureString, names: Iterable<String>) {
+        inlineClosureFrames[id] = names.associateWith { container.variables[it]!! }
+    }
+
+    override fun reconstructInlineLambdaFrame(id: SignatureString): VariableManager {
+        return VariableManagerImpl(parent, inlineClosureFrames[id]!!.toMutableMap(), inlineClosureFrames)
+    }
+
+    override fun preserverPrevious(): VariableManager {
+        return VariableManagerImpl(parent, inlineClosureFrames = inlineClosureFrames)
     }
 
 

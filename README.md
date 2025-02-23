@@ -2,6 +2,12 @@
 
 Welcome to **Oxide** – a cutting-edge programming language designed to be concise, flexible, and powerful. Oxide combines the ease and expressiveness of dynamically typed languages with the robustness and performance of statically typed languages.
 
+## License
+
+Oxide is licensed under the **Apache License 2.0**.  
+See the [LICENSE](./LICENSE) file for details.
+
+
 ## Why Oxide? 🚀
 
 ### 🌟 **Dynamic Yet Type-Safe**

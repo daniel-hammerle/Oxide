@@ -4,6 +4,7 @@ extern error struct ExhaustionError {
     message str
 }
 
+
 struct Box { value }
 
 impl Box {
