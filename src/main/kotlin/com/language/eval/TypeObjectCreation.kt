@@ -12,10 +12,7 @@
 // limitations under the License.
 package com.language.eval
 
-import com.language.compilation.ArrayType
-import com.language.compilation.SignatureString
-import com.language.compilation.Type
-import com.language.compilation.TypedInstruction
+import com.language.compilation.*
 import com.language.compilation.tracking.StructInstanceForge
 import com.language.lookup.IRLookup
 
@@ -25,27 +22,27 @@ val ArrayTypeObject = SignatureString("std::types::ArrayType")
 val FieldObject = SignatureString("std::types::Field")
 
 
-suspend fun createTypeObject(type: Type, lookup: IRLookup): TypedInstruction.Const {
+suspend fun createTypeObject(type: Type, lookup: IRLookup, history: History): TypedInstruction.Const {
     return when(type) {
-        is Type.BoolT -> createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("bool")), lookup)
-        Type.DoubleT -> createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("f64")), lookup)
-        Type.IntT -> createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("i32")), lookup)
-        Type.String -> createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("str")), lookup)
-        is Type.Array -> createConstObject(ArrayTypeObject, listOf(createTypeObject(type.itemType, lookup)), lookup)
+        is Type.BoolT -> createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("bool")), lookup, history)
+        Type.DoubleT -> createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("f64")), lookup, history)
+        Type.IntT -> createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("i32")), lookup, history)
+        Type.String -> createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("str")), lookup, history)
+        is Type.Array -> createConstObject(ArrayTypeObject, listOf(createTypeObject(type.itemType, lookup, history)), lookup, history)
         Type.BoolArray -> createConstObject(
             ArrayTypeObject,
-            listOf(createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("bool")), lookup)),
-            lookup
+            listOf(createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("bool")), lookup, history)),
+            lookup, history
         )
         Type.DoubleArray -> createConstObject(
             ArrayTypeObject,
-            listOf(createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("f64")), lookup)),
-            lookup
+            listOf(createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("f64")), lookup, history)),
+            lookup, history
         )
         Type.IntArray -> createConstObject(
             ArrayTypeObject,
-            listOf(createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("i32")), lookup)),
-            lookup
+            listOf(createConstObject(PrimitiveTypeObject, listOf(TypedInstruction.LoadConstString("i32")), lookup, history)),
+            lookup, history
         )
         is Type.BasicJvmType -> {
             val fields = lookup.lookUpOrderedFields(type.signature)
@@ -54,8 +51,8 @@ suspend fun createTypeObject(type: Type, lookup: IRLookup): TypedInstruction.Con
                     FieldObject,
                     listOf(
                         TypedInstruction.LoadConstString(name),
-                        createTypeObject(with(lookup) { tp.populate(type.genericTypes)}, lookup)),
-                    lookup
+                        createTypeObject(with(lookup) { tp.populate(type.genericTypes)}, lookup, history)),
+                    lookup, history
                 )
             }
             val fieldsArray = TypedInstruction.LoadConstConstArray(fieldObjects, ArrayType.Object, Type.BasicJvmType(FieldObject, emptyMap()))
@@ -63,7 +60,7 @@ suspend fun createTypeObject(type: Type, lookup: IRLookup): TypedInstruction.Con
             createConstObject(
                 StructTypeObject,
                 listOf(TypedInstruction.LoadConstString(type.signature.oxideNotation), fieldsArray, modifierArray),
-                lookup
+                lookup, history
             )
 
         }
@@ -73,11 +70,15 @@ suspend fun createTypeObject(type: Type, lookup: IRLookup): TypedInstruction.Con
         Type.Null -> TODO()
         Type.UninitializedGeneric -> TODO()
         is Type.Union -> TODO()
+        Type.ByteT -> TODO()
+        Type.CharT -> TODO()
+        Type.FloatT -> TODO()
+        Type.LongT -> TODO()
     }
 }
 
-suspend fun createConstObject(signature: SignatureString, constructorArgs: List<TypedInstruction.Const>, lookup: IRLookup): TypedInstruction.ConstObject {
+suspend fun createConstObject(signature: SignatureString, constructorArgs: List<TypedInstruction.Const>, lookup: IRLookup, history: History): TypedInstruction.ConstObject {
     val fields = lookup.lookUpOrderedFields(signature)
-    val result = lookup.lookUpConstructor(signature, constructorArgs.map { it.forge })
+    val result = lookup.lookUpConstructor(signature, constructorArgs.map { it.forge }, history)
     return TypedInstruction.ConstObject(result.returnForge as StructInstanceForge, result, fields.asSequence().map { it.first }.zip(constructorArgs.asSequence()).toList())
 }

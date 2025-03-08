@@ -1,0 +1,20 @@
+use std //use std will probably later be automatically imported but for now its not
+use std::io
+
+struct Car { brand }
+
+func main {
+    example(factory()) //causes stack allocation to be inserted in main
+    io.println("Hello World")
+}
+
+func example(c) {
+    io.println(c.brand)
+}
+
+
+func factory {
+    Car("bmw")
+}
+
+

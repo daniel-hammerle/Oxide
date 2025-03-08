@@ -3,14 +3,17 @@ use std::{io, json}
 struct Person { name, age }
 struct Company { name, employees }
 
+
 func main() {
     a = "Hello World"
-    example({|_| a = Person("Tom", 18)}, {|_| io.println(a.name)})
+    example(
+        {|_| a = Person("Tom", 18) },
+        {|_| io.println(a.name) }
+    )
 }
 
 inline func example(changeClosure, closure) {
     a = 23
-
     changeClosure(3)
     io.println(a)
     closure(3)
@@ -24,3 +27,4 @@ func jsonExample {
     io.println(tom.toJson())
     io.println(company.toJson())
 }
+

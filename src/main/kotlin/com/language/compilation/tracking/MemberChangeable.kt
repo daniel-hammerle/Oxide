@@ -12,7 +12,9 @@
 // limitations under the License.
 package com.language.compilation.tracking
 
+import com.language.compilation.History
+
 interface MemberChangeable {
-    fun definiteChange(name: String, forge: InstanceForge)
+    suspend fun definiteChange(name: String, forge: InstanceForge, droppingHistory: History)
     fun possibleChange(name: String, forge: InstanceForge)
 }

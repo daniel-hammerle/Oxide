@@ -13,6 +13,7 @@
 
 package com.language.compilation.tracking
 
+import com.language.compilation.History
 import com.language.compilation.Type
 import java.util.*
 
@@ -54,5 +55,13 @@ data class ArrayInstanceForge(
         if (foreign.isEmpty()) return this
 
         return foreign.fold(this as InstanceForge) { acc, it -> acc.join(it) }
+    }
+
+    override fun reference() {
+        TODO("Not yet implemented")
+    }
+
+    override suspend fun drop(droppingHistory: History) {
+        TODO("Not yet implemented")
     }
 }

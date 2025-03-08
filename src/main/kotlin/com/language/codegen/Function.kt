@@ -65,10 +65,6 @@ fun jvmName(name: String, argTypes: List<Type>): String {
     return "${name}_${argTypes.hashCode().toLong() and 0xFFFFFFFFL}"
 }
 
-fun Type.Broad.toFunctionNameNotation() = when(this) {
-    is Type.Broad.Typeful -> type.toFunctionNameNotation()
-    Type.Broad.Unset -> "unknown"
-}
 
 fun Type.Broad.getOrDefault(type: Type): Type = when(this) {
     is Type.Broad.Typeful -> this.type
@@ -84,18 +80,4 @@ fun Type.Broad.getOrNull(): Type? = when(this) {
 fun Type.Broad.getOrThrow(message: String) =when(this) {
     is Type.Broad.Typeful -> this.type
     Type.Broad.Unset -> error(message)
-}
-
-fun Type.toFunctionNameNotation(): String = when(this) {
-    is Type.BoolT -> "z"
-    Type.DoubleT -> "d"
-    Type.IntT -> "i"
-    is Type.Lambda -> "l"
-    is Type.BasicJvmType -> "${signature.toJvmNotation()}${genericTypes.values.joinToString("") { it.toFunctionNameNotation() }}"
-    Type.Nothing -> "v"
-    Type.Never -> "v"
-    Type.Null -> "n"
-    is Type.JvmArray -> "${itemType.toJVMDescriptor().removeSuffix(";").removePrefix("L")}]"
-    is Type.Union -> "u(${entries.joinToString("") { it.toFunctionNameNotation() }})"
-    Type.UninitializedGeneric -> "v"
 }

@@ -116,6 +116,10 @@ fun Class<*>.canBe(type: Type, strict: Boolean = false, nullable: Boolean = fals
         Type.Never -> false
         is Type.Lambda ->SignatureString(this.name.replace(".", "::")) == type.signature || name == "java.lang.Object"
         Type.UninitializedGeneric -> true
+        Type.ByteT -> name == "byte"
+        Type.CharT -> name == "char"
+        Type.FloatT -> name == "float"
+        Type.LongT -> name == "long"
     }
 }
 

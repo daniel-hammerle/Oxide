@@ -136,6 +136,10 @@ fun Type.toJVMDescriptor(): String = when(this) {
     Type.Null -> "Ljava/lang/Object;"
     //unions will just be Objects
     is Type.Union -> "Ljava/lang/Object;"
+    Type.ByteT -> "B"
+    Type.CharT -> "C"
+    Type.FloatT -> "F"
+    Type.LongT -> "J"
 }
 
 

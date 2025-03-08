@@ -41,6 +41,7 @@ fun evalMath(
         MathOp.Sub -> num1 - num2
         MathOp.Mul -> num1 * num2
         MathOp.Div -> num1 / num2
+        MathOp.Mod -> num1 % num2
     }
 
     if (first.type.isDouble() && second.type.isDouble()) {

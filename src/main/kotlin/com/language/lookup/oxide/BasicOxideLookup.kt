@@ -233,7 +233,8 @@ class BasicOxideLookup(
     override suspend fun lookupConstructor(
         structName: SignatureString,
         args: List<InstanceForge>,
-        lookup: IRLookup
+        lookup: IRLookup,
+        history: History
     ): FunctionCandidate? {
         val struct = getStruct(structName) ?: return null
         val fields = struct.getDefaultVariant(lookup)
@@ -256,7 +257,7 @@ class BasicOxideLookup(
             (type as? TemplatedType.Generic)?.let { name to it.name}
         }
 
-        val forge = StructInstanceForge(members.toMutableMap(), genericArgMap, structName)
+        val forge = StructInstanceForge(members.toMutableMap(), genericArgMap, structName, history.toHistSlice())
 
         return SimpleFunctionCandidate(
             oxideArgs = argTypes,
@@ -300,7 +301,7 @@ class BasicOxideLookup(
             (type as? TemplatedType.Generic)?.let { name to it.name}
         }
 
-        val forge = StructInstanceForge(members.toMutableMap(), genericArgMap, structName)
+        val forge = StructInstanceForge(members.toMutableMap(), genericArgMap, structName, TODO())
 
         return forge
     }

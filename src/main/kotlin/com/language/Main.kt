@@ -14,14 +14,40 @@ package com.language
 
 
 import com.language.compilation.ExtensionClassLoader
-import com.language.controlflow.compileAndWriteDir
-import com.language.controlflow.loadExternalLibs
+import com.language.compilation.SignatureString
+import com.language.controlflow.*
+import com.language.wasm.*
+import kotlinx.coroutines.async
 import java.io.FileOutputStream
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 
 
-fun main() {
+suspend fun main() {
+    val scope =  getCoroutineScope()
+    val result = crossTargetCompileDir("./oxide3", scope, scope.async { ExtensionClassLoader(this::class.java.classLoader) })
+    println(result)
+
+    val module = WasmModule(
+        "main",
+        arrayOf(
+            WasmFunction(
+                "main",
+                emptyArray(),
+                WasmType.I32,
+                WasmInstruction.If(
+                    WasmInstruction.LoadBool(true),
+                    WasmInstruction.LoadI32(2),
+                    WasmInstruction.LoadI32(24)
+                ),
+                emptyArray()
+            )
+        )
+    )
+    WasmCodeGenBridge().generateWasm(arrayOf(module))
+}
+
+fun mainJvm() {
     val externalLibs = listOf("./RuntimeLib/build/libs/RuntimeLib-1.0-SNAPSHOT.jar")
     try {
         compileAndWriteDir("./oxide", externalLibs)

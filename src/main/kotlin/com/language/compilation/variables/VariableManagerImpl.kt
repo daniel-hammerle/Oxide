@@ -13,12 +13,12 @@
 
 package com.language.compilation.variables
 
+import NoopVariableMapping
 import com.language.codegen.VarFrame
 import com.language.compilation.*
 import com.language.compilation.tracking.InstanceForge
 import com.language.compilation.tracking.join
 import com.language.compilation.tracking.mapValuesToMutable
-import com.language.eval.NoopVariableMapping
 import java.util.IdentityHashMap
 import java.util.UUID
 

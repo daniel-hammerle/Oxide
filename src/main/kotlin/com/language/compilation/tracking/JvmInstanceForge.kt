@@ -12,6 +12,7 @@
 // limitations under the License.
 package com.language.compilation.tracking
 
+import com.language.compilation.History
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
 import com.language.compilation.join
@@ -77,5 +78,14 @@ class JvmInstanceForge(
         }
 
         return others.filter { it.id != this.id }.fold(this as InstanceForge) { acc, it -> acc.join(it) }
+    }
+
+    override fun reference() {
+        //Gracefully ignore
+    }
+
+    override suspend fun drop(droppingHistory: History) {
+        //Gracefully ignore
+
     }
 }

@@ -207,6 +207,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                     MathOp.Sub -> Opcodes.DSUB
                     MathOp.Mul -> Opcodes.DMUL
                     MathOp.Div -> Opcodes.DDIV
+                    MathOp.Mod -> Opcodes.DREM
                 })
                 stackMap.pop(2)
                 stackMap.push(Type.DoubleT)
@@ -231,6 +232,7 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
                     MathOp.Sub -> Opcodes.ISUB
                     MathOp.Mul -> Opcodes.IMUL
                     MathOp.Div -> error("Unreachable")
+                    MathOp.Mod -> Opcodes.IREM
                 })
                 stackMap.pop(2)
                 stackMap.push(Type.IntT)
@@ -321,10 +323,6 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
         TypedInstruction.Null -> {
             mv.visitInsn(Opcodes.ACONST_NULL)
             stackMap.push(Type.Null)
-        }
-        TypedInstruction.Pop -> {
-            mv.visitInsn(Opcodes.POP)
-            stackMap.pop()
         }
         is TypedInstruction.ConstructorCall -> {
             mv.visitTypeInsn(Opcodes.NEW, instruction.className.toJvmNotation())
@@ -894,6 +892,8 @@ fun compileInstruction(mv: MethodVisitor, instruction: TypedInstruction, stackMa
             mv.visitInsn(Opcodes.ARRAYLENGTH)
             stackMap.push(Type.IntT)
         }
+
+        is TypedInstruction.PlatformSpecificOperation -> TODO()
     }
 }
 
@@ -1566,6 +1566,10 @@ fun storeInstruction(type: Type) = when(type) {
     Type.Null, is Type.JvmArray -> Opcodes.ASTORE
     is Type.Union ->Opcodes.ASTORE
     Type.Never, Type.UninitializedGeneric -> error("Cannot store variable of type never")
+    Type.ByteT ->  Opcodes.ISTORE
+    Type.CharT -> Opcodes.ISTORE
+    Type.FloatT -> Opcodes.FSTORE
+    Type.LongT -> Opcodes.LSTORE
 }
 
 fun loadInstruction(type: Type) = when(type) {
@@ -1577,6 +1581,10 @@ fun loadInstruction(type: Type) = when(type) {
     is Type.Union ->Opcodes.ALOAD
     Type.Never -> error("Cannot store variable of type never")
     Type.UninitializedGeneric -> error("Uninit type in codegen")
+    Type.ByteT -> Opcodes.ILOAD
+    Type.CharT -> Opcodes.ILOAD
+    Type.FloatT -> Opcodes.FLOAD
+    Type.LongT -> Opcodes.LLOAD
 }
 
 fun returnInstruction(type: Type) = when(type) {

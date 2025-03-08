@@ -102,7 +102,7 @@ interface IRLookup {
      * Returns a constructor which matches the argument types
      * The function will throw if the class / struct doesn't exist or no matching constructor is found
      */
-    suspend fun lookUpConstructor(className: SignatureString, argTypes: List<InstanceForge>): FunctionCandidate
+    suspend fun lookUpConstructor(className: SignatureString, argTypes: List<InstanceForge>, history: History): FunctionCandidate
     suspend fun lookUpConstructorUnknown(className: SignatureString, argTypes: List<BroadForge>): BroadForge
 
     /**

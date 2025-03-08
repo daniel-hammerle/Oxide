@@ -55,6 +55,11 @@ sealed interface Expression {
         override val info: MetaInfo
     ): Array
 
+    data class UnaryMinus(
+        val parent: Expression,
+        override val info: MetaInfo
+    ) : Expression
+
     data class Invoke(
         val parent: Expression,
         val args: Map<String, Expression>,
@@ -150,6 +155,12 @@ sealed interface Expression {
     ) : Expression
 
     data class Keep(val value: Expression, override val info: MetaInfo): Expression
+
+    class Cast(
+        val item: Expression,
+        val tp: TemplatedType,
+        override val info: MetaInfo
+    ) : Expression
 }
 
 enum class BooleanOp {
@@ -181,6 +192,10 @@ sealed interface ConstructingArgument {
 
 sealed interface TemplatedType {
     data object IntT: TemplatedType
+    data object LongT: TemplatedType
+    data object FloatT: TemplatedType
+    data object ByteT: TemplatedType
+    data object CharT: TemplatedType
     data object DoubleT : TemplatedType
     data object BoolT: TemplatedType
     data object Null : TemplatedType
@@ -279,7 +294,7 @@ data class TypeDef(
 ): ModuleChild
 
 data class Impl(
-    val type: TemplatedType,
+    val types: Set<TemplatedType>,
     val methods: Map<String, Function>,
     val associatedFunctions: Map<String, Function>,
     val generics: Map<String, GenericType>,
@@ -298,7 +313,8 @@ enum class MathOp {
     Add,
     Sub,
     Mul,
-    Div
+    Div,
+    Mod
 }
 
 enum class CompareOp {

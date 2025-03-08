@@ -3,7 +3,7 @@ package com.language.compilation.variables
 import com.language.compilation.Type
 import com.language.compilation.TypedInstruction
 import com.language.compilation.tracking.InstanceForge
-import java.util.UUID
+import java.util.*
 
 //Special Variable Provider for tests that allows to simulate variables that are not backed by anything
 data class PhantomBinding(var type: Type): VariableProvider {
@@ -17,7 +17,10 @@ data class PhantomBinding(var type: Type): VariableProvider {
         return TypedInstruction.Noop(Type.Nothing)
     }
 
-    override fun clone(forges: MutableMap<UUID, InstanceForge>): VariableProvider {
+    override fun clone(
+        forges: MutableMap<UUID, InstanceForge>,
+        providers: IdentityHashMap<VariableProvider, VariableProvider>
+    ): VariableProvider {
         return this
     }
 

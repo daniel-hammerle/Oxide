@@ -40,6 +40,7 @@ sealed interface Token {
     data object In : KeyWord, Identifier {
         override val name: String = "in"
     }
+    data object As : KeyWord
     data object Match : KeyWord
     data object Impl : KeyWord
     data object For : KeyWord
@@ -95,6 +96,7 @@ sealed interface Token {
     data object Dot : Token
     data object ClosingCurly : Token
     data object Plus : Token
+    data object PercentSign : Token
     data object Minus : Token
     data object Star : Token
     data object Slash : Token
@@ -131,6 +133,7 @@ fun Token.Comparison.toCompareOp(): CompareOp = when(this) {
 private fun tryFindKeyWord(string: String): Token? {
     return when (string) {
         "if" -> Token.If
+        "as" -> Token.As
         "else" -> Token.Else
         "while" -> Token.While
         "func" -> Token.Func
@@ -201,6 +204,7 @@ private fun singleCharMatches(iter: CharIter): Token? {
         '+' -> Token.Plus
         ';' -> Token.SemiColon
         '?' -> Token.QuestionMark
+        '%' -> Token.PercentSign
         '|' -> Token.Pipe
         '/' -> {
             if (iter.nextChar() == '/') {

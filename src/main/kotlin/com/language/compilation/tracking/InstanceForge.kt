@@ -12,6 +12,7 @@
 // limitations under the License.
 package com.language.compilation.tracking
 
+import com.language.compilation.History
 import com.language.compilation.Type
 import com.language.compilation.join
 import java.util.UUID
@@ -117,6 +118,10 @@ interface InstanceForge : BroadForge {
     fun toTemplate(instanceLookup: InstanceLookup): InstanceBuilder
 
     fun mergeMut(others: List<InstanceForge>): InstanceForge
+
+    fun reference()
+
+    suspend fun drop(droppingHistory: History)
 }
 
 

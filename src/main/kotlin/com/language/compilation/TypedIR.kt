@@ -17,7 +17,9 @@ import com.language.CompareOp
 import com.language.MathOp
 import com.language.codegen.VarFrame
 import com.language.compilation.tracking.*
+import com.language.core.NativeOperationKind
 import org.objectweb.asm.Label
+import java.util.UUID
 
 sealed interface TypedInstruction {
     val forge: InstanceForge
@@ -50,6 +52,11 @@ sealed interface TypedInstruction {
     data class Try(val parent: TypedInstruction, val errorTypes: List<SignatureString>): TypedInstruction {
         override val forge: InstanceForge = parent.forge
     }
+
+    /*
+    Get resolved differently for each compilation target
+     */
+    data class PlatformSpecificOperation(val kind: NativeOperationKind, val args: List<TypedInstruction>, override val forge: InstanceForge): TypedInstruction
 
     data class ArrayLength(val array: TypedInstruction): TypedInstruction {
         override val forge: InstanceForge = InstanceForge.ConstInt
@@ -292,9 +299,7 @@ sealed interface TypedInstruction {
 
     data class StaticPropertyAccess(val parentName: SignatureString, val name: String, override val forge: InstanceForge, override val type: Type): TypedInstruction
 
-    data object Pop : TypedInstruction {
-        override val forge: InstanceForge = InstanceForge.ConstNothing
-    }
+
     data object Null : TypedInstruction {
         override val forge: InstanceForge = InstanceForge.ConstNull
     }

@@ -77,12 +77,8 @@ fun compileAndWriteDir(path: String, externalLibs: List<String>) {
     println("Full Compilation process took ${compilationTime}ms")
 }
 
-suspend fun compileDir(path: String, externalLibs: List<String>): Map<SignatureString, ByteArray> {
-    val scope = getCoroutineScope()
+suspend fun crossTargetCompileDir(path: String, scope: CoroutineScope, deferredLoader: Deferred<ExtensionClassLoader>):  Map<SignatureString, IRModule> {
 
-    val deferredLoader = scope.async {
-        loadExternalLibs(externalLibs)
-    }
 
     val tree = FileTreeImpl()
 
@@ -135,10 +131,22 @@ suspend fun compileDir(path: String, externalLibs: List<String>): Map<SignatureS
 
     println("> [stage 2] inference finished in ${secondStageCompileTime}ms")
 
+    return firstStageModules
+}
+
+suspend fun compileDir(path: String, externalLibs: List<String>): Map<SignatureString, ByteArray> {
+    val scope = getCoroutineScope()
+
+    val deferredLoader = scope.async {
+        loadExternalLibs(externalLibs)
+    }
+
+    val irModules = crossTargetCompileDir(path, scope, deferredLoader)
+
     val (project, codeGenTime) = measureTime {
         runBlocking {
             scope.async {
-                com.language.codegen.compileProject(firstStageModules.values.toSet())
+                com.language.codegen.compileProject(irModules.values.toSet())
             }.await()
         }
     }

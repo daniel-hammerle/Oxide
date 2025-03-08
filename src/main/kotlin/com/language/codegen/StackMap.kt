@@ -203,26 +203,6 @@ class StackMapImpl(
     }
 }
 
-data class StackFrame(val variables: List<Type?>, val stack: Array<Type?>) {
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (javaClass != other?.javaClass) return false
-
-        other as StackFrame
-
-        if (variables != other.variables) return false
-        if (!stack.contentEquals(other.stack)) return false
-
-        return true
-    }
-
-    override fun hashCode(): Int {
-        var result = variables.hashCode()
-        result = 31 * result + stack.contentHashCode()
-        return result
-    }
-}
-
 fun Type.toFrameSignature(): Any = when(this) {
     is Type.BoolT -> Opcodes.INTEGER
     Type.DoubleT -> Opcodes.DOUBLE
@@ -237,4 +217,8 @@ fun Type.toFrameSignature(): Any = when(this) {
     Type.BoolArray -> "[Z"
     Type.DoubleArray -> "[D"
     Type.IntArray -> "[I"
+    Type.ByteT -> Opcodes.T_BYTE
+    Type.CharT -> Opcodes.T_CHAR
+    Type.FloatT -> Opcodes.FLOAT
+    Type.LongT -> Opcodes.LONG
 }

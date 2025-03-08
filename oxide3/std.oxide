@@ -1,0 +1,96 @@
+use std::{io, ranges}
+
+impl str {
+    func toString(self) {
+        self
+    }
+}
+
+impl i64, i32 { //btw this is different from i64 | i32 where it has to be the union (math impl not match subset) of the two while impl i64, i32 just means its either one of them
+    func toString(self) {
+        result = if self < 0 {
+            self = -self
+            "-"
+        } else {
+            ""
+        }
+
+
+        while self > 0 {
+            digit = { self % 10 } + 48 as char
+            result = result + digit //this is fast since those numbers are usually already in the string pool
+            self = self / 10
+        }
+
+        result
+    }
+}
+
+impl f32, f64 {
+    func toString(self) {
+        if self == 0 {
+            return "0"
+        }
+        result = if self < 0 {
+            self = -self
+            "-"
+        } else {
+            ""
+        }
+
+        integerPart = self as i64
+        while integerPart > 0 {
+            digit = { integerPart % 10 } + 48 as char
+            result = result + digit //this is fast since those numbers are usually already in the string pool
+            integerPart = integerPart / 10
+        }
+
+        if integerPart == self {
+            return result //no decimal places
+        }
+        result = result + "."
+
+        decimalPart = self - integerPart
+        for _ in 0.to(6) {
+            decimalPart = decimalPart * 10
+            digit = { integerPart % 10 } + 48
+            result = result + { digit as char }
+            decimalPart = decimalPart - digit
+        }
+    }
+
+}
+
+impl bool {
+    func toString(self) {
+        match self {
+            true -> "true"
+            false -> "false"
+        }
+    }
+}
+
+impl char {
+    func toString(self) {
+        self as str
+    }
+}
+
+impl null {
+    func toString(self) {
+        "null"
+    }
+}
+
+
+func assert(condition) {
+    if condition == false {
+        panic("Assertion failed")
+    }
+}
+
+func panic(message) {
+    io.println(message)
+    while true {}
+}
+

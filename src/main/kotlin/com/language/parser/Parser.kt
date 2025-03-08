@@ -84,7 +84,11 @@ fun parseFile(tokens: Tokens): Module {
     while(tokens.hasNext()) {
         val (name, entry) = parseTopLevelEntity(tokens)
         when(entry) {
-            is Impl -> implBlocks[entry.type] = entry
+            is Impl -> {
+                for (type in entry.types) {
+                    implBlocks[type] = entry
+                }
+            }
             is UseStatement -> imports += entry.signatureStrings.map { it.structName to it }
             is TypeDef -> typeAliases[name] = entry
             else -> {}
@@ -170,8 +174,15 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
                 tokens.error("Invalid Modifiers cannot apply $modifiers to an impl block", mInfo, MessageKind.Logic)
             }
             val generics = parseGenericDefinition(tokens).toMap()
-            val type = parseType(tokens, generics.keys)
-            tokens.expect<Token.OpenCurly>()
+            val types = mutableSetOf<TemplatedType>()
+            while(true) {
+                types.add(parseType(tokens, generics.keys))
+                when(tokens.next()) {
+                    Token.Comma -> continue
+                    Token.OpenCurly -> break
+                    else -> tokens.error("Invalid token", MessageKind.Syntax)
+                }
+            }
             val entries: MutableMap<String, ModuleChild> = mutableMapOf()
             while(tokens.visitNext() != Token.ClosingCurly) {
                 val entry = parseTopLevelEntity(tokens)
@@ -186,7 +197,7 @@ fun parseTopLevelEntity(tokens: Tokens): Pair<String, ModuleChild> {
             }
             val (methods, associatedFunctions) = functions.toList().partition { (_, function ) -> function.args.firstOrNull()?.first == "self" }
 
-            UUID.randomUUID().toString() to Impl(type, methods.toMap(), associatedFunctions.toMap(), generics, modifiers, info.finish())
+            UUID.randomUUID().toString() to Impl(types, methods.toMap(), associatedFunctions.toMap(), generics, modifiers, info.finish())
         }
         Token.Use -> UUID.randomUUID().toString() to UseStatement(parseImport(tokens), info.finish())
         else -> tokens.error("Invalid token $token", MessageKind.Syntax)
@@ -344,6 +355,11 @@ fun parseExpressionComparing(tokens: Tokens, variables: Variables): Expression {
         Token.St -> CompareOp.St
         Token.EGt -> CompareOp.EGt
         Token.ESt -> CompareOp.ESt
+        Token.As -> {
+            //cast
+            tokens.next()
+            return Expression.Cast(first, parseType(tokens), info.finish())
+        }
         else -> return first
     }
     tokens.next()
@@ -360,6 +376,11 @@ fun parseExpressionAdd(tokens: Tokens, variables: Variables): Expression {
             tokens.next()
             val other = parseExpressionAdd(tokens, variables)
             Expression.Math(first, other, MathOp.Add, info.finish())
+        }
+        is Token.PercentSign -> {
+            tokens.next()
+            val other = parseExpressionAdd(tokens, variables)
+            Expression.Math(first, other, MathOp.Mod, info.finish())
         }
         is Token.Minus -> {
             tokens.next()
@@ -533,6 +554,17 @@ fun parseExpressionBase(tokens: Tokens, variables: Variables): Expression {
                     Expression.UnknownSymbol(parseSignature(tokens).first.oxideNotation, info.finish())
                 } catch (e: Exception) {
                     Expression.UnknownSymbol(tk.name, info.finish())
+                }
+            }
+        }
+        is Token.Minus -> {
+            when (val num = tokens.next()) {
+                is Token.ConstNum -> {
+                    Expression.ConstNum(-parseNumber(tokens, num.value).num, info.finish())
+                }
+                else -> {
+                    val expr = parseExpressionCall(tokens, variables)
+                    Expression.UnaryMinus(expr, expr.info)
                 }
             }
         }
@@ -860,7 +892,11 @@ private fun parseTypeBase(tokens: Tokens, generics: Set<String> = emptySet(), al
         when(tk.name) {
             in generics -> TemplatedType.Generic(tk.name).also { tokens.next() }
             "i32" ->  TemplatedType.IntT.also { tokens.next() }
+            "i64" ->  TemplatedType.LongT.also { tokens.next() }
+            "i8" ->  TemplatedType.ByteT.also { tokens.next() }
             "f64" ->  TemplatedType.DoubleT.also { tokens.next() }
+            "f32" ->  TemplatedType.FloatT.also { tokens.next() }
+            "char" ->  TemplatedType.CharT.also { tokens.next() }
             "str" ->  TemplatedType.String.also { tokens.next() }
             "bool" -> TemplatedType.BoolT.also { tokens.next() }
             else -> {

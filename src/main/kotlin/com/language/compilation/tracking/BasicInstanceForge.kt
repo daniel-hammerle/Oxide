@@ -13,6 +13,7 @@
 
 package com.language.compilation.tracking
 
+import com.language.compilation.History
 import com.language.compilation.Type
 import java.util.UUID
 
@@ -46,6 +47,14 @@ data class BasicInstanceForge(override val type: Type, override val id: UUID = U
 
     override fun mergeMut(others: List<InstanceForge>): InstanceForge {
         return others.filter { it.id != id }.fold(this as InstanceForge) { acc, it -> acc.join(it)  }
+    }
+
+    override fun reference() {
+        //Gracefully ignore
+    }
+
+    override suspend fun drop(droppingHistory: History) {
+        //Gracefully ignore
     }
 
 }

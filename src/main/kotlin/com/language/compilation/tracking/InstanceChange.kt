@@ -13,6 +13,7 @@
 
 package com.language.compilation.tracking
 
+import com.language.compilation.History
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
 import java.util.UUID
@@ -86,19 +87,19 @@ fun InstanceForge.changeBroad(change: InstanceChange, args: List<BroadForge>): B
     }
 }
 
-fun InstanceForge.change(change: InstanceChange, args: List<InstanceForge>): InstanceForge = when(change) {
+suspend fun InstanceForge.change(change: InstanceChange, args: List<InstanceForge>, droppingHistory: History): InstanceForge = when(change) {
     is InstanceChange.New -> change.template.build(args)
     InstanceChange.Nothing -> this
     is InstanceChange.PropertyChanges -> {
         this as MemberChangeable
         change.changes.forEach { (name, change) ->
-            this.definiteChange(name, member(name).change(change, args))
+            this.definiteChange(name, member(name).change(change, args, droppingHistory), droppingHistory)
         }
         this
     }
     is InstanceChange.UnionChanges -> {
         this as JoinedInstanceForge
-        forges = forges.zip(change.changes).map { it.first.change(it.second, args) }
+        forges = forges.zip(change.changes).map { it.first.change(it.second, args, droppingHistory) }
         this
     }
     is InstanceChange.JvmChange -> {
@@ -116,7 +117,7 @@ fun InstanceForge.change(change: InstanceChange, args: List<InstanceForge>): Ins
 
     is InstanceChange.ArrayChange -> {
         this as ArrayInstanceForge
-        itemForge = itemForge.change(change.itemChange, args)
+        itemForge = itemForge.change(change.itemChange, args, droppingHistory)
         this
     }
 }
@@ -168,7 +169,9 @@ fun InstanceTemplate.build(args: List<InstanceForge>): InstanceForge = when(this
     is InstanceTemplate.Object -> StructInstanceForge(
         fields.mapValuesToMutable { it.value.build(args) },
         generics,
-        signatureString
+        signatureString,
+        TODO()
+
     )
 
     is InstanceTemplate.Array -> ArrayInstanceForge(itemForge.build(args))
@@ -182,7 +185,8 @@ fun InstanceTemplate.buildBroad(args: List<BroadForge>): BroadForge {
         is InstanceTemplate.Object -> StructInstanceForge(
             fields.mapValuesToMutable { (it.value.buildBroad(args) as? InstanceForge) ?: return BroadForge.Empty },
             generics,
-            signatureString
+            signatureString,
+            TODO()
         )
         is InstanceTemplate.Array -> ArrayInstanceForge(itemForge.buildBroad(args) as? InstanceForge ?: return BroadForge.Empty)
     }

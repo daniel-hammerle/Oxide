@@ -87,7 +87,7 @@ interface OxideLookup {
         history: History
     ): FunctionCandidate
 
-    suspend fun lookupConstructor(structName: SignatureString, args: List<InstanceForge>, lookup: IRLookup): FunctionCandidate?
+    suspend fun lookupConstructor(structName: SignatureString, args: List<InstanceForge>, lookup: IRLookup, history: History): FunctionCandidate?
     suspend fun lookupConstructorUnknown(structName: SignatureString, args: List<BroadForge>, lookup: IRLookup): BroadForge
     suspend fun lookupModifiers(structName: Type): Modifiers
 

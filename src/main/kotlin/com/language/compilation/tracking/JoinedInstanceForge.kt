@@ -14,6 +14,7 @@ package com.language.compilation.tracking
 
 import com.language.codegen.cloneAll
 import com.language.codegen.enumerate
+import com.language.compilation.History
 import com.language.compilation.Type
 import com.language.compilation.join
 import java.util.UUID
@@ -59,11 +60,18 @@ class JoinedInstanceForge(var forges: List<InstanceForge>, override val id: UUID
         return others.filter { it.id != id }.fold(this as InstanceForge) { acc, it -> acc.join(it) }
     }
 
-    override fun definiteChange(name: String, forge: InstanceForge) {
-        possibleChange(name, forge)
+    override fun reference() {
+        forges.forEach { it.reference() }
+    }
 
+    override suspend fun drop(droppingHistory: History) {
+        forges.forEach { it.drop(droppingHistory) }
+    }
+
+    override suspend fun definiteChange(name: String, forge: InstanceForge, droppingHistory: History) {
+        possibleChange(name, forge)
         //locally insert a smart cast definite change
-        forges = forges.cloneAll().onEach { (it as MemberChangeable).definiteChange(name, forge) }
+        forges = forges.cloneAll().onEach { (it as MemberChangeable).possibleChange(name, forge) }
 
     }
 

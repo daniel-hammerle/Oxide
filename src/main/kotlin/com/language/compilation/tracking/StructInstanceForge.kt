@@ -12,6 +12,8 @@
 // limitations under the License.
 package com.language.compilation.tracking
 
+import com.language.compilation.HistSlice
+import com.language.compilation.History
 import com.language.compilation.SignatureString
 import com.language.compilation.Type
 import java.util.UUID
@@ -21,8 +23,11 @@ class StructInstanceForge(
     //maps the field name to the generic name (if field has generic type)
     val generics: Map<String, String>,
     val fullSignature: SignatureString,
-    override val id: UUID = UUID.randomUUID()
+    private val creationHistory: HistSlice,
+    override val id: UUID = UUID.randomUUID(),
+    private var referenceCount: Int = 1,
 ) : InstanceForge, GenericDestructableForge, MemberChangeable {
+
 
     override val type: Type.JvmType
         get() = buildType()
@@ -32,8 +37,28 @@ class StructInstanceForge(
             members.mapValuesToMutable { (_, forge) -> forge.clone(processes) },
             generics,
             fullSignature,
-            id
+            creationHistory,
+            id,
+            referenceCount,
         ).also { forge -> processes[id] = forge }
+    }
+
+    override fun reference() {
+        assert(referenceCount > 0) { "Cannot reference a already destroyed object" }
+        referenceCount++
+    }
+
+    override suspend fun drop(droppingHistory: History) {
+        assert(referenceCount > 0)
+
+        if (--referenceCount == 0) {
+            //drop event
+            members.forEach { (_, forge) -> forge.drop(droppingHistory) }
+
+            val intersection = droppingHistory.intersectionPoint(creationHistory)
+            intersection.func.addContainerAlloc(fullSignature, intersection.args) //place the container in the intersection point
+        }
+
     }
 
     override fun referenceAll(references: MutableMap<UUID, List<InstanceAccessInstruction>>, prev: List<InstanceAccessInstruction>) {
@@ -92,10 +117,12 @@ class StructInstanceForge(
         return memberForge(fieldName)!!
     }
 
-    override fun definiteChange(name: String, forge: InstanceForge) {
+    override suspend fun definiteChange(name: String, forge: InstanceForge, droppingHistory: History) {
         if (name !in members) {
             error("Struct does not have member $name")
         }
+        forge.reference()
+        members[name]!!.drop(droppingHistory)
         members[name] = forge
     }
 
@@ -104,16 +131,11 @@ class StructInstanceForge(
             error("Struct does not have member $name")
         }
 
+        forge.reference()
         members[name] = members[name]!!.join(forge)
     }
 
 }
-
-fun InstanceForge.asStruct(): StructInstanceForge =
-    this as? StructInstanceForge ?: error("Expected struct instance forge")
-
-fun InstanceForge.asJoined(): JoinedInstanceForge =
-    this as? JoinedInstanceForge ?: error("Expected struct instance forge")
 
 inline fun <A, B, C, D> Map<A, B>.associateNotNull(
     initCap: Int = size,

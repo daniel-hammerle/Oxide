@@ -101,6 +101,10 @@ suspend fun TemplatedType.matchesSubset(
         TemplatedType.Null -> type == Type.Null
         TemplatedType.Nothing -> type == Type.Nothing
         TemplatedType.Never -> type == Type.Never
+        TemplatedType.ByteT -> type == Type.ByteT
+        TemplatedType.CharT -> type == Type.CharT
+        TemplatedType.FloatT -> type == Type.FloatT
+        TemplatedType.LongT -> type == Type.LongT
     }
 }
 
@@ -168,6 +172,10 @@ suspend fun TemplatedType.matchesImpl(
         TemplatedType.Null -> type == Type.Null
         TemplatedType.Nothing -> type == Type.Nothing
         TemplatedType.Never -> type == Type.Never
+        TemplatedType.ByteT -> type == Type.ByteT
+        TemplatedType.CharT -> type == Type.CharT
+        TemplatedType.FloatT -> type == Type.FloatT
+        TemplatedType.LongT -> type == Type.LongT
     }
 }
 
@@ -180,12 +188,7 @@ fun TemplatedType.scope(
         is TemplatedType.Complex -> TemplatedType.Complex(signatureString, this.generics.map { it.scope(generics) })
         is TemplatedType.Union -> TemplatedType.Union(types.map { it.scope(generics) }.toSet())
         is TemplatedType.Generic -> generics[name] ?: error("No substitute found for generic $name")
-        TemplatedType.IntT -> TemplatedType.IntT
-        TemplatedType.DoubleT -> TemplatedType.DoubleT
-        TemplatedType.Never -> TemplatedType.Never
-        TemplatedType.Nothing -> TemplatedType.Nothing
-        TemplatedType.Null -> TemplatedType.Null
-        TemplatedType.BoolT -> TemplatedType.BoolT
+       else -> this
     }
 }
 

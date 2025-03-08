@@ -1,0 +1,30 @@
+use std
+
+struct Range { start, end }
+
+impl  i32, i64, f32, f64 {
+    func to(self, other) {
+        Range(self, other)
+    }
+}
+
+struct RangeIter { current, end }
+
+impl RangeIter {
+    func hasNext(self) {
+        self.current < self.end
+    }
+
+    func next(self) {
+        std.assert(self.hasNext())
+        x = self.current
+        self.current = self.current + 1
+        x
+    }
+}
+
+impl Range {
+    func iterator(self) {
+        RangeIter(self.start, self.end)
+    }
+}

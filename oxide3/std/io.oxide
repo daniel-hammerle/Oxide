@@ -1,0 +1,10 @@
+intrinsic inline func puts(value str)
+
+inline func println(value) {
+    puts(value.toString())
+    puts("\n")
+}
+
+inline func print(value) {
+    puts(value.toString())
+}

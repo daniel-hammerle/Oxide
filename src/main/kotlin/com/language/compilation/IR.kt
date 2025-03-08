@@ -52,13 +52,20 @@ data class CallVariant(val func: IRFunction, val args: List<Type>)
 
 class BasicHistory(
     private val histSet: MutableSet<CallVariant>,
+    private val histList: MutableList<CallVariant>,
     private val substitutions: MutableMap<IRFunction, MutableMap<List<Type.Broad>, CallSubstitution>>,
     private val recHistSet: MutableSet<Pair<IRFunction, List<Type.Broad>>>
 ) : History {
-    constructor() : this(mutableSetOf(), mutableMapOf(), mutableSetOf())
+    constructor() : this(mutableSetOf(), mutableListOf(), mutableMapOf(), mutableSetOf())
 
     override fun appendCallStack(variant: CallVariant) {
         histSet.add(variant)
+        histList.add(variant)
+    }
+
+    override fun removeCallStack(variant: CallVariant) {
+        histSet.remove(variant)
+        histList.remove(variant)
     }
 
     override fun isPresent(variant: CallVariant): Boolean {
@@ -79,14 +86,29 @@ class BasicHistory(
         substitutions[function] = (substitutions[function] ?: mutableMapOf()).apply { this[variant.toList()] = substitution }
     }
 
-    override fun split(): History = BasicHistory(histSet.toMutableSet(), substitutions.toMutableMap(), recHistSet.toMutableSet())
+    override fun split(): History = BasicHistory(histSet.toMutableSet(), histList.toMutableList(), substitutions.toMutableMap(), recHistSet.toMutableSet())
 
+    override fun toHistSlice(): HistSlice {
+        return HistSlice(histList.toList())
+    }
+
+    override fun intersectionPoint(slice: HistSlice): CallVariant {
+        val idx = histList.zip(slice.history).indexOfLast { it.first !== it.second }
+        if (idx == -1) {
+            return histList.last()
+        }
+        assert(idx != 0) //shouldn't be possible because the first always needs to be in common (main)
+        return histList[idx - 1]
+    }
 }
+
+data class HistSlice(val history: List<CallVariant>)
 
 class CallSubstitution(val change: List<InstanceChange>, val returnType: BroadInstanceBuilder)
 
 interface History {
     fun appendCallStack(variant: CallVariant)
+    fun removeCallStack(variant: CallVariant)
 
     fun isPresent(variant: CallVariant): Boolean
     fun isSubstituted(function: IRFunction, variant: List<Type.Broad>): CallSubstitution?
@@ -96,6 +118,10 @@ interface History {
 
     fun substitute(function: IRFunction, variant: List<Type.Broad>, type: CallSubstitution)
     fun split(): History
+
+    fun toHistSlice(): HistSlice
+
+    fun intersectionPoint(slice: HistSlice): CallVariant
 }
 
 sealed class Instruction {
@@ -402,7 +428,7 @@ sealed class Instruction {
             hist: History
         ): TypedInstruction {
             val type = handle.inheritedGenerics[name] ?: error("This should not be reachable")
-            return createTypeObject(type, lookup)
+            return createTypeObject(type, lookup, hist)
         }
 
         override suspend fun inferUnknown(
@@ -412,7 +438,7 @@ sealed class Instruction {
             hist: History
         ): BroadForge {
             val type = handle.inheritedGenerics[name] ?: error("This should not be reachable")
-            return createTypeObject(type, lookup).forge
+            return createTypeObject(type, lookup, hist).forge
         }
 
     }
@@ -629,7 +655,7 @@ sealed class Instruction {
             hist: History
         ): TypedInstruction {
             val args = args.map { it.inferTypes(variables, lookup, handle, hist) }
-            val candidate = lookup.lookUpConstructor(className, args.map { it.forge })
+            val candidate = lookup.lookUpConstructor(className, args.map { it.forge }, hist)
             return TypedInstruction.ConstructorCall(
                 className,
                 args,
@@ -1097,7 +1123,7 @@ sealed class Instruction {
 
             val fieldType = lookup.lookUpPhysicalFieldType(parent.type, name)
 
-            ( parent.forge as MemberChangeable).definiteChange(name, value.forge)
+            ( parent.forge as MemberChangeable).definiteChange(name, value.forge, hist)
 
             return TypedInstruction.DynamicPropertyAssignment(parent, name, value, fieldType)
         }
@@ -1464,6 +1490,31 @@ sealed class Instruction {
         ): BroadForge {
             TODO("Not yet implemented")
         }
+    }
+
+    class Cast(
+        val parent: Instruction,
+        val type: TemplatedType,
+        override val info: MetaData
+    ) : Instruction() {
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle,
+            hist: History
+        ): TypedInstruction {
+            TODO("Not yet implemented")
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): BroadForge {
+            TODO("Not yet implemented")
+        }
+
     }
 
 }
@@ -1885,11 +1936,37 @@ sealed interface Type {
         override fun toString(): String = "i32"
     }
 
+
+    data object LongT: Type {
+        override val size: Int = 2
+
+        override fun toString(): String = "i64"
+    }
+
     data object DoubleT : Type {
         override val size: Int = 2
 
         override fun toString(): String = "f64"
     }
+
+    data object FloatT : Type {
+        override val size: Int = 1
+
+        override fun toString(): String = "f32"
+    }
+
+    data object CharT : Type {
+        override val size: Int = 1
+
+        override fun toString(): String = "char"
+    }
+
+    data object ByteT : Type {
+        override val size: Int = 1
+
+        override fun toString(): String = "i8"
+    }
+
 
     data object Null : Type {
         override val size: Int = 1
@@ -2050,6 +2127,8 @@ interface IRFunction {
     val module: LambdaAppender
     val shouldInline: Boolean
 
+    suspend fun addContainerAlloc(signature: SignatureString, variant: List<Type>)
+
     fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>>
 
     suspend fun inferUnknown(argTypes: List<BroadForge>, lookup: IRLookup, generics: Map<String, Type>, hist: History, check: Boolean = true): BroadForge
@@ -2084,7 +2163,14 @@ data class BasicIRFunction(
 
     private val checkedUnknownVariants: MutableMap<List<Type.Broad>, BroadForge> = mutableMapOf()
 
+    private val containerAllocations: MutableMap<List<Type>, MutableList<SignatureString>> = mutableMapOf()
+
     override val keepBlocks: MutableMap<String, Type> = mutableMapOf()
+    override suspend fun addContainerAlloc(signature: SignatureString, variant: List<Type>) {
+        mutex.withLock {
+            (containerAllocations[variant] ?: mutableListOf<SignatureString>().also { containerAllocations[variant] = it }).add(signature)
+        }
+    }
 
     override fun checkedVariants(): Map<List<Type>, Pair<TypedInstruction, FunctionMetaData>> {
         return checkedVariants
@@ -2207,6 +2293,7 @@ data class BasicIRFunction(
                 recursivelyCachedVariants[tps] = newCount
                 newCount
             }
+            argTypes.forEach { it.drop(hist) }
             return forge to id
         }
 
@@ -2251,6 +2338,9 @@ data class BasicIRFunction(
                 (result) to metaDataHandle.apply { varCount = variables.parent.varCount() }.toMetaData(returnTemplate, change, id)
             id
         }
+        argTypes.forEach { it.drop(hist) }
+        hist.removeCallStack(variant)
+
         return returnForge to id
     }
 

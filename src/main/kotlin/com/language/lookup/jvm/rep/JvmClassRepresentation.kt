@@ -377,6 +377,10 @@ fun Type.toTemplatedType(): TemplatedType {
         Type.Null -> TemplatedType.Null
         is Type.Union -> TODO()
         Type.UninitializedGeneric -> TODO()
+        Type.ByteT -> TemplatedType.ByteT
+        Type.CharT -> TemplatedType.CharT
+        Type.FloatT -> TemplatedType.FloatT
+        Type.LongT -> TemplatedType.LongT
     }
 }
 
@@ -631,6 +635,10 @@ fun TemplatedType.defaultVariant(): Type = when (this) {
     TemplatedType.Null -> Type.Null
     is TemplatedType.Union -> Type.Union(entries = types.map { it.defaultVariant() }.toSet())
     TemplatedType.Never -> Type.Null
+    TemplatedType.ByteT -> Type.ByteT
+    TemplatedType.CharT -> Type.CharT
+    TemplatedType.FloatT -> Type.FloatT
+    TemplatedType.LongT -> Type.LongT
 }
 
 fun TemplatedType.isGeneric(): Boolean = when (this) {

@@ -17,6 +17,7 @@ import com.language.compilation.*
 import com.language.compilation.metadata.MetaDataHandle
 import com.language.compilation.metadata.MetaDataTypeHandle
 import com.language.compilation.tracking.BroadForge
+import com.language.compilation.tracking.InstanceForge
 import com.language.compilation.tracking.StructInstanceForge
 import com.language.compilation.variables.TypeVariableManager
 import com.language.compilation.variables.VariableManager
@@ -56,6 +57,31 @@ val IntrinsicMemberFunctions: Map<Triple<SignatureString, TemplatedType, String>
             hist: History
         ): BroadForge {
             TODO("Not yet implemented")
+        }
+
+    },
+)
+
+val IntrinsicFunctions: Map<Pair<SignatureString, String>, Instruction.Intrinsic> = mapOf(
+    SignatureString("std::io") to "puts" to object : Instruction.Intrinsic() {
+        override val info: MetaData = MetaData(MetaInfo(0), SignatureString("std::io"))
+
+        override suspend fun inferTypes(
+            variables: VariableManager,
+            lookup: IRLookup,
+            handle: MetaDataHandle,
+            hist: History
+        ): TypedInstruction {
+            return TypedInstruction.PlatformSpecificOperation(NativeOperationKind.Puts, listOf(variables.loadVar("value")), InstanceForge.ConstString)
+        }
+
+        override suspend fun inferUnknown(
+            variables: TypeVariableManager,
+            lookup: IRLookup,
+            handle: MetaDataTypeHandle,
+            hist: History
+        ): BroadForge {
+            return InstanceForge.ConstString
         }
 
     }

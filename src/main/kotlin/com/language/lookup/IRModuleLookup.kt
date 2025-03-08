@@ -214,8 +214,8 @@ class IRModuleLookup(
         return IRModuleLookup(jvmLookup, oxideLookup.newModFrame(modNames))
     }
 
-    override suspend fun lookUpConstructor(className: SignatureString, argTypes: List<InstanceForge>): FunctionCandidate {
-        return oxideLookup.lookupConstructor(className, argTypes, this)
+    override suspend fun lookUpConstructor(className: SignatureString, argTypes: List<InstanceForge>, history: History): FunctionCandidate {
+        return oxideLookup.lookupConstructor(className, argTypes, this, history)
             ?: jvmLookup.lookupConstructor(className, argTypes, this)
             ?: error("NO constructor found for $className($argTypes)")
     }
@@ -323,5 +323,9 @@ class IRModuleLookup(
         TemplatedType.Null -> Type.Null
         is TemplatedType.Union -> Type.Union(types.map { it.populate(generics) }.toSet())
         TemplatedType.Never -> Type.Never
+        TemplatedType.ByteT -> Type.ByteT
+        TemplatedType.CharT -> Type.CharT
+        TemplatedType.FloatT -> Type.FloatT
+        TemplatedType.LongT -> Type.LongT
     }
 }

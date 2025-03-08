@@ -21,6 +21,7 @@ import com.language.compilation.metadata.LambdaAppenderImpl
 import com.language.compilation.modifiers.Modifier
 import com.language.compilation.modifiers.Modifiers
 import com.language.controlflow.MessageKind
+import com.language.core.IntrinsicFunctions
 import com.language.core.IntrinsicMemberFunctions
 import com.language.lexer.MetaInfo
 import org.apache.commons.codec.binary.Base32
@@ -44,17 +45,32 @@ fun compile(module: ModuleLookup): IRModule {
 
     module.localSymbols.forEach { (name, entry) ->
         when (entry) {
-            is Function -> functions[name] = compileFunction(function = entry, module, appender, emptySet())
+            is Function -> functions[name] = compileFunction(function = entry, module, appender, emptySet(), if (entry.modifiers.isModifier(Modifier.Intrinsic)) {
+                IntrinsicFunctions[Pair(module.localName, name)]!!
+            } else {
+                null
+            })
             is Struct -> structs[name] = compileStruct(struct = entry, module)
             is Impl -> {
-                val type =
-                    if (entry.type is TemplatedType.Complex && module.hasLocalStruct(entry.type.signatureString)) {
-                        TemplatedType.Complex(module.localName + entry.type.signatureString, entry.type.generics)
-                    } else {
-                        entry.type.populate(module)
-                    }
                 val block = compileImplBlock(entry, module, appender)
-                implBlocks[type]?.add(block) ?: run { implBlocks[type] = mutableSetOf(block) }
+
+                for (type in entry.types) {
+                    val type =
+                        if (type is TemplatedType.Complex && module.hasLocalStruct(type.signatureString)) {
+                            TemplatedType.Complex(module.localName + type.signatureString, type.generics)
+                        } else {
+                            type.populate(module)
+                        }
+                    if (!type.exists(module)) {
+                        throw CompilationException(
+                            entry.info.join(module.localName),
+                            "Invalid type $type",
+                            MessageKind.Logic
+                        )
+                    }
+                    implBlocks[type]?.add(block) ?: run { implBlocks[type] = mutableSetOf(block) }
+                }
+
             }
             is TypeDef -> {}  //ignore they don't exist after this stage
             is UseStatement -> {} //ignore they don't exist after this stage
@@ -100,18 +116,13 @@ fun compileStruct(struct: Struct, module: ModuleLookup): IRStruct {
 }
 
 fun compileImplBlock(implBlock: Impl, module: ModuleLookup, lambdaAppender: LambdaAppender): IRImpl {
-    val populatedType = if (implBlock.type is TemplatedType.Complex && module.hasLocalStruct(implBlock.type.signatureString)) {
-        TemplatedType.Complex(module.localName + implBlock.type.signatureString, implBlock.type.generics)
+    val tp = implBlock.types.first()
+    val populatedType = if (tp is TemplatedType.Complex && module.hasLocalStruct(tp.signatureString)) {
+        TemplatedType.Complex(module.localName + tp.signatureString, tp.generics)
     } else {
-        implBlock.type.populate(module)
+        tp.populate(module)
     }
-    if (!populatedType.exists(module)) {
-        throw CompilationException(
-            implBlock.info.join(module.localName),
-            "Invalid type $populatedType",
-            MessageKind.Logic
-        )
-    }
+
     val fullImplSignature = module.localName + generateName()
     val implBlockLookup = module.withNewContainer(fullImplSignature)
 
@@ -159,9 +170,15 @@ fun TemplatedType.exists(module: ModuleLookup): Boolean = when (this) {
     TemplatedType.Null -> true
     is TemplatedType.Array -> itemType.exists(module)
     TemplatedType.Never -> true
+    TemplatedType.ByteT -> true
+    TemplatedType.CharT -> true
+    TemplatedType.FloatT -> true
+    TemplatedType.LongT -> true
 }
 
 fun compileFunction(function: Function, module: ModuleLookup, lambdaAppender: LambdaAppender, generics: Set<String>, externalBody: Instruction? = null): IRFunction {
+
+
     val body = externalBody ?: compileExpression(function.body, module, true, generics)
 
     return BasicIRFunction(
@@ -446,6 +463,15 @@ fun compileExpression(expression: Expression, module: ModuleLookup, uctl: Boolea
         )
 
         is Expression.Intrinsic -> error("This shouldnt be reached")
+        is Expression.UnaryMinus -> {
+            Instruction.Math(MathOp.Mul, Instruction.LoadConstInt(-1, expression.info.join(module.localName)), compileExpression(expression.parent, module, uctl, generics), expression.info.join(module.localName))
+        }
+
+        is Expression.Cast -> {
+            val tp = expression.tp.populate(module)
+
+            Instruction.Cast(compileExpression(expression.item, module, uctl, generics), tp, expression.info.join(module.localName))
+        }
     }
 }
 
